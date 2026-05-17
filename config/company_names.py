@@ -1,6 +1,6 @@
 # Static ticker → company name lookup. Covers the full UNIVERSE in settings.py.
 # Update when tickers are added/renamed.
-COMPANY_NAMES: dict[str, str] = {
+COMPANY_NAMES = {
     # Mega-cap tech
     "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "GOOGL": "Alphabet",
     "GOOG": "Alphabet (C)", "AMZN": "Amazon", "TSLA": "Tesla",

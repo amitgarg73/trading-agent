@@ -15,7 +15,7 @@ from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARG
 from config.company_names import COMPANY_NAMES
 
 
-def add_company_col(df: pd.DataFrame, ticker_col: str = "ticker") -> pd.DataFrame:
+def add_company_col(df, ticker_col="ticker"):
     """Insert a Company column right after the ticker column."""
     if ticker_col not in df.columns:
         return df
