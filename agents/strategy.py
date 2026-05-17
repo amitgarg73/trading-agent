@@ -8,7 +8,7 @@ from datetime import datetime
 from config.settings import (
     ANTHROPIC_API_KEY, TOTAL_CAPITAL, DAILY_PROFIT_TARGET,
     MAX_POSITIONS, MAX_POSITION_PCT, MIN_POSITION_PCT,
-    MAX_LOSS_PER_TRADE, MIN_REWARD_RISK
+    MAX_LOSS_PER_TRADE, MIN_REWARD_RISK, TARGET_PCT
 )
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -32,7 +32,8 @@ PORTFOLIO RULES:
 - Daily profit target: ${DAILY_PROFIT_TARGET:,}
 - Max positions: {MAX_POSITIONS}
 - Position size: ${min_pos_size:,} to ${max_pos_size:,} per trade
-- Stop loss: max {MAX_LOSS_PER_TRADE*100:.0f}% of position (hard rule)
+- Profit target: {TARGET_PCT*100:.0f}% above entry (hard rule — set target_price = entry * {1+TARGET_PCT})
+- Stop loss: max {MAX_LOSS_PER_TRADE*100:.0f}% below entry (hard rule — set stop_loss = entry * {1-MAX_LOSS_PER_TRADE})
 - Minimum reward:risk ratio: {MIN_REWARD_RISK}:1
 - All positions closed by end of day (no overnight holds)
 - Protect the principal — if no high-conviction setups exist, select fewer trades

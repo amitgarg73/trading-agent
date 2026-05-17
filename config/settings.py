@@ -14,11 +14,12 @@ DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "changeme")
 # Capital
 TOTAL_CAPITAL        = 100_000
 DAILY_PROFIT_TARGET  = 1_000
-MAX_POSITION_PCT     = 0.20       # max 20% of capital per position ($20K)
-MIN_POSITION_PCT     = 0.10       # min 10% of capital per position ($10K)
-MAX_POSITIONS        = 5          # max concurrent positions
+MAX_POSITION_PCT     = 0.07       # max 7% of capital per position (fits 15 positions)
+MIN_POSITION_PCT     = 0.05       # min 5% of capital per position
+MAX_POSITIONS        = 15         # max concurrent positions
 MAX_LOSS_PER_TRADE   = 0.01       # stop loss: 1% of position size
-MIN_REWARD_RISK      = 2.0        # minimum reward:risk ratio
+MIN_REWARD_RISK      = 3.0        # minimum reward:risk ratio (3% target / 1% stop)
+TARGET_PCT           = 0.03       # 3% profit target per trade
 
 # Scanner thresholds
 RSI_OVERSOLD         = 35
@@ -29,34 +30,125 @@ MIN_AVG_VOLUME       = 500_000    # liquidity floor
 SCORE_THRESHOLD      = 3          # minimum score to be a candidate
 
 # Stock + ETF universe
+# Removed drags: PYPL, META, ARKK, IWM, JPM, IBM, MA, ROOT, PSA, TWLO
+# Removed delisted/no-data: CYBR, SMAR, ELASTIC, NEWR, SPLK, SUMO, ALTR, JAMF,
+#   NVEI, SQ, BNPL, DFS, K, HES, PXD, CMA, COOP, L3H, NOVG, PARA, NKLA, GOEV, LILM
 STOCK_UNIVERSE = [
-    # Mega cap tech (liquid, high beta)
-    "AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA",
-    # High-momentum / AI
-    "PLTR", "CRWD", "SNOW", "NET", "DDOG", "MDB", "SMCI",
-    # Fintech
-    "SOFI", "HOOD", "COIN", "PYPL", "SQ",
-    # Biotech / Health
-    "LLY", "MRNA", "ABBV",
-    # Energy
-    "XOM", "CVX", "OXY",
-    # Finance
-    "JPM", "GS", "BAC",
-    # Defense / Industrials
-    "LMT", "RTX", "KTOS",
-    # Consumer
-    "AMZN", "COST", "HD",
+    # ── Mega-cap tech ─────────────────────────────────────────────
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "TSLA",
+    "AVGO", "ORCL", "CRM", "AMD", "INTC", "CSCO", "ADBE",
+    "NOW", "TXN", "HPQ", "DELL", "ARM",
+
+    # ── Semiconductors ────────────────────────────────────────────
+    "MU", "AMAT", "KLAC", "MCHP", "MPWR", "ON",
+    "STX", "WDC", "MRVL", "ADI", "SWKS", "QRVO", "WOLF",
+    "SMCI", "ACLS", "COHU", "FORM", "AMBA", "CEVA", "SLAB",
+    "DIOD", "ALGM", "AXTI", "SITM", "ALAB", "ONTO",
+    "ENTG", "UCTT", "ICHR", "KLIC", "RMBS", "CRUS",
+
+    # ── Software / Cloud / AI ─────────────────────────────────────
+    "PLTR", "CRWD", "SNOW", "NET", "DDOG", "MDB", "HUBS",
+    "ZS", "OKTA", "PANW", "FTNT", "RPD",
+    "S", "ASAN", "BILL", "CFLT", "GTLB",
+    "ESTC", "DT", "DOCN", "FSLY", "CWAN", "FOUR",
+    "PATH", "AI", "BBAI", "SOUN", "BRZE", "FRSH", "DOMO",
+    "APP", "APLD", "IONQ", "RGTI", "QUBT", "QBTS",
+    "TTD", "MGNI", "PUBM", "CXAI", "GFAI",
+    "RBLX", "U", "SHOP", "MELI", "SE", "GRAB",
+    "PCVX", "DAVE", "MQ",
+
+    # ── Fintech ───────────────────────────────────────────────────
+    "SOFI", "HOOD", "COIN", "MSTR", "AFRM", "UPST",
+    "LMND", "HIMS", "WEX", "GPN", "FIS", "FISV",
+    "V", "AXP", "SYF", "COF", "ALLY", "OPEN",
+
+    # ── Crypto-adjacent ───────────────────────────────────────────
+    "MARA", "RIOT", "HUT", "CLSK", "IREN", "BITF", "CIFR",
+    "BTBT", "WULF", "CORZ",
+
+    # ── Biotech / Pharma / Health ─────────────────────────────────
+    "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR",
+    "BMY", "AMGN", "GILD", "BIIB", "REGN", "VRTX", "ISRG",
+    "BSX", "SYK", "MDT", "BDX", "RMD", "IQV", "MRNA",
+    "BNTX", "NVAX", "SRPT", "BMRN", "ALNY", "RARE", "PTCT",
+    "FOLD", "TGTX", "PRAX", "IMVT", "ARWR", "BEAM", "EDIT",
+    "NTLA", "CRSP", "KYMR", "KROS", "ABCL", "VKTX",
+    "GPCR", "RXRX", "ACAD", "HALO", "CELH",
+    "INVA", "RVMD", "PTGX", "AGIO",
+
+    # ── Consumer Discretionary ────────────────────────────────────
+    "HD", "LOW", "MCD", "SBUX", "TJX", "ROST",
+    "BKNG", "MAR", "HLT", "CMG", "YUM", "DRI", "DKNG",
+    "ETSY", "EBAY", "ABNB", "LVS", "MGM", "WYNN", "PENN",
+    "F", "GM", "RIVN", "LCID",
+    "CAVA", "SHAK", "TXRH", "WING",
+    "ONON", "CROX", "FND", "RH",
+    "LYFT",
+
+    # ── Consumer Staples ──────────────────────────────────────────
+    "PG", "KO", "PEP", "COST", "WMT", "TGT", "MDLZ",
+    "GIS", "CPB", "HSY", "MKC", "CLX", "CL", "EL",
+
+    # ── Energy ────────────────────────────────────────────────────
+    "XOM", "CVX", "COP", "EOG", "OXY", "MPC", "VLO",
+    "PSX", "DVN", "APA", "HAL", "SLB", "BKR",
+    "NOV", "FANG", "CTRA", "SM", "MTDR", "CRGY",
+    "CHRD", "PR", "ROCC", "TALO",
+
+    # ── Financials ────────────────────────────────────────────────
+    "GS", "MS", "BAC", "WFC", "C", "BLK", "SCHW",
+    "CME", "ICE", "CBOE", "NTRS", "STT", "BK",
+    "USB", "PNC", "RF", "CFG", "HBAN", "KEY", "TFC", "MTB",
+    "ZION", "OFG", "UWMC", "RKT", "MKTX", "FIS", "FISV",
+
+    # ── Industrials / Defense ─────────────────────────────────────
+    "LMT", "RTX", "BA", "NOC", "GD", "TDG", "GE",
+    "HON", "MMM", "EMR", "ETN", "PH", "ROK", "AME",
+    "GNRC", "OTIS", "CARR", "ITW", "XYL", "KTOS", "AXON",
+    "LDOS", "SAIC", "BAH", "CACI", "HII",
+    "JOBY", "ACHR", "EVTL", "SPCE",
+
+    # ── Materials ─────────────────────────────────────────────────
+    "LIN", "APD", "DD", "DOW", "PPG", "SHW", "NEM",
+    "FCX", "AA", "CLF", "NUE", "STLD", "RS", "VMC",
+    "MLM", "FMC", "MOS", "CF", "MP",
+
+    # ── Utilities ─────────────────────────────────────────────────
+    "NEE", "DUK", "SO", "D", "AEP", "EXC", "PCG",
+    "XEL", "WEC", "ES", "CMS", "AWK", "SRE", "ETR",
+
+    # ── Communication / Media ─────────────────────────────────────
+    "T", "VZ", "TMUS", "DIS", "NFLX", "CMCSA", "CHTR",
+    "FOXA", "WBD", "EA", "TTWO", "MTCH",
+    "ZM", "SNAP", "PINS", "ROKU", "SPOT",
+
+    # ── Real Estate / REITs ───────────────────────────────────────
+    "AMT", "PLD", "EQIX", "CCI", "SPG", "O", "AVB",
+    "EQR", "DLR", "WELL", "VTR",
+
+    # ── Space / Defense-adjacent ──────────────────────────────────
+    "ASTS", "OKLO", "LUNR", "RKLB", "IRDM", "SPIR",
+
+    # ── Meme / High-beta retail ───────────────────────────────────
+    "GME", "AMC", "SPCE", "ARQQ",
 ]
 
 ETF_UNIVERSE = [
     # Broad market
-    "SPY", "QQQ", "IWM", "DIA",
+    "SPY", "QQQ", "DIA", "VTI", "VOO", "IVV",
+    # Mid / small cap
+    "MDY", "IJH", "IJR", "VB", "IWO", "IWN",
     # Sector ETFs
     "XLK", "XLF", "XLE", "XLV", "XLI", "XLC",
+    "XLY", "XLP", "XLB", "XLRE", "XLU",
     # Thematic
-    "ARKK", "SOXX", "GLD", "TLT",
-    # Leveraged (higher risk/reward)
-    "TQQQ", "SQQQ", "UPRO", "SPXU",
+    "SOXX", "SMH", "HACK", "CIBR", "WCLD", "BUG",
+    "ARKG", "ARKF",
+    "GLD", "SLV", "GDX", "GDXJ", "USO", "UNG",
+    "TLT", "HYG", "LQD", "TIP",
+    # Leveraged
+    "TQQQ", "SQQQ", "UPRO", "SPXU", "SOXL", "SOXS",
+    "UVXY", "SVXY", "LABU", "LABD",
 ]
 
 UNIVERSE = STOCK_UNIVERSE + ETF_UNIVERSE
