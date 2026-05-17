@@ -9,10 +9,24 @@ for _key in ["ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "DASHBOARD_PAS
 
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
+import yfinance as yf
 from datetime import date, datetime
 from core import db
-from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET
+from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE
 from config.company_names import COMPANY_NAMES
+
+_ETF_SET = set(ETF_UNIVERSE)
+
+@st.cache_data(ttl=3600)
+def get_sector(ticker: str) -> str:
+    if ticker in _ETF_SET:
+        return "ETF"
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get("sector") or "Unknown"
+    except Exception:
+        return "Unknown"
 
 
 def add_company_col(df, ticker_col="ticker"):
@@ -50,7 +64,7 @@ if not check_password():
 # ── Sidebar ───────────────────────────────────────────────────────
 st.sidebar.title("📈 Trading Agent")
 st.sidebar.caption(f"Capital: ${TOTAL_CAPITAL:,} | Target: ${DAILY_PROFIT_TARGET:,}/day")
-page = st.sidebar.radio("View", ["Today", "Positions", "Performance", "Scan Log"])
+page = st.sidebar.radio("View", ["Summary", "Today", "Positions", "Performance", "Scan Log"])
 st.sidebar.markdown("---")
 if st.sidebar.button("🔄 Refresh"):
     st.rerun()
@@ -65,8 +79,183 @@ def pnl_color(val):
     return "green" if val > 0 else "red" if val < 0 else "gray"
 
 
+# ── SUMMARY ───────────────────────────────────────────────────────
+if page == "Summary":
+    today = date.today().isoformat()
+
+    # Load latest premarket scan (today or most recent)
+    scans = db.select("scan_results", filters={"date": today, "scan_type": "premarket"})
+    is_stale = not scans
+    if is_stale:
+        scans = db.select("scan_results", filters={"scan_type": "premarket"}, order="created_at", limit=1)
+    scan     = scans[0] if scans else None
+    run_date = scan["date"] if scan else today
+
+    plans  = db.select("trade_plans", filters={"date": run_date})
+    plan   = plans[0] if plans else None
+    trades = db.select("planned_trades", filters={"plan_id": plan["id"]}) if plan else []
+
+    plan_trade_ids = {t["id"] for t in trades}
+    all_open   = db.select("positions", filters={"status": "OPEN"})
+    open_pos   = [p for p in all_open if p["planned_trade_id"] in plan_trade_ids]
+    all_closed = db.select("positions", filters={"status": "CLOSED"})
+    run_closed = [p for p in all_closed if (p.get("closed_at") or "").startswith(run_date)]
+
+    realized   = sum(p.get("realized_pnl",   0) or 0 for p in run_closed)
+    unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in open_pos)
+    total_pnl  = realized + unrealized
+    pct_return = total_pnl / TOTAL_CAPITAL * 100
+    anticipated = plan["total_estimated_profit"] if plan else 0
+    coverage    = anticipated / DAILY_PROFIT_TARGET * 100 if anticipated else 0
+
+    # ── Header ────────────────────────────────────────────────────
+    h1, h2 = st.columns([4, 1])
+    h1.title(f"📊 Summary — {run_date}")
+    if is_stale:
+        badge, badge_color = "STALE", "#7f8c8d"
+    elif plan:
+        badge, badge_color = "TRADING", "#27ae60"
+    else:
+        badge, badge_color = "PENDING", "#7f8c8d"
+    h2.markdown(
+        f"<div style='text-align:right;padding-top:14px'>"
+        f"<span style='background:{badge_color};color:white;padding:6px 14px;"
+        f"border-radius:6px;font-weight:bold;font-size:16px'>{badge}</span></div>",
+        unsafe_allow_html=True
+    )
+    if is_stale:
+        st.warning(f"⚠️ Showing {run_date} data — no premarket run today yet.")
+
+    st.divider()
+
+    # ── KPI Row ───────────────────────────────────────────────────
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1.metric("Capital", f"${TOTAL_CAPITAL:,}")
+    k2.metric("Today's P&L",
+              fmt_pnl(total_pnl),
+              delta=f"{pct_return:+.2f}% return",
+              delta_color="normal" if total_pnl >= 0 else "inverse")
+    k3.metric("Realized", fmt_pnl(realized))
+    k4.metric("Unrealized", fmt_pnl(unrealized))
+    k5.metric("Anticipated", f"${anticipated:,.0f}",
+              delta=f"{coverage:.0f}% of ${DAILY_PROFIT_TARGET:,} target",
+              delta_color="normal" if coverage >= 100 else "inverse")
+    k6.metric("% Return", f"{pct_return:+.2f}%")
+
+    st.divider()
+
+    # ── Trade Stats Row ───────────────────────────────────────────
+    won  = [p for p in run_closed if (p.get("realized_pnl") or 0) > 0]
+    lost = [p for p in run_closed if (p.get("realized_pnl") or 0) <= 0]
+    win_rate = len(won) / len(run_closed) * 100 if run_closed else 0
+
+    t1, t2, t3, t4 = st.columns(4)
+    t1.metric("Open Positions", len(open_pos))
+    t2.metric("Closed Today",   len(run_closed))
+    t3.metric("Win Rate Today", f"{win_rate:.0f}%" if run_closed else "—",
+              delta=f"{len(won)}W / {len(lost)}L" if run_closed else None,
+              delta_color="off")
+    t4.metric("Total Trades",   len(trades), help="Trades selected by Claude today")
+
+    st.divider()
+
+    # ── Trades by Sector ─────────────────────────────────────────
+    st.subheader("Trades by Sector")
+
+    if not trades:
+        st.info("No trades selected today.")
+    else:
+        # Build enriched trade rows (merge planned_trades with position status)
+        pos_by_trade = {p["planned_trade_id"]: p for p in open_pos + run_closed}
+
+        with st.spinner("Fetching sectors..."):
+            sectors: dict[str, list] = {}
+            for t in trades:
+                sector = get_sector(t["ticker"])
+                sectors.setdefault(sector, []).append(t)
+
+        sector_order = sorted(sectors.keys(), key=lambda s: (s == "Unknown", s == "ETF", s))
+
+        for sector in sector_order:
+            sector_trades = sectors[sector]
+            sector_realized   = sum(
+                (pos_by_trade[t["id"]].get("realized_pnl") or 0)
+                for t in sector_trades if t["id"] in pos_by_trade
+                    and pos_by_trade[t["id"]]["status"] == "CLOSED"
+            )
+            sector_unrealized = sum(
+                (pos_by_trade[t["id"]].get("unrealized_pnl") or 0)
+                for t in sector_trades if t["id"] in pos_by_trade
+                    and pos_by_trade[t["id"]]["status"] == "OPEN"
+            )
+            sector_pnl = sector_realized + sector_unrealized
+
+            header_col = f"**{sector}** — {len(sector_trades)} trade{'s' if len(sector_trades) > 1 else ''}"
+            pnl_col    = f"<span style='color:{pnl_color(sector_pnl)};font-weight:bold'>{fmt_pnl(sector_pnl)}</span>"
+
+            with st.expander(f"{sector}  ·  {len(sector_trades)} trade{'s' if len(sector_trades) > 1 else ''}  ·  {fmt_pnl(sector_pnl)}", expanded=True):
+                rows = []
+                for t in sector_trades:
+                    pos = pos_by_trade.get(t["id"])
+                    if pos:
+                        status = pos["status"]
+                        pnl_val = pos.get("realized_pnl") if status == "CLOSED" else pos.get("unrealized_pnl", 0)
+                        pnl_str = fmt_pnl(pnl_val or 0)
+                        close_reason = pos.get("close_reason", "—") if status == "CLOSED" else "OPEN"
+                    else:
+                        status, pnl_str, close_reason = "PENDING", "—", "—"
+
+                    company = COMPANY_NAMES.get(t["ticker"], "")
+                    rows.append({
+                        "Ticker":    t["ticker"],
+                        "Company":   company,
+                        "Conf.":     t["confidence"],
+                        "Entry":     f"${t['entry_price']:.2f}",
+                        "Target":    f"${t['target_price']:.2f}",
+                        "Stop":      f"${t['stop_loss']:.2f}",
+                        "Size":      f"${t['position_size']:,.0f}",
+                        "Est. P&L":  f"${t['estimated_profit']:,.0f}",
+                        "Actual P&L": pnl_str,
+                        "Status":    close_reason,
+                    })
+
+                df_s = pd.DataFrame(rows)
+                st.dataframe(df_s, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── P&L Breakdown Bar ─────────────────────────────────────────
+    st.subheader("P&L Breakdown")
+    if run_closed:
+        df_pnl = pd.DataFrame(run_closed)[["ticker", "realized_pnl", "close_reason"]]
+        df_pnl = df_pnl.sort_values("realized_pnl", ascending=True)
+        colors = ["#e74c3c" if v < 0 else "#27ae60" for v in df_pnl["realized_pnl"]]
+        fig = go.Figure(go.Bar(
+            x=df_pnl["realized_pnl"],
+            y=df_pnl["ticker"],
+            orientation="h",
+            marker_color=colors,
+            text=[fmt_pnl(v) for v in df_pnl["realized_pnl"]],
+            textposition="outside",
+            hovertemplate="<b>%{y}</b><br>P&L: %{x:,.2f}<extra></extra>",
+        ))
+        fig.update_layout(
+            title="Realized P&L per Trade",
+            xaxis_title="P&L ($)",
+            height=max(250, len(df_pnl) * 35),
+            margin=dict(l=20, r=60, t=40, b=20),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    elif open_pos:
+        st.info("Positions open — P&L chart will appear as trades close.")
+    else:
+        st.info("No closed trades yet today.")
+
+
 # ── TODAY WORKFLOW ─────────────────────────────────────────────────
-if page == "Today":
+elif page == "Today":
     today = date.today().isoformat()
 
     # Load scan result (premarket) — today only; fall back to most recent with staleness flag
@@ -400,40 +589,96 @@ elif page == "Positions":
 elif page == "Performance":
     st.title("Performance History")
 
-    perf = db.select("daily_performance", order="date", limit=30)
+    perf = db.select("daily_performance", order="date", limit=60)
     if not perf:
         st.info("No performance data yet.")
         st.stop()
 
-    df = pd.DataFrame(perf)
+    df = pd.DataFrame(perf).sort_values("date")
 
-    total_pnl   = df["total_pnl"].sum()
-    avg_daily   = df["total_pnl"].mean()
-    win_days    = (df["total_pnl"] > 0).sum()
-    total_days  = len(df)
-    avg_win_rate= df["win_rate"].mean()
-    latest_cap  = df.iloc[-1]["ending_capital"]
+    total_pnl    = df["total_pnl"].sum()
+    avg_daily    = df["total_pnl"].mean()
+    win_days     = (df["total_pnl"] > 0).sum()
+    total_days   = len(df)
+    avg_win_rate = df["win_rate"].mean()
+    latest_cap   = df.iloc[-1]["ending_capital"]
+    total_return = (latest_cap - TOTAL_CAPITAL) / TOTAL_CAPITAL * 100
+    ann_return   = total_return / total_days * 250 if total_days > 0 else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total P&L",       fmt_pnl(total_pnl))
-    c2.metric("Avg Daily P&L",   fmt_pnl(avg_daily))
-    c3.metric("Win Days",        f"{win_days}/{total_days}")
-    c4.metric("Avg Trade Win %", f"{avg_win_rate:.1f}%")
-    c5.metric("Portfolio Value", f"${latest_cap:,.0f}")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Total P&L",        fmt_pnl(total_pnl))
+    c2.metric("Avg Daily P&L",    fmt_pnl(avg_daily))
+    c3.metric("Win Days",         f"{win_days}/{total_days}")
+    c4.metric("Avg Trade Win %",  f"{avg_win_rate:.1f}%")
+    c5.metric("Portfolio Value",  f"${latest_cap:,.0f}")
+    c6.metric("Ann. Return",      f"{ann_return:+.0f}%",
+              help=f"Annualized: {total_return:.1f}% over {total_days} days × 250 trading days/year")
 
     st.markdown("---")
-    st.subheader("Daily P&L")
-    st.bar_chart(df[["date", "total_pnl"]].set_index("date"))
 
-    st.subheader("Portfolio Value")
-    st.line_chart(df[["date", "ending_capital"]].set_index("date"))
+    # ── Daily P&L bar chart ────────────────────────────────────────
+    st.subheader("Daily P&L")
+    bar_colors = ["#27ae60" if v >= 0 else "#e74c3c" for v in df["total_pnl"]]
+    fig_bar = go.Figure(go.Bar(
+        x=df["date"],
+        y=df["total_pnl"],
+        marker_color=bar_colors,
+        text=[fmt_pnl(v) for v in df["total_pnl"]],
+        textposition="outside",
+        hovertemplate="<b>%{x}</b><br>P&L: $%{y:,.2f}<extra></extra>",
+    ))
+    fig_bar.add_hline(y=DAILY_PROFIT_TARGET, line_dash="dot", line_color="#f39c12",
+                      annotation_text=f"${DAILY_PROFIT_TARGET:,} target", annotation_position="top right")
+    fig_bar.update_layout(
+        xaxis_title="Date",
+        yaxis_title="Daily P&L ($)",
+        height=350,
+        margin=dict(l=20, r=20, t=20, b=20),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        yaxis=dict(gridcolor="rgba(128,128,128,0.2)"),
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ── Portfolio value + cumulative P&L ─────────────────────────
+    st.subheader("Portfolio Value & Cumulative P&L")
+    df["cumulative_pnl"] = df["total_pnl"].cumsum()
+
+    fig_line = go.Figure()
+    fig_line.add_trace(go.Scatter(
+        x=df["date"], y=df["ending_capital"],
+        name="Portfolio Value",
+        line=dict(color="#1A3A6A", width=2),
+        hovertemplate="<b>%{x}</b><br>Portfolio: $%{y:,.0f}<extra></extra>",
+        fill="tozeroy", fillcolor="rgba(26,58,106,0.08)",
+    ))
+    fig_line.add_trace(go.Scatter(
+        x=df["date"], y=df["cumulative_pnl"],
+        name="Cumulative P&L",
+        line=dict(color="#27ae60", width=2, dash="dot"),
+        hovertemplate="<b>%{x}</b><br>Cum. P&L: $%{y:,.0f}<extra></extra>",
+        yaxis="y2",
+    ))
+    fig_line.add_hline(y=TOTAL_CAPITAL, line_dash="dash", line_color="rgba(128,128,128,0.5)",
+                       annotation_text="Starting capital", annotation_position="bottom right")
+    fig_line.update_layout(
+        height=350,
+        margin=dict(l=20, r=60, t=20, b=20),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", y=1.08),
+        yaxis=dict(title="Portfolio Value ($)", gridcolor="rgba(128,128,128,0.2)"),
+        yaxis2=dict(title="Cumulative P&L ($)", overlaying="y", side="right",
+                    gridcolor="rgba(0,0,0,0)"),
+    )
+    st.plotly_chart(fig_line, use_container_width=True)
 
     st.subheader("Daily Log")
     display = df[["date", "total_pnl", "total_trades", "win_count", "loss_count",
                   "win_rate", "ending_capital", "notes"]].sort_values("date", ascending=False)
     display["total_pnl"]       = display["total_pnl"].apply(fmt_pnl)
     display["ending_capital"]  = display["ending_capital"].apply(lambda x: f"${x:,.0f}")
-    st.dataframe(display, use_container_width=True)
+    st.dataframe(display, use_container_width=True, hide_index=True)
 
 
 # ── SCAN LOG ─────────────────────────────────────────────────────
