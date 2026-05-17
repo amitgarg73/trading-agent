@@ -2,6 +2,7 @@
 Portfolio Agent: simulates trade execution and manages open positions.
 Writes all state to Supabase.
 """
+from __future__ import annotations
 import yfinance as yf
 from datetime import date, datetime
 from core import db

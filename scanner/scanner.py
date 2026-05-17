@@ -3,6 +3,7 @@ Day-trading scanner: surfaces high-momentum candidates from the universe.
 Scores -10 to +10. Candidates with |score| >= SCORE_THRESHOLD are passed
 to the strategy agent.
 """
+from __future__ import annotations
 import yfinance as yf
 import pandas as pd
 import ta

@@ -15,7 +15,11 @@ from __future__ import annotations
 import time
 import yfinance as yf
 import pandas as pd
+import requests
+from io import StringIO
 from datetime import date
+
+_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; trading-agent/1.0)"}
 
 MIN_PRICE      = 5.0
 MAX_PRICE      = 500.0
@@ -44,9 +48,19 @@ CURATED = [
 ]
 
 
+def _wiki_tables(url: str) -> list:
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=15)
+        resp.raise_for_status()
+        return pd.read_html(StringIO(resp.text))
+    except Exception as e:
+        raise RuntimeError(f"Wikipedia fetch failed: {e}")
+
+
 def _fetch_sp500() -> list[str]:
     try:
-        df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
+        tables = _wiki_tables("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        df = tables[0]
         return df["Symbol"].str.replace(".", "-", regex=False).tolist()
     except Exception as e:
         print(f"        ⚠️  S&P 500 fetch failed: {e}")
@@ -55,7 +69,7 @@ def _fetch_sp500() -> list[str]:
 
 def _fetch_nasdaq100() -> list[str]:
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")
+        tables = _wiki_tables("https://en.wikipedia.org/wiki/Nasdaq-100")
         for t in tables:
             for col in ("Ticker", "Symbol"):
                 if col in t.columns:

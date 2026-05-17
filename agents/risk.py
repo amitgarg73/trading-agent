@@ -2,6 +2,7 @@
 Risk Agent: validates and adjusts trades from the strategy agent.
 Enforces hard rules before anything touches the portfolio.
 """
+from __future__ import annotations
 from config.settings import (
     TOTAL_CAPITAL, MAX_POSITION_PCT, MIN_POSITION_PCT,
     MAX_LOSS_PER_TRADE, MIN_REWARD_RISK, MAX_POSITIONS
