@@ -439,10 +439,10 @@ add_table(
         ('V2c', 'Fear & Greed Index + FOMC/CPI/NFP economic calendar gates', 'Built and deployed (v2.2)'),
         ('V2c.1', 'Tune F&G gate: confirming signal only (not standalone)', 'Built and deployed (v2.3)'),
         ('V3a', 'Dynamic universe refresh — weekly S&P500+Nasdaq100 screener', 'Built and deployed (v3.0)'),
-        ('V2d', 'Sector correlation guard — avoid over-concentration in one sector', 'Planned'),
+        ('V2g', 'Alpaca paper trading integration — real order simulation', 'Built and deployed (v4.0)'),
+        ('V2d', 'Sector correlation guard — max 3 positions per sector, drops lowest-confidence excess', 'Built and deployed (v4.1)'),
         ('V2e', 'Sector rotation scoring — favor sectors showing relative strength', 'Planned'),
         ('V2f', 'Momentum confirmation — 15-minute rule before entry', 'Planned'),
-        ('V2g', 'Alpaca paper trading integration — real order simulation', 'Built and deployed (v4.0)'),
     ]
 )
 
@@ -472,6 +472,16 @@ body('Added to market_context.py as part of V2.2 and tuned in V2.3:')
 bullet('Fear & Greed Index: fetches from alternative.me (free, no API key). Extreme Fear <25 reduces positions when confirmed by VIX>20 or bearish futures. Extreme Greed >80 caps positions at 12. F&G alone is informational — lagging indicator that reads low during bull recoveries.')
 bullet('Economic calendar: FOMC, CPI, NFP dates hardcoded for 2025+2026. FOMC day → cap at 8 positions. CPI/NFP day → cap at 10 positions.')
 bullet('V2.3 tuning: removed standalone F&G gate — gate cost dropped from -$9,596 to -$2,549 vs baseline (30-day backtest). Both grade B.')
+
+heading('V2d — Sector Correlation Guard (agents/sector_guard.py)', 2)
+body('Runs as Step 3.5 between risk agent and portfolio agent — no Claude API call needed. Prevents Claude from over-concentrating in one sector on a given day:')
+bullet('Fetches sector from yfinance for each approved trade (10–15 calls max, runs fast)')
+bullet('ETFs classified as "ETF" using ETF_UNIVERSE set — no API call needed for those')
+bullet('Unknown sector (yfinance rate-limited or unclassifiable) → passes through without cap — safe fallback, never blocks trades due to data gaps')
+bullet('Caps at MAX_PER_SECTOR=3 per sector — drops lowest-confidence excess trades')
+bullet('Confidence ranking for tiebreak: HIGH > MEDIUM > LOW, then by estimated_profit')
+bullet('Dashboard shows sector-blocked trades in Step 2 (Strategy & Risk) as a collapsible expander')
+bullet('Configured via MAX_PER_SECTOR in config/settings.py (default: 3)')
 
 heading('V3a — Dynamic Universe Refresh (agents/universe_refresh.py)', 2)
 body('Runs every Monday 8:30 AM ET via a separate GitHub Actions workflow. Replaces static universe with a live-screened list:')
@@ -570,6 +580,8 @@ add_table(
         ('32', 'Updated trading.yml with Alpaca secrets and --broker flag', 'default broker=alpaca for scheduled runs; manual dispatch has broker input option'),
         ('33', 'Fixed risk agent floating point false rejects', 'stop loss and reward:risk comparison precision; 2dp display in rejection messages'),
         ('34', 'Generated v4.0 documentation and architecture diagrams', 'Word docs updated to v4.0; two PNG architecture diagrams embedded'),
+        ('35', 'Built V2d — Sector correlation guard', 'agents/sector_guard.py: fetches sector via yfinance, caps at 3 per sector, Unknown passes through; MAX_PER_SECTOR=3 in settings.py; step 3.5 in orchestrator; dashboard shows sector-blocked trades'),
+        ('36', 'Fixed strategy.py JSON extraction', 'Regex on outermost { } or [ ] — handles markdown fence edge cases that produced empty string on json.loads'),
     ]
 )
 
@@ -622,14 +634,14 @@ bullet('Rerun manually: GitHub Actions → Trading Agent → Run workflow → se
 
 # ── 15. What's Next ───────────────────────────────────────────────────────────
 heading('15. What\'s Next')
-body('The system is live and running at v4.0. Planned next steps:')
+body('The system is live and running at v4.1. Planned next steps:')
 
 add_table(
     ['Phase', 'What', 'Priority'],
     [
         ('V2g', 'Alpaca paper trading API — real bracket order simulation with fills', 'Done (v4.0)'),
-        ('V2d', 'Sector correlation guard — avoid over-concentration in one sector per run', 'Next'),
-        ('V2e', 'Sector rotation scoring — favor sectors showing relative strength this week', 'Planned'),
+        ('V2d', 'Sector correlation guard — max 3 per sector, lowest-confidence excess dropped', 'Done (v4.1)'),
+        ('V2e', 'Sector rotation scoring — favor sectors showing relative strength this week', 'Next'),
         ('V2f', 'Momentum confirmation — 15-minute rule: wait for confirmed breakout before entry', 'Planned'),
         ('Alerts', 'SMS/email on position close (target hit or stop triggered)', 'Planned'),
         ('Tune', 'If live win rate < 45% after first week, drop target back to 2.5%', 'Conditional'),

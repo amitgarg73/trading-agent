@@ -238,7 +238,7 @@ add_table(
         ('V2c.1: Tune F&G to confirming signal', 'High', 'High', '99%', 'XS', '9.9', 'P1 — shipped (v2.3)'),
         ('V3a: Dynamic universe refresh (weekly screener)', 'High', 'High', '95%', 'M', '9.5', 'P1 — shipped (v3.0)'),
         ('Dashboard company names column', 'High', 'Med', '99%', 'S', '9.0', 'P1 — shipped (v3.0)'),
-        ('V2d: Sector correlation guard', 'Med', 'Med', '80%', 'S', '7.2', 'P2 — next'),
+        ('V2d: Sector correlation guard', 'Med', 'Med', '80%', 'S', '7.2', 'P1 — shipped (v4.1)'),
         ('V2e: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
         ('Alpaca paper trading API (V2g)', 'Med', 'High', '80%', 'L', '6.4', 'P0 — shipped (v4.0)'),
         ('SMS/email alerts', 'Med', 'Med', '90%', 'S', '8.1', 'P2 — next'),
@@ -269,7 +269,8 @@ add_table(
         ('Phase 2a — Intelligence (V2a–V2c.1)', 'May 2026 (complete)', 'VIX gate, futures signal, earnings blackout, news context, Fear & Greed + calendar gates, F&G tuned to confirming signal, workflow dashboard'),
         ('Phase 3a — Dynamic Universe (V3a)', 'May 2026 (complete)', 'Weekly S&P500+Nasdaq100 screener, 458 tickers on first run, company names in dashboard'),
         ('Phase 2b — Execution (V2g)', 'May 2026 (complete)', 'Alpaca paper trading — real bracket orders (entry + take-profit + stop-loss), position sync, fill price on close'),
-        ('Phase 2c — More Intelligence', 'June 2026', 'V2d sector correlation guard, V2e sector rotation, V2f momentum confirmation'),
+        ('Phase 2c — More Intelligence (V2d)', 'May 2026 (complete)', 'V2d sector correlation guard — max 3 per sector, drops lowest-confidence excess'),
+        ('Phase 2d — More Intelligence', 'June 2026', 'V2e sector rotation scoring, V2f momentum confirmation (15-min rule)'),
         ('Phase 3 — Alerts & Monitoring', 'July 2026', 'SMS/email alerts on position close, weekly email summaries'),
         ('Phase 4 — Scale', 'Q3–Q4 2026', 'Strategy A/B testing, weekly email summaries, real capital evaluation'),
     ]
@@ -499,9 +500,12 @@ add_table(
          'orchestrator load_universe() reads Supabase if ≤7 days old, else falls back to static settings.py. '
          'First run: 553 screened → 458 passed. GitHub Actions fires every Monday 8:30 AM ET.',
          'Shipped — v3.0'),
-        ('V2d', 'Sector correlation guard',
-         'Avoid picking 8 semis on the same day — sector concentration amplifies risk if that sector drops',
-         'Planned — next'),
+        ('V2d ✅', 'Sector correlation guard',
+         'Max 3 positions per sector. Fetches sector via yfinance for approved trades; ETFs classified separately. '
+         'Unknown sector (rate-limited/unclassifiable) passes through — safe fallback. '
+         'Drops lowest-confidence excess (HIGH > MEDIUM > LOW, tiebreak by estimated_profit). '
+         'Dashboard shows sector-blocked trades in Strategy & Risk step.',
+         'Shipped — v4.1'),
         ('V2e', 'Sector rotation scoring',
          'Favor sectors showing relative strength this week; deprioritize lagging sectors',
          'Planned'),
