@@ -390,20 +390,130 @@ def run_simulation(label, trading_days, scored_per_day, top_n,
                 print(f"    {r['date']}  Reason: {', '.join(r['gate_reasons'])}")
 
     return {
-        "label":       label,
-        "total_pnl":   total_pnl,
-        "avg_daily":   avg_daily,
-        "win_days":    win_days,
-        "skip_days":   skip_days,
-        "caution_days":caution_days,
-        "win_rate":    win_rate,
-        "rr":          rr,
-        "annualized":  annualized,
-        "grade":       grade,
-        "score":       score,
-        "top_tickers": ticker_pnl[:5],
+        "label":         label,
+        "total_pnl":     total_pnl,
+        "avg_daily":     avg_daily,
+        "win_days":      win_days,
+        "skip_days":     skip_days,
+        "caution_days":  caution_days,
+        "win_rate":      win_rate,
+        "rr":            rr,
+        "annualized":    annualized,
+        "grade":         grade,
+        "score":         score,
+        "top_tickers":   ticker_pnl[:5],
         "worst_tickers": ticker_pnl[-5:],
+        "daily_results": daily_results,
     }
+
+
+def generate_chart(baseline: dict, v2: dict, vix_hist: dict,
+                   trading_days: list, label: str) -> str:
+    """Generate a 2-panel chart: cumulative capital + daily return % with VIX risk overlay."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    from matplotlib.gridspec import GridSpec
+
+    dates       = [d.strftime("%Y-%m-%d") for d in trading_days]
+    b_results   = {r["date"]: r for r in baseline["daily_results"]}
+    v2_results  = {r["date"]: r for r in v2["daily_results"]}
+
+    # Build per-day series
+    b_capital, v2_capital = [TOTAL_CAPITAL], [TOTAL_CAPITAL]
+    v2_daily_pct, vix_vals, gate_colors = [], [], []
+
+    for d in dates:
+        b_pnl  = b_results.get(d, {}).get("pnl", 0)
+        v2_pnl = v2_results.get(d, {}).get("pnl", 0)
+        b_capital.append(b_capital[-1] + b_pnl)
+        v2_capital.append(v2_capital[-1] + v2_pnl)
+        ret_pct = v2_pnl / (v2_capital[-2] or TOTAL_CAPITAL) * 100
+        v2_daily_pct.append(ret_pct)
+        vix_vals.append(vix_hist.get(d))
+        gate = v2_results.get(d, {}).get("gate", "GO")
+        gate_colors.append(
+            "#e74c3c" if gate == "SKIP"    else
+            "#f39c12" if gate == "CAUTION" else
+            "#2ecc71"
+        )
+
+    b_capital  = b_capital[1:]
+    v2_capital = v2_capital[1:]
+
+    fig = plt.figure(figsize=(14, 9), facecolor="#1a1a2e")
+    fig.suptitle(f"Trading Agent Backtest — {label}", color="white",
+                 fontsize=14, fontweight="bold", y=0.98)
+
+    gs = GridSpec(2, 1, figure=fig, hspace=0.35, height_ratios=[1, 1.2])
+
+    # ── Panel 1: Cumulative capital ───────────────────────────────────────────
+    ax1 = fig.add_subplot(gs[0])
+    ax1.set_facecolor("#16213e")
+    ax1.plot(dates, b_capital,  color="#7f8c8d", linewidth=1.2, linestyle="--",
+             label="Baseline (no gates)", alpha=0.7)
+    ax1.plot(dates, v2_capital, color="#3498db", linewidth=2.0,
+             label="V2-Gated", zorder=3)
+    ax1.axhline(TOTAL_CAPITAL, color="#555", linewidth=0.8, linestyle=":")
+    ax1.fill_between(dates, TOTAL_CAPITAL, v2_capital,
+                     where=[c >= TOTAL_CAPITAL for c in v2_capital],
+                     alpha=0.15, color="#2ecc71")
+    ax1.fill_between(dates, TOTAL_CAPITAL, v2_capital,
+                     where=[c < TOTAL_CAPITAL for c in v2_capital],
+                     alpha=0.15, color="#e74c3c")
+    ax1.set_ylabel("Portfolio Value ($)", color="white", fontsize=9)
+    ax1.tick_params(colors="white", labelsize=7)
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"${x:,.0f}"))
+    ax1.legend(fontsize=8, facecolor="#1a1a2e", labelcolor="white",
+               loc="upper left", framealpha=0.8)
+    for spine in ax1.spines.values():
+        spine.set_edgecolor("#333")
+    step = max(1, len(dates) // 8)
+    ax1.set_xticks(range(0, len(dates), step))
+    ax1.set_xticklabels([dates[i] for i in range(0, len(dates), step)],
+                        rotation=30, ha="right", fontsize=7, color="#aaa")
+
+    # ── Panel 2: Daily return % bars + VIX line ───────────────────────────────
+    ax2 = fig.add_subplot(gs[1])
+    ax2.set_facecolor("#16213e")
+    x = range(len(dates))
+    ax2.bar(x, v2_daily_pct, color=gate_colors, alpha=0.85, width=0.8, zorder=2)
+    ax2.axhline(0, color="#555", linewidth=0.8, linestyle=":")
+
+    # VIX on secondary axis
+    ax2r = ax2.twinx()
+    vix_clean = [v if v is not None else float("nan") for v in vix_vals]
+    ax2r.plot(x, vix_clean, color="#e67e22", linewidth=1.5,
+              label="VIX (risk)", zorder=4, alpha=0.9)
+    ax2r.axhline(30, color="#e74c3c", linewidth=0.7, linestyle="--", alpha=0.5)
+    ax2r.axhline(20, color="#f39c12", linewidth=0.7, linestyle="--", alpha=0.5)
+    ax2r.set_ylabel("VIX", color="#e67e22", fontsize=9)
+    ax2r.tick_params(axis="y", colors="#e67e22", labelsize=7)
+    ax2r.set_ylim(0, max((v for v in vix_clean if v == v), default=50) * 1.3)
+
+    ax2.set_ylabel("Daily Return % (V2-Gated)", color="white", fontsize=9)
+    ax2.tick_params(colors="white", labelsize=7)
+    ax2.set_xticks(list(range(0, len(dates), step)))
+    ax2.set_xticklabels([dates[i] for i in range(0, len(dates), step)],
+                        rotation=30, ha="right", fontsize=7, color="#aaa")
+    for spine in ax2.spines.values():
+        spine.set_edgecolor("#333")
+
+    # Legend
+    patches = [
+        mpatches.Patch(color="#2ecc71", label="Win day (GO)"),
+        mpatches.Patch(color="#f39c12", label="Caution day"),
+        mpatches.Patch(color="#e74c3c", label="Loss / Skip day"),
+        mpatches.Patch(color="#e67e22", label="VIX (right axis)"),
+    ]
+    ax2.legend(handles=patches, fontsize=7, facecolor="#1a1a2e",
+               labelcolor="white", loc="upper left", framealpha=0.8)
+
+    fname = "backtest_chart.png"
+    plt.savefig(fname, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close()
+    return fname
 
 
 def fetch_index_returns(start_date, end_date=None) -> dict:
@@ -559,6 +669,10 @@ def run_backtest(days: int = 30, top_n: int = 15, start_date=None, end_date=None
         print(f"\n  Alpha vs best index: ${alpha:+,.0f}")
     else:
         print("  (Index data unavailable for this period)")
+
+    # ── Chart ─────────────────────────────────────────────────────────────────
+    chart_file = generate_chart(baseline, v2, vix_hist, trading_days, label)
+    print(f"\n  Chart saved → {chart_file}")
 
     print(f"\n{'='*60}\n")
 
