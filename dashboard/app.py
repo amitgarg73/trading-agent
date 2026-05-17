@@ -169,111 +169,147 @@ if page == "Summary":
               delta_color="off")
     t4.metric("Total Trades",   len(trades), help="Trades selected by Claude today")
 
+    # Build position lookup (planned_trade_id → position)
+    pos_by_trade = {p["planned_trade_id"]: p for p in open_pos + run_closed}
+
+    def trade_status(trade_id):
+        """Return (status_label, pnl_value) for a planned trade."""
+        pos = pos_by_trade.get(trade_id)
+        if not pos:
+            return "⏳ Pending", 0
+        if pos["status"] == "OPEN":
+            return "🟢 In Flight", pos.get("unrealized_pnl", 0) or 0
+        reason = (pos.get("close_reason") or "Closed").upper()
+        pnl = pos.get("realized_pnl", 0) or 0
+        label_map = {
+            "TARGET": "✅ Target Hit",
+            "STOP":   "🔴 Stop Hit",
+            "EOD":    "⏰ EOD Close",
+        }
+        return label_map.get(reason, f"⚪ {reason.title()}"), pnl
+
     st.divider()
 
-    # ── Trades by Sector ─────────────────────────────────────────
-    st.subheader("Trades by Sector")
-
-    if not trades:
-        st.info("No trades selected today.")
+    # ── In Flight ─────────────────────────────────────────────────
+    st.subheader(f"🟢 In Flight — {len(open_pos)} position{'s' if len(open_pos) != 1 else ''}")
+    if open_pos:
+        for pos in open_pos:
+            pnl  = pos.get("unrealized_pnl", 0) or 0
+            icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
+            name = COMPANY_NAMES.get(pos["ticker"], "")
+            label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
+            c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 2])
+            c1.markdown(f"**{icon} {label}**")
+            c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
+            c3.markdown(f"Now: **${pos.get('current_price', 0):.2f}**")
+            c4.markdown(f"Target ${pos['target_price']:.2f}  ·  Stop ${pos['stop_loss']:.2f}")
+            c5.markdown(
+                f"<span style='color:{pnl_color(pnl)};font-weight:bold;font-size:16px'>{fmt_pnl(pnl)}</span>",
+                unsafe_allow_html=True
+            )
+        st.markdown("")
     else:
-        # Build enriched trade rows (merge planned_trades with position status)
-        pos_by_trade = {p["planned_trade_id"]: p for p in open_pos + run_closed}
-
-        with st.spinner("Fetching sectors..."):
-            sectors: dict[str, list] = {}
-            for t in trades:
-                raw = get_sector(t["ticker"])
-                label = "Uncategorized" if raw == "Unknown" else raw
-                sectors.setdefault(label, []).append(t)
-
-        # Known sectors first (alphabetical), ETF next, Uncategorized last
-        sector_order = sorted(
-            sectors.keys(),
-            key=lambda s: (s == "Uncategorized", s == "ETF", s)
-        )
-
-        unknown_count = len(sectors.get("Uncategorized", []))
-        if unknown_count > 0:
-            st.caption(f"ℹ️ {unknown_count} ticker(s) in 'Uncategorized' — sector data unavailable (yfinance rate limit). Will resolve on next page load.")
-
-        for sector in sector_order:
-            sector_trades = sectors[sector]
-            sector_realized   = sum(
-                (pos_by_trade[t["id"]].get("realized_pnl") or 0)
-                for t in sector_trades if t["id"] in pos_by_trade
-                    and pos_by_trade[t["id"]]["status"] == "CLOSED"
-            )
-            sector_unrealized = sum(
-                (pos_by_trade[t["id"]].get("unrealized_pnl") or 0)
-                for t in sector_trades if t["id"] in pos_by_trade
-                    and pos_by_trade[t["id"]]["status"] == "OPEN"
-            )
-            sector_pnl = sector_realized + sector_unrealized
-            expand = sector != "Uncategorized"
-
-            with st.expander(f"{sector}  ·  {len(sector_trades)} trade{'s' if len(sector_trades) > 1 else ''}  ·  {fmt_pnl(sector_pnl)}", expanded=expand):
-                rows = []
-                for t in sector_trades:
-                    pos = pos_by_trade.get(t["id"])
-                    if pos:
-                        status = pos["status"]
-                        pnl_val = pos.get("realized_pnl") if status == "CLOSED" else pos.get("unrealized_pnl", 0)
-                        pnl_str = fmt_pnl(pnl_val or 0)
-                        close_reason = pos.get("close_reason", "—") if status == "CLOSED" else "OPEN"
-                    else:
-                        status, pnl_str, close_reason = "PENDING", "—", "—"
-
-                    company = COMPANY_NAMES.get(t["ticker"], "")
-                    rows.append({
-                        "Ticker":    t["ticker"],
-                        "Company":   company,
-                        "Conf.":     t["confidence"],
-                        "Entry":     f"${t['entry_price']:.2f}",
-                        "Target":    f"${t['target_price']:.2f}",
-                        "Stop":      f"${t['stop_loss']:.2f}",
-                        "Size":      f"${t['position_size']:,.0f}",
-                        "Est. P&L":  f"${t['estimated_profit']:,.0f}",
-                        "Actual P&L": pnl_str,
-                        "Status":    close_reason,
-                    })
-
-                df_s = pd.DataFrame(rows)
-                st.dataframe(df_s, use_container_width=True, hide_index=True)
+        st.caption("No open positions right now.")
 
     st.divider()
 
-    # ── P&L Breakdown Bar ─────────────────────────────────────────
-    st.subheader("P&L Breakdown")
-    closed_with_pnl = [p for p in run_closed if (p.get("realized_pnl") or 0) != 0]
-    if closed_with_pnl:
-        df_pnl = pd.DataFrame(closed_with_pnl)[["ticker", "realized_pnl", "close_reason"]]
-        df_pnl = df_pnl.sort_values("realized_pnl", ascending=True)
-        colors = ["#e74c3c" if v < 0 else "#27ae60" for v in df_pnl["realized_pnl"]]
-        fig = go.Figure(go.Bar(
-            x=df_pnl["realized_pnl"],
-            y=df_pnl["ticker"],
-            orientation="h",
-            marker_color=colors,
-            text=[fmt_pnl(v) for v in df_pnl["realized_pnl"]],
-            textposition="outside",
-            customdata=df_pnl["close_reason"],
-            hovertemplate="<b>%{y}</b><br>P&L: $%{x:,.2f}<br>Reason: %{customdata}<extra></extra>",
+    # ── Today's Plan ──────────────────────────────────────────────
+    all_plan_trades = db.select("planned_trades", filters={"plan_id": plan["id"]}) if plan else []
+    # De-duplicate by ticker, keep most recent
+    seen_t: set = set()
+    deduped_plan: list = []
+    for t in reversed(all_plan_trades):
+        if t["ticker"] not in seen_t:
+            seen_t.add(t["ticker"])
+            deduped_plan.append(t)
+
+    st.subheader(f"📋 Today's Plan — {len(deduped_plan)} trade{'s' if len(deduped_plan) != 1 else ''} selected")
+    if deduped_plan:
+        plan_rows = []
+        for t in deduped_plan:
+            status_label, pnl_val = trade_status(t["id"])
+            plan_rows.append({
+                "Status":     status_label,
+                "Ticker":     t["ticker"],
+                "Company":    COMPANY_NAMES.get(t["ticker"], ""),
+                "Conf.":      t["confidence"],
+                "Entry":      f"${t['entry_price']:.2f}",
+                "Target":     f"${t['target_price']:.2f}",
+                "Stop":       f"${t['stop_loss']:.2f}",
+                "Size":       f"${t['position_size']:,.0f}",
+                "Est. P&L":   f"${t['estimated_profit']:,.0f}",
+                "Actual P&L": fmt_pnl(pnl_val) if pnl_val != 0 else "—",
+            })
+        df_plan = pd.DataFrame(plan_rows)
+        st.dataframe(df_plan, use_container_width=True, hide_index=True)
+
+        with st.expander("💬 Claude's Reasoning"):
+            for t in deduped_plan:
+                conf_color = "green" if t["confidence"] == "HIGH" else (
+                             "orange" if t["confidence"] == "MEDIUM" else "gray")
+                st.markdown(
+                    f"**{t['ticker']}** — "
+                    f"<span style='color:{conf_color};font-weight:bold'>{t['confidence']}</span>: "
+                    f"{t.get('reasoning', '—')}",
+                    unsafe_allow_html=True
+                )
+    else:
+        st.caption("No trade plan yet.")
+
+    st.divider()
+
+    # ── Trade Heatmap ─────────────────────────────────────────────
+    st.subheader("🗺️ Trade Heatmap — P&L by Stock")
+    all_heatmap_trades = deduped_plan if deduped_plan else trades
+    if all_heatmap_trades:
+        hm_labels, hm_pnl, hm_size, hm_text, hm_hover = [], [], [], [], []
+        for t in all_heatmap_trades:
+            status_label, pnl_val = trade_status(t["id"])
+            ticker = t["ticker"]
+            company = COMPANY_NAMES.get(ticker, ticker)
+            hm_labels.append(ticker)
+            hm_pnl.append(pnl_val)
+            hm_size.append(t.get("position_size", 5000))
+            hm_text.append(f"{ticker}<br>{fmt_pnl(pnl_val)}")
+            hm_hover.append(
+                f"<b>{ticker}</b> — {company}<br>"
+                f"Status: {status_label}<br>"
+                f"P&L: {fmt_pnl(pnl_val)}<br>"
+                f"Entry: ${t['entry_price']:.2f} → Target: ${t['target_price']:.2f}"
+            )
+
+        max_abs = max((abs(v) for v in hm_pnl), default=1) or 1
+        fig_hm = go.Figure(go.Treemap(
+            labels=hm_labels,
+            parents=[""] * len(hm_labels),
+            values=hm_size,
+            text=hm_text,
+            hovertemplate="%{customdata}<extra></extra>",
+            customdata=hm_hover,
+            textinfo="text",
+            marker=dict(
+                colors=hm_pnl,
+                colorscale=[
+                    [0.0,  "#c0392b"],
+                    [0.45, "#e74c3c"],
+                    [0.5,  "#95a5a6"],
+                    [0.55, "#27ae60"],
+                    [1.0,  "#1e8449"],
+                ],
+                cmid=0,
+                showscale=True,
+                colorbar=dict(title="P&L ($)", thickness=12),
+            ),
         ))
-        fig.update_layout(
-            xaxis_title="Realized P&L ($)",
-            height=min(500, max(250, len(df_pnl) * 40)),
-            margin=dict(l=20, r=80, t=20, b=20),
-            plot_bgcolor="rgba(0,0,0,0)",
+        fig_hm.update_layout(
+            height=380,
+            margin=dict(l=0, r=0, t=10, b=0),
             paper_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig, use_container_width=True)
-    elif open_pos:
-        st.info("Positions open — P&L chart will appear as trades close.")
-    elif run_closed:
-        st.info("Closed positions have $0 P&L — no chart to show.")
+        st.plotly_chart(fig_hm, use_container_width=True)
+        st.caption("Block size = position size. Color = P&L (green = profit, red = loss, gray = pending/flat).")
     else:
-        st.info("No closed trades yet today.")
+        st.info("No trades to display yet.")
 
 
 # ── TODAY WORKFLOW ─────────────────────────────────────────────────
