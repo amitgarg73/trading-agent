@@ -95,16 +95,6 @@ if page == "Summary":
     plan   = plans[0] if plans else None
     trades = db.select("planned_trades", filters={"plan_id": plan["id"]}) if plan else []
 
-    # De-duplicate planned_trades by ticker — repeated test runs can insert the same
-    # ticker multiple times into one plan; keep only the most recent entry per ticker
-    seen: set = set()
-    deduped: list = []
-    for t in reversed(trades):
-        if t["ticker"] not in seen:
-            seen.add(t["ticker"])
-            deduped.append(t)
-    trades = deduped
-
     plan_trade_ids = {t["id"] for t in trades}
     all_open   = db.select("positions", filters={"status": "OPEN"})
     open_pos   = [p for p in all_open if p["planned_trade_id"] in plan_trade_ids]
@@ -116,6 +106,12 @@ if page == "Summary":
         and p.get("planned_trade_id") in plan_trade_ids
         and p.get("close_reason") != "CLEANUP"
     ]
+
+    # Only show planned_trades that actually have a position (open or real closed).
+    # This filters out ghost rows from repeated test premarket runs that opened
+    # different tickers — the cap is on positions, not planned_trades rows.
+    executed_trade_ids = {p["planned_trade_id"] for p in open_pos + run_closed}
+    trades = [t for t in trades if t["id"] in executed_trade_ids]
 
     realized   = sum(p.get("realized_pnl",   0) or 0 for p in run_closed)
     unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in open_pos)
@@ -309,6 +305,9 @@ elif page == "Today":
         and p.get("planned_trade_id") in plan_trade_ids
         and p.get("close_reason") != "CLEANUP"
     ]
+    # Filter trades to only those that actually executed (have a position)
+    executed_trade_ids = {p["planned_trade_id"] for p in open_pos + run_closed}
+    trades = [t for t in trades if t["id"] in executed_trade_ids]
 
     # Unpack scan results
     skipped       = results.get("skipped", False)
