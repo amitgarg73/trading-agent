@@ -12,6 +12,16 @@ import pandas as pd
 from datetime import date, datetime
 from core import db
 from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET
+from config.company_names import COMPANY_NAMES
+
+
+def add_company_col(df: pd.DataFrame, ticker_col: str = "ticker") -> pd.DataFrame:
+    """Insert a Company column right after the ticker column."""
+    if ticker_col not in df.columns:
+        return df
+    col_pos = df.columns.get_loc(ticker_col) + 1
+    df.insert(col_pos, "company", df[ticker_col].map(lambda t: COMPANY_NAMES.get(t, "")))
+    return df
 
 st.set_page_config(
     page_title="Trading Agent",
@@ -215,6 +225,7 @@ if page == "Today":
             df_scan = df_scan[[c for c in show_cols if c in df_scan.columns]]
             if "technical_score" in df_scan.columns:
                 df_scan = df_scan.sort_values("technical_score", ascending=False)
+            df_scan = add_company_col(df_scan)
             st.dataframe(df_scan, use_container_width=True, height=320)
 
     st.divider()
@@ -246,6 +257,7 @@ if page == "Today":
             display_cols = ["ticker", "action", "entry_price", "target_price", "stop_loss",
                             "shares", "position_size", "estimated_profit", "confidence", "status"]
             df_t = df_t[[c for c in display_cols if c in df_t.columns]]
+            df_t = add_company_col(df_t)
             df_t["position_size"]    = df_t["position_size"].apply(lambda x: f"${x:,.0f}")
             df_t["estimated_profit"] = df_t["estimated_profit"].apply(lambda x: f"${x:,.0f}")
             st.dataframe(df_t, use_container_width=True)
@@ -285,7 +297,9 @@ if page == "Today":
             pnl  = pos.get("unrealized_pnl", 0)
             icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 2])
-            c1.markdown(f"**{icon} {pos['ticker']}** `{pos['action']}`")
+            name = COMPANY_NAMES.get(pos["ticker"], "")
+            label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
+            c1.markdown(f"**{icon} {label}** `{pos['action']}`")
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
             c4.markdown(f"Target: ${pos['target_price']:.2f} | Stop: ${pos['stop_loss']:.2f}")
@@ -300,6 +314,7 @@ if page == "Today":
         df_cl = pd.DataFrame(today_closed)
         cl_cols = ["ticker", "action", "entry_price", "close_price", "shares", "realized_pnl", "close_reason"]
         df_cl = df_cl[[c for c in cl_cols if c in df_cl.columns]]
+        df_cl = add_company_col(df_cl)
         df_cl["realized_pnl"] = df_cl["realized_pnl"].apply(fmt_pnl)
         st.dataframe(df_cl, use_container_width=True)
 
@@ -327,7 +342,9 @@ elif page == "Positions":
             pnl  = pos.get("unrealized_pnl", 0)
             icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 2])
-            c1.markdown(f"**{icon} {pos['ticker']}** `{pos['action']}`")
+            name = COMPANY_NAMES.get(pos["ticker"], "")
+            label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
+            c1.markdown(f"**{icon} {label}** `{pos['action']}`")
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
             c4.markdown(f"Target: ${pos['target_price']:.2f} | Stop: ${pos['stop_loss']:.2f}")
@@ -351,6 +368,7 @@ elif page == "Positions":
         )
         df = pd.DataFrame(today_closed)[["ticker", "action", "entry_price", "close_price",
                                           "shares", "realized_pnl", "close_reason", "closed_at"]]
+        df = add_company_col(df)
         df["realized_pnl"] = df["realized_pnl"].apply(fmt_pnl)
         st.dataframe(df, use_container_width=True)
 
@@ -425,6 +443,8 @@ elif page == "Scan Log":
                 df = pd.DataFrame(cands)
                 if not df.empty:
                     show_cols = ["ticker", "price", "technical_score", "rsi", "volume_ratio", "atr_pct"]
-                    st.dataframe(df[[c for c in show_cols if c in df.columns]], use_container_width=True)
+                    df = df[[c for c in show_cols if c in df.columns]]
+                    df = add_company_col(df)
+                    st.dataframe(df, use_container_width=True)
             else:
                 st.json(results)
