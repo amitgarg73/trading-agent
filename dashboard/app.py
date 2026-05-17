@@ -104,7 +104,7 @@ if page == "Summary":
         p for p in all_closed
         if (p.get("closed_at") or "").startswith(run_date)
         and p.get("planned_trade_id") in plan_trade_ids
-        and p.get("close_reason") != "CLEANUP"
+        and p.get("close_reason") not in ("CLEANUP", "UNFILLED")
     ]
 
     # Only show planned_trades that actually have a position (open or real closed).
@@ -339,7 +339,7 @@ elif page == "Today":
         p for p in all_closed
         if (p.get("closed_at") or "").startswith(run_date)
         and p.get("planned_trade_id") in plan_trade_ids
-        and p.get("close_reason") != "CLEANUP"
+        and p.get("close_reason") not in ("CLEANUP", "UNFILLED")
     ]
     # Filter trades to only those that actually executed (have a position)
     executed_trade_ids = {p["planned_trade_id"] for p in open_pos + run_closed}

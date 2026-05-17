@@ -7,8 +7,35 @@ from agents.portfolio import refresh_positions
 from core import db
 
 
+def _reconcile_with_alpaca():
+    """
+    Close any Supabase OPEN positions that don't exist in Alpaca.
+    Catches the rare case where a bracket order was submitted but the entry leg never filled.
+    Only runs in Alpaca mode (called explicitly).
+    """
+    from agents import alpaca_broker
+
+    alpaca_tickers = alpaca_broker.get_open_tickers()
+    open_positions = db.select("positions", filters={"status": "OPEN"})
+
+    for pos in open_positions:
+        if pos["ticker"] not in alpaca_tickers:
+            print(f"  ⚠️  Reconciliation: {pos['ticker']} is OPEN in DB but not in Alpaca — marking UNFILLED")
+            db.update("positions", {"id": pos["id"]}, {
+                "status":       "CLOSED",
+                "close_reason": "UNFILLED",
+                "closed_at":    datetime.utcnow().isoformat(),
+                "realized_pnl": 0,
+                "close_price":  pos.get("entry_price"),
+            })
+
+
 def run(broker: str = "simulation") -> dict:
-    now     = datetime.utcnow().isoformat()
+    now = datetime.utcnow().isoformat()
+
+    if broker == "alpaca":
+        _reconcile_with_alpaca()
+
     updated = refresh_positions(broker=broker)
 
     open_pos    = [p for p in updated if not p.get("close_reason")]
