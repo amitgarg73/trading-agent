@@ -467,6 +467,98 @@ bullet('No single-day drawdown > 3% of capital')
 bullet('All V2 intelligence gates validated (VIX gate prevented losses on down days, earnings blackout prevented gap losses)')
 bullet('Strategy explainability confirmed — every trade reasoning reviewed and found logical')
 
+# ── Open Items & Backlog ──────────────────────────────────────────────────────
+doc.add_page_break()
+h1('Open Items & Backlog')
+body(
+    'Captured from build sessions — items discussed but not yet implemented. '
+    'Update status as work progresses.'
+)
+
+h2('V2 Pipeline — Remaining Phases')
+add_table(
+    ['Item', 'What', 'Why', 'Status'],
+    [
+        ('V2c', 'Sector correlation guard',
+         'Avoid picking 8 semis on the same day — sector concentration amplifies risk if that sector drops',
+         'Planned — next after V2b'),
+        ('V2d', 'Sector rotation scoring',
+         'Favor sectors showing relative strength this week; deprioritize lagging sectors',
+         'Planned'),
+        ('V2e', 'Momentum confirmation (15-min rule)',
+         'Wait for confirmed breakout 15 min after open before entering; reduces false signals on gap-and-fade setups',
+         'Planned'),
+        ('V2f', 'Alpaca paper trading API integration',
+         'Real order simulation with realistic fills, slippage, and partial fills — more accurate than simulated positions',
+         'Planned'),
+    ]
+)
+
+h2('Features & Enhancements')
+add_table(
+    ['Item', 'What', 'Why', 'Status'],
+    [
+        ('Alerts', 'SMS/email notification on position close',
+         'Know immediately when a target is hit or stop is triggered without checking dashboard',
+         'Planned — P2'),
+        ('CBRX', 'Add Cerebras Systems to stock universe post-IPO',
+         'High-conviction AI infrastructure play; IPO range $150–160, $26.6B valuation, OpenAI $20B compute deal',
+         'Pending IPO listing — add to settings.py once trading'),
+        ('Weekly summary email', 'Auto-generated weekly P&L summary with top trades and win rate',
+         'Replace manual eval.py run with push delivery',
+         'Future'),
+    ]
+)
+
+h2('Tune Triggers (Conditional Actions)')
+add_table(
+    ['Condition', 'Action', 'When to Check'],
+    [
+        ('Live win rate < 45% after first 2 weeks',
+         'Drop profit target from 3% back to 2.5% in config/settings.py',
+         'Run eval.py --days 10 after second Monday'),
+        ('Live win rate > 70% consistently',
+         'Consider increasing max positions or raising target to 3.5%',
+         'Monthly review'),
+        ('Anthropic API credit < $5',
+         'Top up credit at console.anthropic.com — no automatic alert exists',
+         'Check manually weekly; ~$0.15–0.30/day burn rate'),
+        ('GitHub Actions run fails 2 days in a row',
+         'Check Actions logs — likely a yfinance API change or dependency issue',
+         'Dashboard will show no new data as signal'),
+    ]
+)
+
+h2('Known Constraints & Gaps')
+add_table(
+    ['Constraint', 'Detail', 'Workaround'],
+    [
+        ('Anthropic console has no usage alerts',
+         'console.anthropic.com only supports auto-recharge — no threshold alerts or email notifications',
+         'Monitor manually weekly; set auto-recharge to avoid service interruption'),
+        ('yfinance earnings calendar not always populated',
+         'Some tickers have no calendar data — V2b blackout check fails safe (lets them through)',
+         'Accept the risk; most major tickers are populated; gaps are edge cases'),
+        ('SSH passphrase required for git push',
+         'Claude Code cannot enter the SSH passphrase interactively — git push must be run from user terminal',
+         'Run: eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519 && git push origin main'),
+        ('No real-time intraday prices in yfinance free tier',
+         'yfinance intraday prices have 15-min delay — positions may close slightly after actual target/stop hit',
+         'Acceptable for paper trading simulation; use paid data feed for live trading'),
+    ]
+)
+
+h2('Evaluation Cadence')
+add_table(
+    ['When', 'What to Do', 'Command'],
+    [
+        ('Monday evening (after first live day)', 'Score first live run', 'python3 eval.py --days 1'),
+        ('Every Friday', 'Weekly performance review', 'python3 eval.py --days 5'),
+        ('Monthly', 'Backtest with latest universe against prior month', 'python3 backtest.py --days 22 --top 15'),
+        ('If performance degrades', 'Tune thresholds then validate via backtest before pushing', 'Edit config/settings.py → backtest → push'),
+    ]
+)
+
 # ── Save ──────────────────────────────────────────────────────────────────────
 output_path = "/Users/amitgarg/Claude Projects/trading-agent/Trading_Agent_PRD.docx"
 doc.save(output_path)
