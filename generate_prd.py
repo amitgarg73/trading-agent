@@ -53,7 +53,7 @@ title = doc.add_heading('AI Product Requirements Doc', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = RGBColor(0x1A, 0x3A, 0x6A)
 
-sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.0')
+sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.1')
 sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.bold = True
@@ -240,6 +240,9 @@ add_table(
         ('Dashboard company names column', 'High', 'Med', '99%', 'S', '9.0', 'P1 — shipped (v3.0)'),
         ('V2d: Sector correlation guard', 'Med', 'Med', '80%', 'S', '7.2', 'P1 — shipped (v4.1)'),
         ('V5: Guardrails (6 safety checks)', 'High', 'High', '99%', 'S', '9.9', 'P0 — shipped (v5.0)'),
+        ('Summary tab: In Flight / Plan / Heatmap', 'High', 'High', '99%', 'S', '9.9', 'P1 — shipped (v5.1)'),
+        ('Automated EOD eval + Agent Scorecard', 'High', 'High', '99%', 'S', '9.9', 'P1 — shipped (v5.1)'),
+        ('Alpaca position reconciliation (UNFILLED)', 'High', 'High', '95%', 'S', '9.5', 'P1 — shipped (v5.1)'),
         ('V2e: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
         ('Alpaca paper trading API (V2g)', 'Med', 'High', '80%', 'L', '6.4', 'P0 — shipped (v4.0)'),
         ('SMS/email alerts', 'Med', 'Med', '90%', 'S', '8.1', 'P2 — next'),
@@ -359,11 +362,12 @@ bullet('User opens Positions tab during market hours')
 bullet('Sees unrealized P&L for each open position in real time')
 bullet('Sees which positions were auto-closed and why (TARGET / STOP / EOD)')
 
-body('Journey 3 — Weekly review (5 min)')
-bullet('User runs: python3 eval.py --days 5 from terminal')
-bullet('Reviews grade (A/B/C/D), win rate, actual reward:risk, top/worst tickers')
+body('Journey 3 — Weekly review (2 min)')
+bullet('User opens Performance tab → Agent Scorecard is already populated with rolling 30-day eval (auto-runs after every EOD)')
+bullet('Reviews grade (A/B/C/D), win rate, actual reward:risk, best/worst trade, close reason breakdown, and recommendations')
 bullet('Adjusts thresholds in config/settings.py based on recommendations')
 bullet('Optionally reruns backtest.py with new settings before pushing changes')
+bullet('For deeper console output: python3 eval.py --days 5 (no --write needed for manual runs)')
 
 h2('Functional Requirements')
 bullet('Market context agent must fetch VIX + futures and return GO/CAUTION/SKIP with dynamic max_positions before scanner runs')
@@ -373,8 +377,12 @@ bullet('Strategy agent must return structured JSON with entry (3% target, 1% sto
 bullet('Risk agent must enforce all 7 hard rules and return rejected trades with specific plain-English reasons')
 bullet('Guardrails must run after sector guard and block any trade that fails action whitelist, ticker whitelist, duplicate check, price sanity, capital check, or daily loss limit — with specific rejection reason logged')
 bullet('Concurrent run lock must prevent any premarket run from executing if scan_results for today already exists in Supabase')
+bullet('Intraday agent must reconcile Supabase OPEN positions against Alpaca\'s actual positions on every 30-min cycle — any mismatch marked UNFILLED automatically')
 bullet('Intraday agent must check prices and close positions within 5 minutes of target/stop being hit')
 bullet('EOD agent must produce a complete daily_performance record including P&L, win rate, and capital')
+bullet('eval.py --days 30 --write must run automatically after every EOD close and save results to Supabase for dashboard display')
+bullet('Dashboard Summary tab must show In Flight positions, Today\'s Plan with live status labels, and Trade Heatmap')
+bullet('Dashboard Performance tab must show Agent Scorecard populated from latest eval — no manual action required')
 bullet('Dashboard Today tab must show full 4-step workflow with live data within 3 seconds')
 bullet('All pipeline failures must be visible in GitHub Actions logs without data corruption or partial writes')
 
@@ -472,6 +480,7 @@ body('Phase 1 (current — v4.0): Paper trading running through Alpaca Paper Tra
      'Backtest validated: $21,474 P&L over 30 days (grade B), gates cost -$2,549 vs ungated baseline — acceptable insurance. '
      'Dashboard shows company names in all ticker tables.')
 body('Phase 2 (v4.1–v5.0, complete): V2d sector correlation guard, V5 guardrails (6 safety checks), concurrent run lock, EOD close retry.')
+body('Phase 2b (v5.1, complete): Summary tab redesign (In Flight / Today\'s Plan / Trade Heatmap); automated EOD eval (eval.py --write saves Agent Scorecard to Supabase after every EOD close); Agent Scorecard on Performance tab; Alpaca position reconciliation in intraday agent (UNFILLED detection).')
 body('Phase 3: V2e sector rotation scoring, V2f momentum confirmation.')
 body('Phase 3: If win rate > 60% and reward:risk > 2x sustained over 30 live trading days, evaluate real '
      'capital deployment with strict position limits.')
@@ -587,10 +596,12 @@ add_table(
 
 h2('Evaluation Cadence')
 add_table(
-    ['When', 'What to Do', 'Command'],
+    ['When', 'What to Do', 'Command / Where'],
     [
-        ('Monday evening (after first live day)', 'Score first live run', 'python3 eval.py --days 1'),
-        ('Every Friday', 'Weekly performance review', 'python3 eval.py --days 5'),
+        ('Every trading day (automatic)', '30-day rolling eval runs after EOD close, saves Agent Scorecard to Supabase', 'Auto — EOD GitHub Actions job'),
+        ('Daily check', 'Open Performance tab → Agent Scorecard populated automatically', 'Dashboard → Performance tab'),
+        ('Monday evening (after first live day)', 'Manual console eval for deeper output', 'python3 eval.py --days 1'),
+        ('Every Friday', 'Review Agent Scorecard on dashboard OR run manual eval', 'Dashboard or: python3 eval.py --days 5'),
         ('Monthly', 'Backtest with latest universe against prior month', 'python3 backtest.py --days 22 --top 15'),
         ('If performance degrades', 'Tune thresholds then validate via backtest before pushing', 'Edit config/settings.py → backtest → push'),
     ]

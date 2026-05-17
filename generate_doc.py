@@ -62,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.0  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.1  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -156,7 +156,7 @@ code('├── orchestrator.py              # Master controller — chains all 
 code('├── requirements.txt             # Python dependencies')
 code('├── schema.sql                   # Supabase database schema')
 code('├── backtest.py                  # 30-day historical backtest (no Claude API)')
-code('├── eval.py                      # Weekly eval script — grades live performance')
+code('├── eval.py                      # Eval script — grades live performance; --write saves to Supabase (auto-runs EOD)')
 code('├── generate_doc.py              # Generates this Word document')
 code('├── generate_prd.py              # Generates the PRD document')
 code('├── .env                         # Local secrets (gitignored)')
@@ -269,6 +269,13 @@ bullet('Check-before-insert prevents duplicate key errors on manual reruns')
 bullet('Writes trade plan summary and all individual positions to the database')
 
 heading('3b. Intraday Pipeline (Every 30 min, 10:00 AM – 3:30 PM ET)', 2)
+body('Reconciliation (alpaca mode only — runs first):')
+bullet('Compares all Supabase OPEN positions against Alpaca\'s actual live positions (get_open_tickers())')
+bullet('Any Supabase OPEN position not in Alpaca → marked UNFILLED (status=CLOSED, close_reason=UNFILLED, realized_pnl=0, close_price=entry_price)')
+bullet('Catches the rare case where a bracket order was submitted (order_id stored) but the entry leg never filled (symbol halted mid-submission, etc.)')
+bullet('Dashboard and eval both exclude UNFILLED entries alongside CLEANUP — prevents stale data surfacing')
+doc.add_paragraph()
+body('Position monitoring:')
 bullet('simulation mode: fetches current prices via yfinance, calculates unrealized P&L')
 bullet('alpaca mode: calls Alpaca API (get_position_data) to sync live price and unrealized P&L for each open position')
 bullet('alpaca mode: when a position disappears from Alpaca (bracket fill triggered), fetches actual fill price from bracket order leg to compute realized P&L')
@@ -282,6 +289,13 @@ bullet('alpaca mode: calls close_position() on Alpaca, uses actual fill price (n
 bullet('Calculates total daily P&L, win rate, best and worst trade')
 bullet('Writes daily performance record to Supabase daily_performance table')
 bullet('Updates portfolio capital for compounding into the next trading day')
+doc.add_paragraph()
+body('Automatic eval (runs immediately after EOD close, every trading day):')
+bullet('eval.py --days 30 --write runs as a separate step in the EOD GitHub Actions job')
+bullet('Computes score (0–100), grade (A/B/C/D), avg daily P&L vs target, win days, trade win rate, actual reward:risk, best/worst trade, close reason breakdown, and tuning recommendations')
+bullet('Saves results to scan_results table (scan_type="eval") — visible in Performance tab Agent Scorecard on dashboard immediately')
+bullet('Excludes CLEANUP and UNFILLED positions from all calculations — score reflects actual trades only')
+bullet('If fewer than 30 days of data exist, eval covers all available days')
 
 # ── 4. The Technology Stack ───────────────────────────────────────────────────
 doc.add_page_break()
@@ -347,7 +361,7 @@ add_table(
         ('Universe Refresh', '30 12 * * 1', '8:30 AM Mondays', 'Fetch S&P500+Nasdaq100, screen for ATR/volume, save 450+ tickers to Supabase'),
         ('Premarket', '0 13 * * 1-5', '9:00 AM Mon–Fri', 'Market check → Scan (dynamic universe) → News filter → Strategy → Risk → Open positions'),
         ('Intraday', '0,30 14-19 * * 1-5', 'Every 30 min 10AM–3:30PM', 'Monitor positions, close on target/stop'),
-        ('EOD', '30 20 * * 1-5', '4:30 PM Mon–Fri', 'Close remaining, calculate daily P&L'),
+        ('EOD', '30 20 * * 1-5', '4:30 PM Mon–Fri', 'Close remaining, calculate daily P&L, then auto-run eval (30-day, saves to Supabase)'),
     ]
 )
 
@@ -371,32 +385,53 @@ heading('7. The Dashboard — Workflow View')
 body(
     'A Streamlit web app (dashboard/app.py) shows the full pipeline progression in real time. '
     'Deployed to Streamlit Community Cloud — always on, accessible from any device. '
-    'Password protected. Connects directly to Supabase and reads live data.'
+    'Password protected. Connects directly to Supabase and reads live data. '
+    'Five tabs: Summary, Today, Positions, Performance, Scan Log.'
+)
+body(
+    'Sidebar: capital and daily target displayed at all times. Refresh button forces data reload. '
+    'Staleness detection: if no premarket run exists for today, a STALE badge and warning banner appear across Summary and Today tabs, '
+    'showing the most recent available data rather than a blank screen.'
 )
 
-heading('Today Tab — Full Workflow View', 2)
-body(
-    'The Today tab shows the complete pipeline run as a step-by-step workflow:'
-)
+heading('Summary Tab — Daily Cockpit', 2)
+body('The Summary tab is the primary at-a-glance view for the current trading day:')
+bullet('Header: date and status badge (TRADING / STALE / PENDING) color-coded green/gray')
+bullet('KPI row (6 metrics): Capital · Today\'s P&L with % return delta · Realized P&L · Unrealized P&L · Anticipated profit vs target · % Return')
+bullet('Trade stats row: Open Positions · Closed Today · Win Rate (W/L split) · Total Trades selected by Claude')
+bullet('In Flight section: one inline card per open position — ticker + company name, entry price, current price, target/stop, unrealized P&L in green/red')
+bullet('Today\'s Plan table: all planned trades with Status column (⏳ Pending → 🟢 In Flight → ✅ Target Hit / 🔴 Stop Hit / ⏰ EOD Close) plus estimated and actual P&L. Expandable Claude reasoning per trade.')
+bullet('Trade Heatmap: Plotly Treemap — each block is one stock, sized by position size, colored green/red by P&L. Hover shows full detail. Gray = pending/flat.')
+
+heading('Today Tab — Pipeline Workflow', 2)
+body('Shows the complete premarket pipeline as a numbered step-by-step view:')
 add_table(
     ['Step', 'What You See'],
     [
-        ('0 — Market Conditions', 'VIX (color-coded green/yellow/red), Fear & Greed index, futures bias, S&P/Nasdaq/Dow % change, FOMC/CPI/NFP banners, international markets expandable. All metrics have help tooltips explaining acronyms.'),
-        ('1 — Scanner', 'Total candidates found, earnings-blocked count, full table of screened stocks with company names, sorted by technical score'),
-        ('2 — Strategy & Risk', "Claude's market read, estimated profit vs $1K target, approved trades table with company names, expandable per-trade reasoning"),
-        ('3 — Live Positions', 'Open positions labeled as "TICKER · Company" with entry/current/target/stop and color-coded P&L, closed trades with realized P&L and company names'),
+        ('0 — Market Conditions', 'VIX (green/yellow/red), Fear & Greed index, futures bias, S&P/Nasdaq/Dow % change. FOMC/CPI/NFP event banners when active. Expandable international markets (Nikkei, FTSE, DAX, Hang Seng, Shanghai). All metrics have help tooltips explaining acronyms and thresholds.'),
+        ('1 — Scanner', 'Total candidates found, earnings-blocked count, full table of screened stocks with technical scores and company names'),
+        ('2 — Strategy & Risk', "Claude's market read, estimated profit vs $1K target, approved trades table, expandable per-trade reasoning. Sector cap blocked expander (🏭). Guardrails blocked expander (🛑)."),
+        ('3 — Live Positions', 'Open position cards (TICKER · Company, entry/current/target/stop, color-coded P&L) and closed positions table with realized P&L and close reason'),
     ]
 )
 
-heading('Other Tabs', 2)
-add_table(
-    ['Tab', 'What You See'],
-    [
-        ('Positions', 'All open positions with live unrealized P&L, all closed trades with realized P&L for today'),
-        ('Performance', 'Historical P&L bar chart, portfolio value line chart, daily win rate, 30-day stats'),
-        ('Scan Log', 'Historical premarket scans — VIX, futures bias, screened candidates, earnings blocks per run'),
-    ]
-)
+heading('Positions Tab', 2)
+bullet('All currently OPEN positions with live unrealized P&L (updated every 30 min by intraday agent)')
+bullet('All positions CLOSED today with realized P&L, fill price, and close reason (TARGET/STOP/EOD)')
+bullet('Note: this tab shows all DB positions without plan scoping — use Today tab for the cleanest current-day view')
+
+heading('Performance Tab', 2)
+body('Historical performance view with automated Agent Scorecard:')
+bullet('Agent Scorecard (top, expanded by default): latest eval results from Supabase — Score (0–100), Grade (A/B/C/D), Avg Daily P&L vs target, Win Days, Trade Win Rate, Actual R:R, close reason breakdown, best/worst trade, tuning recommendations. Updated automatically every trading day after EOD.')
+bullet('KPI row: Total P&L · Avg Daily P&L · Win Days · Avg Trade Win % · Portfolio Value · Annualized Return')
+bullet('Daily P&L bar chart: Plotly go.Bar — green/red per day with dotted target line ($716/day)')
+bullet('Portfolio value + cumulative P&L: Plotly dual-axis line chart — portfolio value (left axis) and cumulative P&L (right axis)')
+bullet('Daily log table: one row per day sorted descending')
+
+heading('Scan Log Tab', 2)
+bullet('Every premarket and intraday scan entry as expandable rows')
+bullet('Premarket rows show: VIX, futures bias, candidate count, sector/guardrail blocks, raw JSONB results')
+bullet('Useful for auditing why the pipeline skipped, reduced positions, or blocked specific trades on any given day')
 
 heading('Access', 2)
 bullet('URL: Your Streamlit Cloud app URL (dashboard password protected)')
@@ -632,6 +667,11 @@ add_table(
         ('39', 'EOD close retry for Alpaca', 'portfolio.py close_all_positions(): retries Alpaca close once after 2s on failure; warns loudly if still failing'),
         ('40', 'Fixed sector_blocked/guardrail_blocked persistence', 'scan_results JSONB updated with actual values after both sector guard and guardrails (previously always stored as [])'),
         ('41', 'Updated docs to v5.0', 'Trading_Agent_Documentation.docx and Trading_Agent_PRD.docx regenerated with V5 guardrails'),
+        ('42', 'Redesigned Summary tab', 'Replaced Trades by Sector with three sections: In Flight (live position cards), Today\'s Plan (deduped trade table with status labels), Trade Heatmap (Plotly Treemap — green/red by P&L, sized by position size)'),
+        ('43', 'Added automated EOD eval', 'eval.py --write flag saves score/grade/recommendations to Supabase (scan_results, scan_type=eval); EOD GitHub Actions job runs eval.py --days 30 --write automatically after every EOD close'),
+        ('44', 'Added Agent Scorecard to Performance tab', 'Reads latest eval from Supabase and displays Score, Grade, Avg Daily P&L, Win Days, Trade Win Rate, Actual R:R, close reason breakdown, best/worst trade, and recommendations — updated every trading day without manual action'),
+        ('45', 'Added Alpaca position reconciliation', 'intraday.py _reconcile_with_alpaca() runs first on every 30-min cycle; any Supabase OPEN position not in Alpaca is marked UNFILLED (P&L=0) — catches the rare case where a bracket order was submitted but the entry leg never filled; dashboard and eval exclude UNFILLED alongside CLEANUP'),
+        ('46', 'Updated docs to v5.1', 'Trading_Agent_Documentation.docx and Trading_Agent_PRD.docx regenerated with Summary redesign, eval automation, Agent Scorecard, and Alpaca reconciliation'),
     ]
 )
 
@@ -669,17 +709,18 @@ add_table(
     [
         ('9:00 AM Mon–Fri', 'Market check → Scan → Earnings filter → Strategy → Risk → Open positions', 'GitHub Actions logs + Dashboard Today tab'),
         ('Every 30 min 10AM–3:30PM', 'Intraday position monitoring, close on target/stop', 'Dashboard Positions tab'),
-        ('4:30 PM Mon–Fri', 'EOD close + daily P&L calculation', 'Dashboard Performance tab'),
+        ('4:30 PM Mon–Fri', 'EOD close + daily P&L + auto eval (saves Agent Scorecard to Supabase)', 'Dashboard Performance tab'),
         ('Anytime', 'Manual trigger via GitHub Actions → Run workflow', 'GitHub Actions'),
-        ('Anytime', 'View live workflow dashboard', 'Streamlit Cloud URL'),
+        ('Anytime', 'View live workflow dashboard (Summary, Today, Positions, Performance, Scan Log)', 'Streamlit Cloud URL'),
     ]
 )
 
 heading('How to Check on Things', 2)
-bullet('Dashboard: open your Streamlit Cloud URL → login → Today tab shows full workflow')
+bullet('Dashboard: open your Streamlit Cloud URL → login → Summary tab shows today\'s cockpit; Today tab shows full pipeline workflow')
+bullet('Agent Scorecard: Performance tab — updated automatically after every EOD close; shows score, grade, recommendations')
 bullet('Logs: github.com/amitgarg73/trading-agent → Actions → click any run for full output')
 bullet('Raw data: Supabase → Table Editor → browse any of the 5 tables directly')
-bullet('Weekly scoring: python3 eval.py --days 5 (run Monday evening after first live week)')
+bullet('Manual eval: python3 eval.py --days 5 (console only, no --write flag needed unless saving to Supabase manually)')
 bullet('Rerun manually: GitHub Actions → Trading Agent → Run workflow → select mode')
 
 # ── 15. What's Next ───────────────────────────────────────────────────────────
