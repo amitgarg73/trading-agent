@@ -1,4 +1,6 @@
 """Generates the Trading Agent project documentation as a Word document."""
+import subprocess
+import os
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -60,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v3.0  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v4.0  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -175,7 +177,8 @@ code('│   ├── strategy.py                 # Claude picks the best trades
 code('│   ├── risk.py                     # Claude validates risk parameters')
 code('│   ├── portfolio.py                # Opens/tracks simulated positions')
 code('│   ├── intraday.py                 # Monitors open positions mid-day')
-code('│   └── performance.py              # Calculates EOD P&L')
+code('│   ├── performance.py              # Calculates EOD P&L')
+code('│   └── alpaca_broker.py            # Alpaca paper trading broker (bracket orders, sync, fills)')
 code('├── config/')
 code('│   ├── settings.py                 # Capital, thresholds, static stock universe (fallback)')
 code('│   └── company_names.py            # Static ticker→company name lookup (~430 tickers)')
@@ -200,8 +203,7 @@ body('Stage 0 — Market Context Agent (V2a)')
 bullet('Fetches VIX (^VIX) — fear index, measures overall market volatility')
 bullet('Fetches US futures: S&P500 (ES=F), Nasdaq (NQ=F), Dow (YM=F) — pre-market direction')
 bullet('Fetches international markets: Nikkei, FTSE, DAX, Hang Seng, Shanghai — global context')
-bullet('VIX > 30: skip trading entirely (extreme fear)')
-bullet('VIX 25–30: reduce to 5 max positions; VIX 20–25: reduce to 10 max positions')
+bullet('VIX tiered gate: VIX >45 → 2 positions; VIX 30–45 → 3 positions; VIX 25–30 → 5 positions; VIX 20–25 → 10 positions; VIX <20 → 15 positions (no hard skip on VIX)')
 bullet('Futures avg down >1.5%: skip trading (strong sell-off); down >0.5%: bearish bias, reduce positions')
 bullet('Passes full market summary to Claude strategy agent as context')
 bullet('Stores VIX, futures, and international data in scan_results for full audit trail')
@@ -237,19 +239,23 @@ bullet('Position sizing: $5K–$7K per trade (5–7% of $100K capital)')
 bullet('Returns approved and rejected trades with specific rejection reasons in plain English')
 
 body('Stage 4 — Portfolio Agent')
-bullet('Opens simulated positions for all approved trades in Supabase')
+bullet('Broker abstraction: broker="simulation" (default, yfinance) or broker="alpaca"')
+bullet('simulation mode: writes positions to Supabase only')
+bullet('alpaca mode: submits bracket order (entry market + take-profit limit + stop-loss) to Alpaca; stores alpaca_order_id in positions table')
 bullet('Check-before-insert prevents duplicate key errors on manual reruns')
 bullet('Writes trade plan summary and all individual positions to the database')
 
 heading('3b. Intraday Pipeline (Every 30 min, 10:00 AM – 3:30 PM ET)', 2)
-bullet('Fetches current prices for all open positions via yfinance')
-bullet('Calculates unrealized P&L for each position in real time')
+bullet('simulation mode: fetches current prices via yfinance, calculates unrealized P&L')
+bullet('alpaca mode: calls Alpaca API (get_position_data) to sync live price and unrealized P&L for each open position')
+bullet('alpaca mode: when a position disappears from Alpaca (bracket fill triggered), fetches actual fill price from bracket order leg to compute realized P&L')
 bullet('Closes positions that hit +3% target (take profit) or -1% stop loss (cut loss)')
 bullet('Records close reason: TARGET, STOP, or EOD')
 bullet('No overnight holds — all positions closed by end of day')
 
 heading('3c. End of Day Pipeline (4:30 PM ET)', 2)
-bullet('Closes any remaining open positions at market close price (EOD reason)')
+bullet('simulation mode: closes remaining open positions at yfinance market close price')
+bullet('alpaca mode: calls close_position() on Alpaca, uses actual fill price (not yfinance) for realized P&L')
 bullet('Calculates total daily P&L, win rate, best and worst trade')
 bullet('Writes daily performance record to Supabase daily_performance table')
 bullet('Updates portfolio capital for compounding into the next trading day')
@@ -270,6 +276,7 @@ add_table(
         ('Secrets (cloud)', 'GitHub Secrets + Streamlit Cloud Secrets', 'API keys injected at runtime, never in code'),
         ('Secrets (local)', '.env file (gitignored)', 'Local development credentials'),
         ('Version Control', 'Git + GitHub (private repo)', 'Code storage and CI/CD trigger (v1.0, v2.0, v2.1)'),
+        ('Broker', 'Alpaca Paper Trading (alpaca-py)', 'Real bracket order simulation — entry, take-profit, stop-loss in one call'),
         ('Auth (GitHub)', 'SSH key pair', 'Passwordless git push from local machine'),
     ]
 )
@@ -325,15 +332,15 @@ body('Each run:')
 bullet('Checks out the code from GitHub')
 bullet('Sets up Python 3.11')
 bullet('Installs dependencies from requirements.txt')
-bullet('Injects secrets (ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_KEY) from GitHub Secrets')
-bullet('Runs: python orchestrator.py --mode premarket|intraday|eod')
+bullet('Injects secrets (ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_KEY, ALPACA_API_KEY, ALPACA_SECRET_KEY) from GitHub Secrets')
+bullet('Runs: python orchestrator.py --mode premarket|intraday|eod --broker alpaca (scheduled runs default to alpaca)')
 bullet('FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true set to suppress Node.js deprecation warnings')
 
 heading('Manual Trigger', 2)
 body(
     'Any run can be triggered manually from GitHub → Actions → Trading Agent → Run workflow. '
-    'Select the mode (premarket, intraday, or eod) and click Run. Used for testing and re-running '
-    'failed jobs. URL: https://github.com/amitgarg73/trading-agent/actions'
+    'Select the mode (premarket, intraday, or eod) and broker (simulation or alpaca) from the dispatch inputs and click Run. '
+    'Used for testing and re-running failed jobs. URL: https://github.com/amitgarg73/trading-agent/actions'
 )
 
 # ── 7. The Dashboard ──────────────────────────────────────────────────────────
@@ -435,13 +442,13 @@ add_table(
         ('V2d', 'Sector correlation guard — avoid over-concentration in one sector', 'Planned'),
         ('V2e', 'Sector rotation scoring — favor sectors showing relative strength', 'Planned'),
         ('V2f', 'Momentum confirmation — 15-minute rule before entry', 'Planned'),
-        ('V2g', 'Alpaca paper trading integration — real order simulation', 'Planned'),
+        ('V2g', 'Alpaca paper trading integration — real order simulation', 'Built and deployed (v4.0)'),
     ]
 )
 
 heading('V2a — Market Context Agent (agents/market_context.py)', 2)
 body('Runs as Step 0 of premarket, before the scanner. Checks three things:')
-bullet('VIX gate: ^VIX from yfinance. Skip if >30 (extreme fear). Reduce max_positions to 5 if 25–30, to 10 if 20–25.')
+bullet('VIX tiered gate: ^VIX from yfinance. VIX >45 → 2 pos; VIX 30–45 → 3 pos; VIX 25–30 → 5 pos; VIX 20–25 → 10 pos; VIX <20 → 15 pos. No hard skip — always trades with reduced positions at high VIX.')
 bullet('Futures gate: ES=F, NQ=F, YM=F. Skip if average down >1.5% (strong pre-market sell-off). Caution if down >0.5%, bullish bias if up >0.5%.')
 bullet('International markets: Nikkei, FTSE, DAX, Hang Seng, Shanghai. Context only — no hard gate. Majority positive/negative noted in summary.')
 body(
@@ -503,6 +510,8 @@ add_table(
         ('SUPABASE_URL', 'GitHub Secrets + Streamlit Secrets + .env', 'Points to your Supabase project'),
         ('SUPABASE_KEY', 'GitHub Secrets + Streamlit Secrets + .env', 'Service role key for DB read/write'),
         ('DASHBOARD_PASSWORD', 'Streamlit Secrets + .env', 'Protects the Streamlit dashboard login'),
+        ('ALPACA_API_KEY', 'GitHub Secrets + .env', 'Alpaca paper trading API key'),
+        ('ALPACA_SECRET_KEY', 'GitHub Secrets + .env', 'Alpaca paper trading secret key'),
     ]
 )
 body('Security principles applied:')
@@ -556,6 +565,11 @@ add_table(
         ('27', 'Built V3a — Universe Refresh Agent', 'Weekly S&P500+Nasdaq100 screener; 458 tickers saved to Supabase on first run'),
         ('28', 'Added company names to dashboard tables', 'config/company_names.py static dict, company column in all ticker tables'),
         ('29', 'Generated documentation and PRD', 'Word documents updated to v3.0'),
+        ('30', 'Built V2g — Alpaca broker', 'agents/alpaca_broker.py: bracket orders, position sync, fill price on close'),
+        ('31', 'Updated portfolio.py with broker abstraction', 'simulation default, alpaca mode with order submission and sync'),
+        ('32', 'Updated trading.yml with Alpaca secrets and --broker flag', 'default broker=alpaca for scheduled runs; manual dispatch has broker input option'),
+        ('33', 'Fixed risk agent floating point false rejects', 'stop loss and reward:risk comparison precision; 2dp display in rejection messages'),
+        ('34', 'Generated v4.0 documentation and architecture diagrams', 'Word docs updated to v4.0; two PNG architecture diagrams embedded'),
     ]
 )
 
@@ -579,6 +593,8 @@ add_table(
         ('backtest.py crash — 1D array error', 'yfinance returns multi-level column headers on batch download', 'Fixed with df.columns = df.columns.get_level_values(0)'),
         ('orchestrator undefined variable error', 'db.insert referenced intel["blackout_tickers"] before intel was defined', 'Moved db.insert to after news_intel.run() call'),
         ('yfinance calendar format varies by version', 'ticker.calendar returns DataFrame or dict depending on yfinance version', 'Added isinstance checks in news_intel._get_earnings_date()'),
+        ('git commit blocked in Claude Code', 'Claude Code permission mode requires approval for git commit', 'User approves in permission prompt or runs git push from own terminal'),
+        ('Risk agent false rejects on exact thresholds', 'Float arithmetic on 2dp stock prices produces 1.000000002 instead of 1.0 — fails strict > comparison', 'round(potential_loss, 4) + tolerance; round(rr, 2) for reward:risk; 2dp display in rejection message'),
     ]
 )
 
@@ -606,19 +622,56 @@ bullet('Rerun manually: GitHub Actions → Trading Agent → Run workflow → se
 
 # ── 15. What's Next ───────────────────────────────────────────────────────────
 heading('15. What\'s Next')
-body('The system is live and running at v3.0. Planned next steps:')
+body('The system is live and running at v4.0. Planned next steps:')
 
 add_table(
     ['Phase', 'What', 'Priority'],
     [
+        ('V2g', 'Alpaca paper trading API — real bracket order simulation with fills', 'Done (v4.0)'),
         ('V2d', 'Sector correlation guard — avoid over-concentration in one sector per run', 'Next'),
         ('V2e', 'Sector rotation scoring — favor sectors showing relative strength this week', 'Planned'),
         ('V2f', 'Momentum confirmation — 15-minute rule: wait for confirmed breakout before entry', 'Planned'),
-        ('V2g', 'Alpaca paper trading API — real order simulation with fills and slippage', 'Planned'),
         ('Alerts', 'SMS/email on position close (target hit or stop triggered)', 'Planned'),
         ('Tune', 'If live win rate < 45% after first week, drop target back to 2.5%', 'Conditional'),
     ]
 )
+
+# ── Architecture Diagrams ─────────────────────────────────────────────────────
+doc.add_page_break()
+heading('16. Architecture Diagrams')
+body(
+    'The following diagrams are auto-generated by generate_architecture.py. '
+    'Re-run that script to regenerate if the architecture changes.'
+)
+
+_project_dir = "/Users/amitgarg/Claude Projects/trading-agent"
+_hl_png = os.path.join(_project_dir, "architecture_high_level.png")
+_ll_png = os.path.join(_project_dir, "architecture_low_level.png")
+
+# Generate diagrams if not already present
+if not os.path.exists(_hl_png) or not os.path.exists(_ll_png):
+    subprocess.run(
+        ["python3", os.path.join(_project_dir, "generate_architecture.py")],
+        check=True
+    )
+
+heading('High-Level Architecture', 2)
+body('Shows the trigger sources, orchestrator, full agent pipeline, and external services.')
+if os.path.exists(_hl_png):
+    doc.add_picture(_hl_png, width=Inches(6.5))
+    caption = doc.add_paragraph('Figure 1: High-Level Architecture — triggers, agents, data stores, and external APIs')
+    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    caption.runs[0].font.size = Pt(9)
+    caption.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+
+heading('Detailed Pipeline (Low-Level)', 2)
+body('Step-by-step premarket pipeline with Alpaca broker abstraction, intraday sync, and EOD flow.')
+if os.path.exists(_ll_png):
+    doc.add_picture(_ll_png, width=Inches(6.5))
+    caption = doc.add_paragraph('Figure 2: Low-Level Pipeline — detailed data flow from market context through EOD with broker modes')
+    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    caption.runs[0].font.size = Pt(9)
+    caption.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 output_path = "/Users/amitgarg/Claude Projects/trading-agent/Trading_Agent_Documentation.docx"

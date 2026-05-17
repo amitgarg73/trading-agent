@@ -53,7 +53,7 @@ title = doc.add_heading('AI Product Requirements Doc', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = RGBColor(0x1A, 0x3A, 0x6A)
 
-sub = doc.add_paragraph('AI Trading Agent (PRD) — v3.0')
+sub = doc.add_paragraph('AI Trading Agent (PRD) — v4.0')
 sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.bold = True
@@ -240,7 +240,7 @@ add_table(
         ('Dashboard company names column', 'High', 'Med', '99%', 'S', '9.0', 'P1 — shipped (v3.0)'),
         ('V2d: Sector correlation guard', 'Med', 'Med', '80%', 'S', '7.2', 'P2 — next'),
         ('V2e: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
-        ('Alpaca paper trading API', 'Med', 'High', '80%', 'L', '6.4', 'P2 — next'),
+        ('Alpaca paper trading API (V2g)', 'Med', 'High', '80%', 'L', '6.4', 'P0 — shipped (v4.0)'),
         ('SMS/email alerts', 'Med', 'Med', '90%', 'S', '8.1', 'P2 — next'),
         ('V2f: 15-min momentum confirmation', 'Med', 'Med', '70%', 'M', '6.3', 'P3 — future'),
         ('Macro context agent (Fed calendar)', 'Med', 'Med', '70%', 'M', '6.3', 'P3 — future'),
@@ -268,8 +268,9 @@ add_table(
         ('Phase 1 — Foundation', 'May 2026 (complete)', 'Scanner, strategy agent, risk agent, portfolio sim, GitHub Actions, Supabase, dashboard, backtest'),
         ('Phase 2a — Intelligence (V2a–V2c.1)', 'May 2026 (complete)', 'VIX gate, futures signal, earnings blackout, news context, Fear & Greed + calendar gates, F&G tuned to confirming signal, workflow dashboard'),
         ('Phase 3a — Dynamic Universe (V3a)', 'May 2026 (complete)', 'Weekly S&P500+Nasdaq100 screener, 458 tickers on first run, company names in dashboard'),
-        ('Phase 2b — More Intelligence', 'June 2026', 'V2d sector correlation guard, V2e sector rotation, V2f momentum confirmation'),
-        ('Phase 3 — Execution', 'July 2026', 'Alpaca paper trading API, SMS/email alerts on position close'),
+        ('Phase 2b — Execution (V2g)', 'May 2026 (complete)', 'Alpaca paper trading — real bracket orders (entry + take-profit + stop-loss), position sync, fill price on close'),
+        ('Phase 2c — More Intelligence', 'June 2026', 'V2d sector correlation guard, V2e sector rotation, V2f momentum confirmation'),
+        ('Phase 3 — Alerts & Monitoring', 'July 2026', 'SMS/email alerts on position close, weekly email summaries'),
         ('Phase 4 — Scale', 'Q3–Q4 2026', 'Strategy A/B testing, weekly email summaries, real capital evaluation'),
     ]
 )
@@ -316,7 +317,7 @@ bullet('yfinance provides reliable enough data for paper trading — not suitabl
 bullet('GitHub Actions free tier (2,000 min/month) is sufficient for current run frequency')
 bullet('Supabase free tier (500MB) is sufficient for months of trade history at current volume')
 bullet('claude-sonnet-4-6 provides sufficient reasoning quality for trade selection at this scale')
-bullet('System is simulation only — no real money at risk, no broker integration in current phase')
+bullet('Paper trading runs through Alpaca Paper Trading API — realistic bracket orders with fills; no real money at risk')
 bullet('Market hours assumed to be standard US equity (9:30AM–4PM ET Mon–Fri)')
 bullet('yfinance earnings calendar not always populated — some tickers may slip through blackout check')
 
@@ -334,6 +335,7 @@ add_table(
         ('Duplicate key DB errors on rerun', 'Low', 'Low', 'Fixed — check-before-insert logic in orchestrator.py'),
         ('Model quality regression', 'Low', 'Med', 'Monitor reasoning quality in dashboard; can switch back to Opus'),
         ('VIX/futures data unavailable pre-market', 'Low', 'Low', 'Handled — None values fall through to GO with default max_positions'),
+        ('Alpaca API rate limits or downtime', 'Low', 'Med', 'Falls back to yfinance simulation for P&L if Alpaca unavailable; positions still logged to Supabase'),
     ]
 )
 
@@ -459,13 +461,12 @@ add_table(
 )
 
 h2('Roll-out Strategy')
-body('Phase 1 (current — v3.0): Paper trading simulation — no real money, full automation, live since May 2026. '
+body('Phase 1 (current — v4.0): Paper trading running through Alpaca Paper Trading API — realistic bracket orders with fills; no real money at risk. '
      'V2a (VIX + futures), V2b (earnings blackout + news), V2c (Fear & Greed + calendar), V2c.1 (F&G gate tuned to confirming signal), '
-     'V3a (dynamic universe refresh — weekly S&P500+Nasdaq100 screener, 458 tickers) all deployed. '
+     'V3a (dynamic universe refresh — weekly S&P500+Nasdaq100 screener, 458 tickers), V2g (Alpaca broker — bracket orders + fill price sync) all deployed. '
      'Backtest validated: $21,474 P&L over 30 days (grade B), gates cost -$2,549 vs ungated baseline — acceptable insurance. '
      'Dashboard shows company names in all ticker tables.')
-body('Phase 2: V2d sector correlation guard, V2e sector rotation scoring. Then connect Alpaca paper trading '
-     'API for order simulation with realistic fills and slippage.')
+body('Phase 2: V2d sector correlation guard, V2e sector rotation scoring, V2f momentum confirmation.')
 body('Phase 3: If win rate > 60% and reward:risk > 2x sustained over 30 live trading days, evaluate real '
      'capital deployment with strict position limits.')
 body('Go/no-go criteria for real capital:')
@@ -507,9 +508,10 @@ add_table(
         ('V2f', 'Momentum confirmation (15-min rule)',
          'Wait for confirmed breakout 15 min after open before entering; reduces false signals on gap-and-fade setups',
          'Planned'),
-        ('V2g', 'Alpaca paper trading API integration',
-         'Real order simulation with realistic fills, slippage, and partial fills — more accurate than simulated positions',
-         'Planned'),
+        ('V2g ✅', 'Alpaca paper trading API integration',
+         'Real bracket order simulation: submit_bracket_order (entry market + take-profit limit + stop-loss), '
+         'position sync via get_position_data, fill price on bracket close; alpaca_order_id stored in positions table',
+         'Shipped — v4.0'),
     ]
 )
 
@@ -558,9 +560,9 @@ add_table(
         ('yfinance earnings calendar not always populated',
          'Some tickers have no calendar data — V2b blackout check fails safe (lets them through)',
          'Accept the risk; most major tickers are populated; gaps are edge cases'),
-        ('SSH passphrase required for git push',
-         'Claude Code cannot enter the SSH passphrase interactively — git push must be run from user terminal',
-         'Run: eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519 && git push origin main'),
+        ('git push requires user terminal',
+         'Claude Code cannot enter the SSH passphrase interactively — git push must be run from user terminal (resolved by switching to HTTPS PAT)',
+         'Switch remote to HTTPS with Personal Access Token: git remote set-url origin https://<token>@github.com/amitgarg73/trading-agent.git'),
         ('No real-time intraday prices in yfinance free tier',
          'yfinance intraday prices have 15-min delay — positions may close slightly after actual target/stop hit',
          'Acceptable for paper trading simulation; use paid data feed for live trading'),
