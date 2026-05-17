@@ -46,16 +46,16 @@ def _validate_trade(trade: dict) -> tuple[bool, str]:
     if size < min_size:
         return False, f"Position size ${size:,} below min ${min_size:,}"
 
-    # Max loss check
+    # Max loss check (round to 2dp — prices have 2dp so ratio is never exact)
     dollar_loss = size * potential_loss
-    if potential_loss > MAX_LOSS_PER_TRADE:
+    if round(potential_loss, 4) > round(MAX_LOSS_PER_TRADE, 4) + 0.0001:
         return False, f"Stop too wide: {potential_loss*100:.1f}% loss > {MAX_LOSS_PER_TRADE*100:.0f}% max"
 
-    # Reward:risk check
+    # Reward:risk check (round to 2dp — price discreteness means ratio is never exact)
     if potential_loss > 0:
         rr = potential_gain / potential_loss
-        if rr < MIN_REWARD_RISK:
-            return False, f"Reward:risk {rr:.1f} below minimum {MIN_REWARD_RISK}"
+        if round(rr, 2) < MIN_REWARD_RISK:
+            return False, f"Reward:risk {rr:.2f} below minimum {MIN_REWARD_RISK}"
 
     return True, "OK"
 
