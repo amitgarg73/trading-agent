@@ -554,10 +554,11 @@ def run_backtest(days: int = 30, top_n: int = 15, start_date=None, end_date=None
     data_end     = trading_days[-1]
 
     # ── Fetch all price data ───────────────────────────────────────────────────
-    print("  Fetching price history for universe...")
     fetch_end = data_end + timedelta(days=1)
-    all_data = {}
-    for ticker in UNIVERSE:
+    all_data  = {}
+    total     = len(UNIVERSE)
+    print(f"  Fetching price history for {total} tickers...", flush=True)
+    for i, ticker in enumerate(UNIVERSE, 1):
         try:
             df = yf.download(ticker, start=data_start, end=fetch_end,
                              progress=False, auto_adjust=True)
@@ -568,6 +569,8 @@ def run_backtest(days: int = 30, top_n: int = 15, start_date=None, end_date=None
             all_data[ticker] = df
         except Exception:
             pass
+        if i % 50 == 0 or i == total:
+            print(f"    {i}/{total} tickers downloaded ({len(all_data)} loaded)...", flush=True)
     print(f"  Loaded {len(all_data)} tickers")
 
     # ── Fetch V2 intelligence data ─────────────────────────────────────────────
