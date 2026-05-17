@@ -93,13 +93,14 @@ def get_order_fill(order_id: str) -> tuple:
     return None, None
 
 
-def close_position(ticker: str) -> bool:
-    """Market-close an open position. Returns True on success."""
+def close_position(ticker: str) -> tuple[bool, Optional[float]]:
+    """Market-close an open position. Returns (success, fill_price)."""
     try:
-        _client().close_position(ticker)
-        return True
+        order = _client().close_position(ticker)
+        fill_price = float(order.filled_avg_price) if order.filled_avg_price else None
+        return True, fill_price
     except Exception:
-        return False
+        return False, None
 
 
 def cancel_all_orders() -> None:

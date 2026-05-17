@@ -193,11 +193,12 @@ def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list
     for pos in open_pos:
         ticker = pos["ticker"]
 
+        alpaca_fill = None
         if broker == "alpaca":
             from agents import alpaca_broker
-            alpaca_broker.close_position(ticker)
+            _, alpaca_fill = alpaca_broker.close_position(ticker)
 
-        price = _current_price(ticker) or pos.get("current_price") or pos["entry_price"]
+        price = alpaca_fill or _current_price(ticker) or pos.get("current_price") or pos["entry_price"]
         shares = pos["shares"]
         entry  = pos["entry_price"]
         action = pos["action"]
