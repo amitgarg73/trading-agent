@@ -7,7 +7,9 @@ VIX thresholds:
   < 20  — normal, full trading
   20-25 — elevated, reduce to 10 positions
   25-30 — high fear, reduce to 5 positions
-  > 30  — extreme fear, skip trading
+  30-45 — crisis, reduce to 3 positions
+  > 45  — extreme crisis, reduce to 2 positions
+  (no VIX-only hard skip — futures gate handles genuine crash days)
 
 Fear & Greed (CNN/alternative.me, 0-100):
   < 25  — extreme fear, reduce to 5 positions
@@ -33,9 +35,10 @@ import json
 from datetime import datetime, date
 
 
-VIX_SKIP        = 30.0
-VIX_CAUTION_H   = 25.0
-VIX_CAUTION_L   = 20.0
+VIX_EXTREME     = 45.0   # reduce to 2 positions
+VIX_CRISIS      = 30.0   # reduce to 3 positions
+VIX_CAUTION_H   = 25.0   # reduce to 5 positions
+VIX_CAUTION_L   = 20.0   # reduce to 10 positions
 FUTURES_SKIP    = -1.5
 FUTURES_CAUTION = -0.5
 FG_EXTREME_FEAR = 25
@@ -181,9 +184,12 @@ def run() -> dict:
     max_positions = 15
 
     if vix is not None:
-        if vix > VIX_SKIP:
-            decision    = "SKIP"
-            skip_reason = f"VIX {vix} exceeds skip threshold ({VIX_SKIP}) — extreme fear, no trading today"
+        if vix > VIX_EXTREME:
+            decision      = "CAUTION"
+            max_positions = 2
+        elif vix > VIX_CRISIS:
+            decision      = "CAUTION"
+            max_positions = 3
         elif vix > VIX_CAUTION_H:
             decision      = "CAUTION"
             max_positions = 5
@@ -264,7 +270,7 @@ def run() -> dict:
         summary += f" ⚠️ {econ_str} — position count reduced."
 
     # ── Print status ──────────────────────────────────────────────────
-    vix_icon = "🟢" if (vix or 0) < VIX_CAUTION_L else "🟡" if (vix or 0) < VIX_SKIP else "🔴"
+    vix_icon = "🟢" if (vix or 0) < VIX_CAUTION_L else "🟡" if (vix or 0) < VIX_CRISIS else "🔴"
     fut_icon = "🟢" if futures_bias == "BULLISH" else "🔴" if futures_bias == "BEARISH" else "⚪"
     if fear_greed:
         fg = fear_greed["value"]

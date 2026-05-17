@@ -136,11 +136,17 @@ def apply_v2_gates(day_str: str, vix_hist: dict, futures_hist: dict,
     max_pos    = top_n
     reasons    = []
 
-    # VIX gate (use prior day's close)
+    # VIX gate — tiered reduction, no hard skip (futures gate handles crash days)
     vix = vix_hist.get(day_str)
     if vix is not None:
-        if vix > 30:
-            return "SKIP", 0, [f"VIX {vix:.1f} >30"]
+        if vix > 45:
+            max_pos = min(max_pos, 2)
+            decision = "CAUTION"
+            reasons.append(f"VIX {vix:.1f} (extreme crisis → 2 pos)")
+        elif vix > 30:
+            max_pos = min(max_pos, 3)
+            decision = "CAUTION"
+            reasons.append(f"VIX {vix:.1f} (crisis → 3 pos)")
         elif vix > 25:
             max_pos = min(max_pos, 5)
             decision = "CAUTION"
