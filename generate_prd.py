@@ -501,7 +501,7 @@ add_table(
         ('Alerts', 'SMS/email notification on position close',
          'Know immediately when a target is hit or stop is triggered without checking dashboard',
          'Planned — P2'),
-        ('CBRX', 'Add Cerebras Systems to stock universe post-IPO',
+        ('CBRS', 'Add Cerebras Systems to stock universe post-IPO',
          'High-conviction AI infrastructure play; IPO range $150–160, $26.6B valuation, OpenAI $20B compute deal',
          'Pending IPO listing — add to settings.py once trading'),
         ('Weekly summary email', 'Auto-generated weekly P&L summary with top trades and win rate',

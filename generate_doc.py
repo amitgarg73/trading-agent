@@ -556,7 +556,7 @@ add_table(
         ('V2e', 'Momentum confirmation — 15-minute rule: wait for confirmed breakout before entry', 'Planned'),
         ('V2f', 'Alpaca paper trading API — real order simulation with fills and slippage', 'Planned'),
         ('Alerts', 'SMS/email on position close (target hit or stop triggered)', 'Planned'),
-        ('CBRX', 'Add Cerebras to universe post-IPO (AI infrastructure, high-conviction)', 'Pending IPO'),
+        ('CBRS', 'Add Cerebras to universe post-IPO (AI infrastructure, high-conviction)', 'Pending IPO'),
         ('Tune', 'If live win rate < 45% after first week, drop target back to 2.5%', 'Conditional'),
     ]
 )
