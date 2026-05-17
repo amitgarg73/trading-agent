@@ -93,20 +93,53 @@ bullet('Protect against high-volatility markets, earnings binary events, and bad
 bullet('Keep infrastructure cost at or near zero (GitHub Actions + Supabase + Streamlit Cloud free tiers)')
 
 heading('Backtest Results (30 trading days, Apr–May 2026)', 2)
+
+body('Configuration evolution — iterative tuning from initial 52-ticker setup to current:')
 add_table(
-    ['Configuration', 'Avg Daily P&L', 'Win Days', 'Annualized Return', 'Grade'],
+    ['Configuration', 'Avg Daily P&L', 'Win Days', 'Annualized', 'Grade'],
     [
         ('52 tickers, 3 positions, 2% target', '$198', '50%', '50%', 'D'),
         ('408 tickers, 10 positions, 2% target', '$548', '87%', '138%', 'B'),
         ('434 tickers, 15 positions, 2.5% target', '$690', '90%', '174%', 'B'),
-        ('430 tickers, 15 positions, 3% target (current)', '$750', '93%', '189%', 'B'),
+        ('430 tickers, 15 positions, 3% target (current)', '$800', '93%', '202%', 'B'),
     ]
 )
-body(
-    'Path to $1K/day: capital compounds naturally. At $750/day on $100K starting capital, '
-    'the portfolio reaches ~$133K in ~45 trading days, at which point the same percentage '
-    'return equals $1,000/day.'
+
+body('V2 intelligence gate validation — baseline vs. V2-gated (Apr 6 – May 15, 2026):')
+add_table(
+    ['Metric', 'Baseline (no gates)', 'V2-Gated (v2.3)', 'Delta'],
+    [
+        ('Total P&L (30 days)', '$24,023', '$21,474', '-$2,549'),
+        ('Avg daily P&L', '$801', '$716', '-$85'),
+        ('Win days', '28/30 (93%)', '27/30 (90%)', '-1 day'),
+        ('Win rate (per trade)', '48.2%', '48.5%', '+0.3%'),
+        ('Reward:risk', '2.63x', '2.66x', '+0.02x'),
+        ('Annualized return', '201.8%', '180.4%', '-21.4%'),
+        ('Grade', 'B', 'B', 'same'),
+    ]
 )
+body('Gate activity: fired on 9 of 30 days — VIX spikes (Apr 6–8), bearish futures (Apr 13, 20), '
+     'FOMC (May 6), CPI/NFP (Apr 10, May 1, May 13). Apr 10 NFP and May 13 CPI were both losing '
+     'days — position cap directly limited damage on both. Win rate and R:R improved slightly with '
+     'gates applied.')
+body('The $2,549 gap vs baseline is the cost of caution during a bull recovery window — '
+     'acceptable insurance. In a genuine market decline the gates would save significantly more.')
+
+heading('One-Month Forward Projection (22 trading days)', 2)
+add_table(
+    ['Scenario', 'Daily P&L Assumption', 'Monthly P&L', 'Ending Capital'],
+    [
+        ('Conservative', '80% of backtest avg ($573/day)', '~$12,600', '~$112,600'),
+        ('Base case', 'Backtest avg ($716/day)', '~$15,750', '~$115,750'),
+        ('Optimistic', 'Baseline avg ($801/day)', '~$17,600', '~$117,600'),
+    ]
+)
+body('Compounding path to $1K/day: at $716/day on $100K starting capital, the portfolio reaches '
+     '~$140K in ~45 trading days (~2 months), at which point the same % return = $1,000/day. '
+     'No settings changes needed — capital growth does the work automatically.')
+body('Important caveat: the 30-day backtest window was a strong bull recovery after the tariff '
+     'panic selloff — one of the better environments for momentum trading. A sideways or declining '
+     'month would look different. V2 gates are specifically designed for that scenario.')
 
 # ── 2. What We Built ──────────────────────────────────────────────────────────
 doc.add_page_break()
