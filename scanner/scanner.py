@@ -102,10 +102,11 @@ def _passes_filters(info: dict, price: float) -> bool:
     return price >= MIN_PRICE and avg_vol >= MIN_AVG_VOLUME
 
 
-def run_scan() -> list[dict]:
+def run_scan(universe=None) -> list[dict]:
     candidates = []
+    tickers = universe if universe is not None else UNIVERSE
 
-    for ticker in UNIVERSE:
+    for ticker in tickers:
         info, df = _fetch(ticker)
         if df is None:
             continue

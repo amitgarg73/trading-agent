@@ -5,12 +5,29 @@ Called by GitHub Actions with --mode premarket | intraday | eod
 import sys
 import json
 import argparse
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from scanner.scanner import run_scan
-from agents import strategy, risk, performance, market_context, news_intel
+from agents import strategy, risk, performance, market_context, news_intel, universe_refresh
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
+from config.settings import UNIVERSE
+
+
+def load_universe() -> list:
+    """Return dynamic universe from Supabase if refreshed within 7 days, else static fallback."""
+    rows = db.select("scan_results", filters={"scan_type": "universe_refresh"},
+                     order="created_at", limit=1)
+    if rows:
+        row = rows[0]
+        age_days = (date.today() - date.fromisoformat(row["date"])).days
+        if age_days <= 7:
+            tickers = row["results"]["tickers"]
+            print(f"        Dynamic universe: {len(tickers)} tickers "
+                  f"(refreshed {row['date']}, {age_days}d ago)")
+            return tickers
+    print(f"        Static universe: {len(UNIVERSE)} tickers (no recent refresh)")
+    return UNIVERSE
 
 
 def premarket():
@@ -39,7 +56,7 @@ def premarket():
 
     # 1. Scan
     print("[ 1/4 ] Running market scan...")
-    candidates = run_scan()
+    candidates = run_scan(universe=load_universe())
     print(f"        Found {len(candidates)} candidates")
 
     if not candidates:
@@ -153,7 +170,8 @@ def eod():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["premarket", "intraday", "eod"], required=True)
+    parser.add_argument("--mode", choices=["premarket", "intraday", "eod", "universe_refresh"],
+                        required=True)
     args = parser.parse_args()
 
     if args.mode == "premarket":
@@ -162,6 +180,8 @@ def main():
         intraday()
     elif args.mode == "eod":
         eod()
+    elif args.mode == "universe_refresh":
+        universe_refresh.run()
 
 
 if __name__ == "__main__":
