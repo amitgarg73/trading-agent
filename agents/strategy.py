@@ -73,7 +73,7 @@ def run(candidates: list[dict]) -> dict:
         return {"trades": [], "market_context": "No candidates found.", "total_estimated_profit": 0}
 
     response = client.messages.create(
-        model="claude-opus-4-7",
+        model="claude-sonnet-4-6",
         max_tokens=3000,
         system=SYSTEM,
         messages=[{"role": "user", "content": _build_prompt(candidates)}],
