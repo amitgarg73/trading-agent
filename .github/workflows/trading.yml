@@ -1,0 +1,54 @@
+name: Trading Agent
+
+on:
+  schedule:
+    # All times UTC (EDT = UTC-4)
+    - cron: '0 13 * * 1-5'        # 9:00 AM ET — premarket
+    - cron: '0,30 14-19 * * 1-5'  # Every 30 min 10:00-3:30 PM ET — intraday
+    - cron: '30 20 * * 1-5'       # 4:30 PM ET — EOD
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: true
+        default: 'premarket'
+        type: choice
+        options: [premarket, intraday, eod]
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Determine mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
+          else
+            HOUR=$(date -u +%H)
+            MIN=$(date -u +%M)
+            if [ "$HOUR" = "13" ] && [ "$MIN" = "00" ]; then
+              echo "mode=premarket" >> $GITHUB_OUTPUT
+            elif [ "$HOUR" = "20" ] && [ "$MIN" = "30" ]; then
+              echo "mode=eod" >> $GITHUB_OUTPUT
+            else
+              echo "mode=intraday" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Run agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+        run: python orchestrator.py --mode ${{ steps.mode.outputs.mode }}
