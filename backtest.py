@@ -1,5 +1,5 @@
 """
-30-day backtest — simulates what the trading agent would have done over the last N trading days.
+Backtest — simulates what the trading agent would have done over a historical window.
 Uses real historical price data. No Claude API calls — top scanner scores proxy strategy selection.
 
 Runs TWO simulations automatically:
@@ -8,7 +8,10 @@ Runs TWO simulations automatically:
 
 The comparison shows directly whether the intelligence layer adds value.
 
-Usage: python3 backtest.py [--days 30] [--top 15]
+Usage:
+  python3 backtest.py --days 30 --top 15
+  python3 backtest.py --start-date 2008-01-01 --end-date 2008-12-31 --top 15
+  python3 backtest.py --start-date 2003-01-01 --end-date 2003-12-31 --top 15
 """
 import argparse
 import yfinance as yf
@@ -51,7 +54,15 @@ NFP_DATES = {
 }
 
 
-def get_trading_days(n: int) -> list:
+def get_trading_days(n=None, start_date=None, end_date=None) -> list:
+    if start_date and end_date:
+        days = []
+        d = start_date
+        while d <= end_date:
+            if d.weekday() < 5:
+                days.append(d)
+            d += timedelta(days=1)
+        return days
     days = []
     d = datetime.today().date() - timedelta(days=1)
     while len(days) < n:
@@ -61,11 +72,11 @@ def get_trading_days(n: int) -> list:
     return list(reversed(days))
 
 
-def fetch_vix_history(start_date) -> dict:
+def fetch_vix_history(start_date, end_date=None) -> dict:
     """Returns {date_str: vix_close}."""
+    fetch_end = (end_date + timedelta(days=1)) if end_date else (datetime.today().date() + timedelta(days=1))
     try:
-        df = yf.download("^VIX", start=start_date,
-                         end=datetime.today().date() + timedelta(days=1),
+        df = yf.download("^VIX", start=start_date, end=fetch_end,
                          progress=False, auto_adjust=True)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -75,20 +86,19 @@ def fetch_vix_history(start_date) -> dict:
         return {}
 
 
-def fetch_futures_history(start_date) -> dict:
+def fetch_futures_history(start_date, end_date=None) -> dict:
     """Returns {date_str: avg_pct_change} — open vs prior close for ES/NQ/YM."""
+    fetch_end = (end_date + timedelta(days=1)) if end_date else (datetime.today().date() + timedelta(days=1))
     symbols = {"S&P500": "ES=F", "Nasdaq": "NQ=F", "Dow": "YM=F"}
     series = {}
     for name, sym in symbols.items():
         try:
-            df = yf.download(sym, start=start_date,
-                             end=datetime.today().date() + timedelta(days=1),
+            df = yf.download(sym, start=start_date, end=fetch_end,
                              progress=False, auto_adjust=True)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             if len(df) < 2:
                 continue
-            # open vs prior close as proxy for pre-market move
             pct = ((df["Open"] - df["Close"].shift(1)) / df["Close"].shift(1) * 100).dropna()
             for d, v in zip(pct.index, pct):
                 if pd.notna(v):
@@ -390,23 +400,50 @@ def run_simulation(label, trading_days, scored_per_day, top_n,
     }
 
 
-def run_backtest(days: int = 30, top_n: int = 15):
+def fetch_index_returns(start_date, end_date=None) -> dict:
+    """Returns {name: {start, end, pct, pnl_on_100k}} for SPY, QQQ, DIA."""
+    fetch_end = (end_date + timedelta(days=1)) if end_date else (datetime.today().date() + timedelta(days=1))
+    result = {}
+    for name, sym in [("S&P 500 (SPY)", "SPY"), ("Nasdaq 100 (QQQ)", "QQQ"), ("Dow Jones (DIA)", "DIA")]:
+        try:
+            df = yf.download(sym, start=start_date, end=fetch_end,
+                             progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if df.empty:
+                continue
+            s = float(df["Close"].iloc[0])
+            e = float(df["Close"].iloc[-1])
+            pct = (e - s) / s * 100
+            result[name] = {"start": s, "end": e, "pct": pct, "pnl": TOTAL_CAPITAL * pct / 100}
+        except Exception:
+            pass
+    return result
+
+
+def run_backtest(days: int = 30, top_n: int = 15, start_date=None, end_date=None):
+    if start_date and end_date:
+        label = f"{start_date} → {end_date}"
+    else:
+        label = f"last {days} trading days"
+
     print(f"\n{'='*60}")
-    print(f"  BACKTEST — last {days} trading days  |  top {top_n} per day")
+    print(f"  BACKTEST — {label}  |  top {top_n} per day")
     print(f"  Capital: ${TOTAL_CAPITAL:,}  |  Stop: {STOP_PCT*100:.1f}%  "
           f"Target: {TARGET_PCT*100:.1f}%")
     print(f"{'='*60}\n")
 
-    trading_days = get_trading_days(days)
-    start_date   = trading_days[0] - timedelta(days=100)
+    trading_days = get_trading_days(days, start_date, end_date)
+    data_start   = trading_days[0] - timedelta(days=120)  # extra lookback for indicators
+    data_end     = trading_days[-1]
 
     # ── Fetch all price data ───────────────────────────────────────────────────
     print("  Fetching price history for universe...")
+    fetch_end = data_end + timedelta(days=1)
     all_data = {}
     for ticker in UNIVERSE:
         try:
-            df = yf.download(ticker, start=start_date,
-                             end=datetime.today().date() + timedelta(days=1),
+            df = yf.download(ticker, start=data_start, end=fetch_end,
                              progress=False, auto_adjust=True)
             if df is None or len(df) < 20:
                 continue
@@ -419,16 +456,17 @@ def run_backtest(days: int = 30, top_n: int = 15):
 
     # ── Fetch V2 intelligence data ─────────────────────────────────────────────
     print("  Fetching VIX history...")
-    vix_hist = fetch_vix_history(start_date)
+    vix_hist = fetch_vix_history(data_start, data_end)
     print(f"  VIX data: {len(vix_hist)} days")
 
     print("  Fetching futures history...")
-    futures_hist = fetch_futures_history(start_date)
+    futures_hist = fetch_futures_history(data_start, data_end)
     print(f"  Futures data: {len(futures_hist)} days")
 
     print("  Fetching Fear & Greed history...")
-    fg_hist = fetch_fear_greed_history(limit=days + 60)
-    print(f"  Fear & Greed data: {len(fg_hist)} days")
+    fg_hist = fetch_fear_greed_history(limit=min(days + 120, 3000) if not start_date else 3000)
+    print(f"  Fear & Greed data: {len(fg_hist)} days"
+          + (" (not available for historical periods pre-2020)" if not fg_hist else ""))
 
     # ── Pre-score all candidates per day (shared between both simulations) ─────
     print("\n  Pre-scoring candidates per day...")
@@ -497,13 +535,39 @@ def run_backtest(days: int = 30, top_n: int = 15):
     for ticker, pnl, n in v2["worst_tickers"]:
         print(f"    {ticker:6s}  ${pnl:+,.2f}  ({n} trades)")
 
+    # ── Index comparison ──────────────────────────────────────────────────────
+    print(f"\n{'='*60}")
+    print(f"  VS. MARKET INDEXES (same window, $100K buy-and-hold)")
+    print(f"{'='*60}")
+    idx_returns = fetch_index_returns(trading_days[0], trading_days[-1])
+    if idx_returns:
+        print(f"  {'Index':<22} {'Return':>10} {'P&L on $100K':>16}")
+        print(f"  {'─'*50}")
+        for name, d in idx_returns.items():
+            print(f"  {name:<22} {d['pct']:>+9.1f}%  ${d['pnl']:>+14,.0f}")
+        print(f"  {'─'*50}")
+        print(f"  {'Agent (V2-gated)':<22} {'':>10}  ${v2['total_pnl']:>+14,.0f}  "
+              f"({v2['annualized']:+.1f}% ann.)")
+        best_idx = max(idx_returns.values(), key=lambda x: x["pnl"])
+        alpha = v2["total_pnl"] - best_idx["pnl"]
+        print(f"\n  Alpha vs best index: ${alpha:+,.0f}")
+    else:
+        print("  (Index data unavailable for this period)")
+
     print(f"\n{'='*60}\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--days", type=int, default=30)
-    parser.add_argument("--top",  type=int, default=15,
+    parser.add_argument("--days",       type=int, default=30)
+    parser.add_argument("--top",        type=int, default=15,
                         help="Max positions per day (before gate reduction)")
+    parser.add_argument("--start-date", type=str, default=None,
+                        help="Start date YYYY-MM-DD (use with --end-date)")
+    parser.add_argument("--end-date",   type=str, default=None,
+                        help="End date YYYY-MM-DD (use with --start-date)")
     args = parser.parse_args()
-    run_backtest(args.days, args.top)
+
+    start = date.fromisoformat(args.start_date) if args.start_date else None
+    end   = date.fromisoformat(args.end_date)   if args.end_date   else None
+    run_backtest(args.days, args.top, start_date=start, end_date=end)
