@@ -20,33 +20,38 @@ SYSTEM = (
 )
 
 
-def _build_prompt(candidates: list[dict]) -> str:
+def _build_prompt(candidates: list[dict], market_summary: str, max_positions: int) -> str:
     today = datetime.now().strftime("%A %B %d, %Y")
     max_pos_size = int(TOTAL_CAPITAL * MAX_POSITION_PCT)
     min_pos_size = int(TOTAL_CAPITAL * MIN_POSITION_PCT)
 
     return f"""Today is {today}. You are selecting day trades from the scanned candidates below.
 
+PRE-MARKET CONDITIONS:
+{market_summary}
+
 PORTFOLIO RULES:
 - Total capital: ${TOTAL_CAPITAL:,}
 - Daily profit target: ${DAILY_PROFIT_TARGET:,}
-- Max positions: {MAX_POSITIONS}
+- Max positions today: {max_positions} (may be reduced due to market conditions)
 - Position size: ${min_pos_size:,} to ${max_pos_size:,} per trade
 - Profit target: {TARGET_PCT*100:.0f}% above entry (hard rule — set target_price = entry * {1+TARGET_PCT})
 - Stop loss: max {MAX_LOSS_PER_TRADE*100:.0f}% below entry (hard rule — set stop_loss = entry * {1-MAX_LOSS_PER_TRADE})
 - Minimum reward:risk ratio: {MIN_REWARD_RISK}:1
 - All positions closed by end of day (no overnight holds)
 - Protect the principal — if no high-conviction setups exist, select fewer trades
+- If futures bias is BEARISH, prefer short setups or reduce position count
+- If futures bias is BULLISH, favor momentum longs with strong volume signals
 
 CANDIDATES (sorted by signal strength):
 {json.dumps(candidates, indent=2, default=str)}
 
-Select the best {MAX_POSITIONS} or fewer trades. For each trade provide SPECIFIC, REALISTIC prices based on the current price shown.
+Select the best {max_positions} or fewer trades. For each trade provide SPECIFIC, REALISTIC prices based on the current price shown.
 
 Respond in this exact JSON format:
 {{
   "date": "{today}",
-  "market_context": "2-3 sentence summary of today's market setup and why these trades were selected",
+  "market_context": "2-3 sentence summary of today's market setup including VIX level, futures direction, and why these trades were selected",
   "trades": [
     {{
       "ticker": "TICKER",
@@ -69,7 +74,7 @@ Respond in this exact JSON format:
 }}"""
 
 
-def run(candidates: list[dict]) -> dict:
+def run(candidates: list[dict], market_summary: str = "", max_positions: int = MAX_POSITIONS) -> dict:
     if not candidates:
         return {"trades": [], "market_context": "No candidates found.", "total_estimated_profit": 0}
 
@@ -77,7 +82,7 @@ def run(candidates: list[dict]) -> dict:
         model="claude-sonnet-4-6",
         max_tokens=3000,
         system=SYSTEM,
-        messages=[{"role": "user", "content": _build_prompt(candidates)}],
+        messages=[{"role": "user", "content": _build_prompt(candidates, market_summary, max_positions)}],
     )
 
     raw = response.content[0].text.strip()

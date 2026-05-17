@@ -7,7 +7,7 @@ import json
 import argparse
 from datetime import date, datetime
 from scanner.scanner import run_scan
-from agents import strategy, risk, performance
+from agents import strategy, risk, performance, market_context
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
@@ -18,6 +18,19 @@ def premarket():
     print(f"  PREMARKET RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')}")
     print(f"{'='*60}\n")
 
+    # 0. Market context — volatility gate + futures signal
+    mkt = market_context.run()
+    if mkt["decision"] == "SKIP":
+        print(f"\n  ⛔ TRADING SKIPPED: {mkt['skip_reason']}\n")
+        db.insert("scan_results", {
+            "date":      date.today().isoformat(),
+            "scan_type": "premarket",
+            "results":   {"skipped": True, "reason": mkt["skip_reason"], "vix": mkt["vix"]},
+        })
+        return
+
+    today_max_positions = mkt["max_positions"]
+
     # 1. Scan
     print("[ 1/4 ] Running market scan...")
     candidates = run_scan()
@@ -26,7 +39,13 @@ def premarket():
     db.insert("scan_results", {
         "date":      date.today().isoformat(),
         "scan_type": "premarket",
-        "results":   {"candidates": candidates},
+        "results":   {
+            "candidates":    candidates,
+            "vix":           mkt["vix"],
+            "futures":       mkt["futures"],
+            "intl_markets":  mkt["intl_markets"],
+            "futures_bias":  mkt["futures_bias"],
+        },
     })
 
     if not candidates:
@@ -35,7 +54,8 @@ def premarket():
 
     # 2. Strategy
     print("[ 2/4 ] Running strategy agent...")
-    strategy_out = strategy.run(candidates)
+    strategy_out = strategy.run(candidates, market_summary=mkt["summary"],
+                                max_positions=today_max_positions)
     print(f"        Selected {len(strategy_out.get('trades', []))} trades")
     print(f"        Market: {strategy_out.get('market_context', '')[:120]}")
 
