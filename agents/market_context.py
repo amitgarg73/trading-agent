@@ -191,18 +191,26 @@ def run() -> dict:
             decision      = "CAUTION"
             max_positions = 10
 
-    # ── Fear & Greed gate ─────────────────────────────────────────────
+    # ── Fear & Greed gate — confirming signal only ────────────────────
+    # F&G alone is a lagging sentiment indicator that reads low AFTER
+    # a selloff, often during recoveries. Only reduce positions when
+    # F&G confirms an already-bearish VIX or futures reading.
     if fear_greed and decision != "SKIP":
-        fg = fear_greed["value"]
-        if fg < FG_EXTREME_FEAR:
-            decision      = "CAUTION"
-            max_positions = min(max_positions, 5)
-        elif fg < FG_FEAR:
+        fg          = fear_greed["value"]
+        vix_bearish = vix is not None and vix > VIX_CAUTION_L   # VIX > 20
+        fut_bearish = (futures and
+                       sum(v["change_pct"] for v in futures.values()) / len(futures) < FUTURES_CAUTION)
+        confirmed   = vix_bearish or fut_bearish
+
+        if fg < FG_EXTREME_FEAR and confirmed:
+            # Extreme Fear + at least one other bearish signal → moderate reduction
+            max_positions = min(max_positions, 10)
             if decision == "GO":
-                decision  = "CAUTION"
-            max_positions = min(max_positions, 10)
+                decision = "CAUTION"
         elif fg > FG_EXTREME_GREED:
-            max_positions = min(max_positions, 10)
+            # Extreme Greed — mild caution, markets can be overextended
+            max_positions = min(max_positions, 12)
+        # F&G 25-80 alone → informational only, no position change
 
     # ── Futures gate ──────────────────────────────────────────────────
     futures_bias = "NEUTRAL"
