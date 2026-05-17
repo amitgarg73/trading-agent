@@ -22,10 +22,10 @@ def upsert(table: str, data: dict) -> dict:
 
 
 def update(table: str, match: dict, data: dict) -> list:
-    q = get_client().table(table)
+    q = get_client().table(table).update(data)
     for col, val in match.items():
         q = q.eq(col, val)
-    return q.update(data).execute().data
+    return q.execute().data
 
 
 def select(table: str, filters: Optional[dict] = None, order: Optional[str] = None, limit: Optional[int] = None) -> list:

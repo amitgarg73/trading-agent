@@ -47,7 +47,8 @@ create table positions (
     closed_at           timestamptz,
     close_price         numeric,
     realized_pnl        numeric,
-    close_reason        text   -- TARGET, STOP, EOD, MANUAL
+    close_reason        text,  -- TARGET, STOP, EOD, MANUAL
+    alpaca_order_id     text   -- Alpaca parent bracket order ID (null in simulation mode)
 );
 
 -- Daily P&L performance

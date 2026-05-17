@@ -14,6 +14,12 @@ on:
         default: 'premarket'
         type: choice
         options: [premarket, intraday, eod]
+      broker:
+        description: 'Broker'
+        required: false
+        default: 'alpaca'
+        type: choice
+        options: [alpaca, simulation]
 
 jobs:
   run:
@@ -31,11 +37,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Determine mode
+      - name: Determine mode and broker
         id: mode
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
+            echo "broker=${{ github.event.inputs.broker || 'alpaca' }}" >> $GITHUB_OUTPUT
           else
             HOUR=$(date -u +%H)
             MIN=$(date -u +%M)
@@ -46,11 +53,14 @@ jobs:
             else
               echo "mode=intraday" >> $GITHUB_OUTPUT
             fi
+            echo "broker=alpaca" >> $GITHUB_OUTPUT
           fi
 
       - name: Run agent
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
-        run: python orchestrator.py --mode ${{ steps.mode.outputs.mode }}
+          ALPACA_API_KEY:     ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY:  ${{ secrets.ALPACA_SECRET_KEY }}
+        run: python orchestrator.py --mode ${{ steps.mode.outputs.mode }} --broker ${{ steps.mode.outputs.broker }}

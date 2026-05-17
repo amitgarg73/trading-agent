@@ -30,9 +30,9 @@ def load_universe() -> list:
     return UNIVERSE
 
 
-def premarket():
+def premarket(broker: str = "simulation"):
     print(f"\n{'='*60}")
-    print(f"  PREMARKET RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')}")
+    print(f"  PREMARKET RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')} [{broker}]")
     print(f"{'='*60}\n")
 
     # 0. Market context — volatility gate + futures signal
@@ -115,7 +115,8 @@ def premarket():
         return
 
     # 4. Open positions
-    print("[ 4/4 ] Opening simulated positions...")
+    mode_label = "Alpaca paper" if broker == "alpaca" else "simulated"
+    print(f"[ 4/4 ] Opening {mode_label} positions...")
     existing = db.select("trade_plans", filters={"date": date.today().isoformat()})
     if existing:
         plan = existing[0]
@@ -127,7 +128,7 @@ def premarket():
             "risk_note":               risk_out["risk_note"],
         })
 
-    opened = open_positions(plan["id"], approved)
+    opened = open_positions(plan["id"], approved, broker=broker)
     print(f"        Opened {len(opened)} positions\n")
 
     for t in approved:
@@ -141,9 +142,9 @@ def premarket():
     print(f"  Risk note: {risk_out['risk_note']}\n")
 
 
-def intraday():
-    print(f"\n[ INTRADAY ] {datetime.now().strftime('%H:%M ET')}")
-    result = run_intraday()
+def intraday(broker: str = "simulation"):
+    print(f"\n[ INTRADAY ] {datetime.now().strftime('%H:%M ET')} [{broker}]")
+    result = run_intraday(broker=broker)
     print(f"  Open: {result['open_positions']} | "
           f"Unrealized P&L: ${result['unrealized_pnl']:,.2f} | "
           f"Closed this check: {result['just_closed']}")
@@ -152,11 +153,11 @@ def intraday():
         print(f"  {icon} {c['ticker']} closed ({c['reason']}): ${c['realized_pnl']:,.2f}")
 
 
-def eod():
+def eod(broker: str = "simulation"):
     print(f"\n{'='*60}")
-    print(f"  EOD RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')}")
+    print(f"  EOD RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')} [{broker}]")
     print(f"{'='*60}\n")
-    record = performance.run()
+    record = performance.run(broker=broker)
     if not record:
         print("  No trades today.")
         return
@@ -172,14 +173,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["premarket", "intraday", "eod", "universe_refresh"],
                         required=True)
+    parser.add_argument("--broker", choices=["simulation", "alpaca"], default="simulation",
+                        help="Execution broker (default: simulation)")
     args = parser.parse_args()
 
     if args.mode == "premarket":
-        premarket()
+        premarket(broker=args.broker)
     elif args.mode == "intraday":
-        intraday()
+        intraday(broker=args.broker)
     elif args.mode == "eod":
-        eod()
+        eod(broker=args.broker)
     elif args.mode == "universe_refresh":
         universe_refresh.run()
 

@@ -7,11 +7,11 @@ from core import db
 from config.settings import TOTAL_CAPITAL
 
 
-def run() -> dict:
+def run(broker: str = "simulation") -> dict:
     today = date.today().isoformat()
 
     # Close anything still open
-    closed = close_all_positions(reason="EOD")
+    closed = close_all_positions(reason="EOD", broker=broker)
 
     # Fetch all closed positions for today
     all_closed = db.select("positions", filters={"status": "CLOSED"})
