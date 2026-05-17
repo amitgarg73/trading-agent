@@ -3,20 +3,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def _get(key, default=""):
-    try:
-        import streamlit as st
-        return st.secrets.get(key, os.getenv(key, default))
-    except Exception:
-        return os.getenv(key, default)
-
 # API Keys
-ANTHROPIC_API_KEY = _get("ANTHROPIC_API_KEY")
-SUPABASE_URL      = _get("SUPABASE_URL")
-SUPABASE_KEY      = _get("SUPABASE_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+SUPABASE_URL      = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY      = os.getenv("SUPABASE_KEY", "")  # service role key
 
 # Dashboard
-DASHBOARD_PASSWORD = _get("DASHBOARD_PASSWORD", "changeme")
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "changeme")
 
 # Capital
 TOTAL_CAPITAL        = 100_000

@@ -3,6 +3,11 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
+for _key in ["ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "DASHBOARD_PASSWORD"]:
+    if _key in st.secrets:
+        os.environ[_key] = st.secrets[_key]
+
+import streamlit as st
 import pandas as pd
 from datetime import date, datetime
 from core import db
@@ -54,6 +59,8 @@ if page == "Today":
     today = date.today().isoformat()
 
     plans = db.select("trade_plans", filters={"date": today})
+    if not plans:
+        plans = db.select("trade_plans", order="date", limit=1)
     if not plans:
         st.info("No trade plan generated yet for today. Premarket runs at 9:00 AM ET.")
         st.stop()
