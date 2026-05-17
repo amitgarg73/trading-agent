@@ -20,21 +20,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Auth ──────────────────────────────────────────────────────────
-def check_password():
-    if st.session_state.get("authenticated"):
-        return True
-    pwd = st.text_input("Password", type="password", key="pwd")
-    if st.button("Login"):
-        if pwd == DASHBOARD_PASSWORD:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Incorrect password")
-    return False
-
-if not check_password():
-    st.stop()
 
 # ── Sidebar ───────────────────────────────────────────────────────
 st.sidebar.title("📈 Trading Agent")
