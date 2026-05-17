@@ -53,7 +53,7 @@ title = doc.add_heading('AI Product Requirements Doc', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = RGBColor(0x1A, 0x3A, 0x6A)
 
-sub = doc.add_paragraph('AI Trading Agent (PRD) — v4.0')
+sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.0')
 sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.bold = True
@@ -239,6 +239,7 @@ add_table(
         ('V3a: Dynamic universe refresh (weekly screener)', 'High', 'High', '95%', 'M', '9.5', 'P1 — shipped (v3.0)'),
         ('Dashboard company names column', 'High', 'Med', '99%', 'S', '9.0', 'P1 — shipped (v3.0)'),
         ('V2d: Sector correlation guard', 'Med', 'Med', '80%', 'S', '7.2', 'P1 — shipped (v4.1)'),
+        ('V5: Guardrails (6 safety checks)', 'High', 'High', '99%', 'S', '9.9', 'P0 — shipped (v5.0)'),
         ('V2e: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
         ('Alpaca paper trading API (V2g)', 'Med', 'High', '80%', 'L', '6.4', 'P0 — shipped (v4.0)'),
         ('SMS/email alerts', 'Med', 'Med', '90%', 'S', '8.1', 'P2 — next'),
@@ -270,7 +271,8 @@ add_table(
         ('Phase 3a — Dynamic Universe (V3a)', 'May 2026 (complete)', 'Weekly S&P500+Nasdaq100 screener, 458 tickers on first run, company names in dashboard'),
         ('Phase 2b — Execution (V2g)', 'May 2026 (complete)', 'Alpaca paper trading — real bracket orders (entry + take-profit + stop-loss), position sync, fill price on close'),
         ('Phase 2c — More Intelligence (V2d)', 'May 2026 (complete)', 'V2d sector correlation guard — max 3 per sector, drops lowest-confidence excess'),
-        ('Phase 2d — More Intelligence', 'June 2026', 'V2e sector rotation scoring, V2f momentum confirmation (15-min rule)'),
+        ('Phase 2d — Safety (V5)', 'May 2026 (complete)', 'V5 guardrails — 6 safety checks (action whitelist, ticker whitelist, duplicate guard, price sanity, capital check, daily loss limit), concurrent run lock, EOD close retry'),
+        ('Phase 2e — More Intelligence', 'June 2026', 'V2e sector rotation scoring, V2f momentum confirmation (15-min rule)'),
         ('Phase 3 — Alerts & Monitoring', 'July 2026', 'SMS/email alerts on position close, weekly email summaries'),
         ('Phase 4 — Scale', 'Q3–Q4 2026', 'Strategy A/B testing, weekly email summaries, real capital evaluation'),
     ]
@@ -369,6 +371,8 @@ bullet('News intelligence agent must check earnings calendar and remove day-of/d
 bullet('Scanner must evaluate all 430+ tickers and return scored candidates in under 90 seconds')
 bullet('Strategy agent must return structured JSON with entry (3% target, 1% stop enforced), position size, confidence, and 2-3 sentence reasoning per trade')
 bullet('Risk agent must enforce all 7 hard rules and return rejected trades with specific plain-English reasons')
+bullet('Guardrails must run after sector guard and block any trade that fails action whitelist, ticker whitelist, duplicate check, price sanity, capital check, or daily loss limit — with specific rejection reason logged')
+bullet('Concurrent run lock must prevent any premarket run from executing if scan_results for today already exists in Supabase')
 bullet('Intraday agent must check prices and close positions within 5 minutes of target/stop being hit')
 bullet('EOD agent must produce a complete daily_performance record including P&L, win rate, and capital')
 bullet('Dashboard Today tab must show full 4-step workflow with live data within 3 seconds')
@@ -467,7 +471,8 @@ body('Phase 1 (current — v4.0): Paper trading running through Alpaca Paper Tra
      'V3a (dynamic universe refresh — weekly S&P500+Nasdaq100 screener, 458 tickers), V2g (Alpaca broker — bracket orders + fill price sync) all deployed. '
      'Backtest validated: $21,474 P&L over 30 days (grade B), gates cost -$2,549 vs ungated baseline — acceptable insurance. '
      'Dashboard shows company names in all ticker tables.')
-body('Phase 2: V2d sector correlation guard, V2e sector rotation scoring, V2f momentum confirmation.')
+body('Phase 2 (v4.1–v5.0, complete): V2d sector correlation guard, V5 guardrails (6 safety checks), concurrent run lock, EOD close retry.')
+body('Phase 3: V2e sector rotation scoring, V2f momentum confirmation.')
 body('Phase 3: If win rate > 60% and reward:risk > 2x sustained over 30 live trading days, evaluate real '
      'capital deployment with strict position limits.')
 body('Go/no-go criteria for real capital:')
@@ -506,6 +511,13 @@ add_table(
          'Drops lowest-confidence excess (HIGH > MEDIUM > LOW, tiebreak by estimated_profit). '
          'Dashboard shows sector-blocked trades in Strategy & Risk step.',
          'Shipped — v4.1'),
+        ('V5 ✅', 'Guardrails — 6 safety checks before any trade executes',
+         'Action whitelist (BUY only), ticker whitelist (universe only), duplicate position guard (no same ticker twice in one day), '
+         'price sanity (entry within 5% of market price), capital check (Alpaca buying_power covers position_size), '
+         'daily loss limit (stop all new trades if P&L < -$300). '
+         'Also: concurrent run lock (prevents duplicate positions from overlapping GitHub Actions runs), '
+         'EOD close retry (retries Alpaca close once on failure, warns loudly if still failing).',
+         'Shipped — v5.0'),
         ('V2e', 'Sector rotation scoring',
          'Favor sectors showing relative strength this week; deprioritize lagging sectors',
          'Planned'),

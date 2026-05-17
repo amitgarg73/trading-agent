@@ -62,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v4.0  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.0  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -178,6 +178,8 @@ code('│   ├── risk.py                     # Claude validates risk parame
 code('│   ├── portfolio.py                # Opens/tracks simulated positions')
 code('│   ├── intraday.py                 # Monitors open positions mid-day')
 code('│   ├── performance.py              # Calculates EOD P&L')
+code('│   ├── sector_guard.py             # V2d: sector cap (max 3 per sector, Unknown passes through)')
+code('│   ├── guardrails.py               # V5: 6 safety checks before any trade executes')
 code('│   └── alpaca_broker.py            # Alpaca paper trading broker (bracket orders, sync, fills)')
 code('├── config/')
 code('│   ├── settings.py                 # Capital, thresholds, static stock universe (fallback)')
@@ -197,7 +199,13 @@ body(
 )
 
 heading('3a. Premarket Pipeline (9:00 AM ET)', 2)
-body('Runs once before the market opens. Six stages:')
+body('Runs once before the market opens. Seven stages:')
+body('Concurrent Run Lock')
+bullet('First action before any pipeline stage runs')
+bullet('Checks if a premarket scan_results row already exists for today — if yes, exits immediately with a skip message')
+bullet('Prevents duplicate trades if GitHub Actions fires two runs in parallel (e.g., delayed + on-time cron overlap)')
+bullet('Safe for manual reruns — a re-triggered premarket run after 9AM will exit cleanly without re-scanning or re-opening positions')
+doc.add_paragraph()
 
 body('Stage 0 — Market Context Agent (V2a)')
 bullet('Fetches VIX (^VIX) — fear index, measures overall market volatility')
@@ -238,6 +246,21 @@ bullet('Rejects if: target below entry (BUY) or stop above entry (BUY)')
 bullet('Position sizing: $5K–$7K per trade (5–7% of $100K capital)')
 bullet('Returns approved and rejected trades with specific rejection reasons in plain English')
 
+body('Stage 3.5 — Sector Correlation Guard (V2d)')
+bullet('Groups approved trades by sector using yfinance sector lookup (ETFs classified via ETF_UNIVERSE set — no API call needed)')
+bullet('Caps positions at MAX_PER_SECTOR=3 per sector — drops lowest-confidence excess')
+bullet('Unknown sector (yfinance rate-limited or unclassifiable) passes through without cap — safe fallback')
+bullet('No Claude API call — deterministic rule-based filter')
+
+body('Stage 3.75 — Guardrails (V5)')
+bullet('Action whitelist: only BUY permitted — rejects SELL, SHORT, or any other action Claude might hallucinate')
+bullet('Ticker whitelist: rejects any ticker not in the current universe (static or dynamic)')
+bullet('Duplicate position guard: checks both currently-open positions and positions already traded today — prevents double-entry on the same ticker')
+bullet('Price sanity: fetches current market price for each trade; rejects if entry price is >5% from market price (catches hallucinated or stale prices)')
+bullet('Capital check: if broker=alpaca, checks Alpaca buying_power covers the position_size before submitting (prevents over-leverage)')
+bullet('Daily loss limit: if today\'s realized P&L is already below -$300, blocks ALL remaining new trades until next day')
+bullet('scan_results updated in DB with sector_blocked and guardrail_blocked data for full dashboard visibility (fixes prior bug where sector_blocked was always stored as [])')
+
 body('Stage 4 — Portfolio Agent')
 bullet('Broker abstraction: broker="simulation" (default, yfinance) or broker="alpaca"')
 bullet('simulation mode: writes positions to Supabase only')
@@ -255,7 +278,7 @@ bullet('No overnight holds — all positions closed by end of day')
 
 heading('3c. End of Day Pipeline (4:30 PM ET)', 2)
 bullet('simulation mode: closes remaining open positions at yfinance market close price')
-bullet('alpaca mode: calls close_position() on Alpaca, uses actual fill price (not yfinance) for realized P&L')
+bullet('alpaca mode: calls close_position() on Alpaca, uses actual fill price (not yfinance) for realized P&L; retries once after 2s on failure; prints loud warning if still failing (⚠️ manual close required)')
 bullet('Calculates total daily P&L, win rate, best and worst trade')
 bullet('Writes daily performance record to Supabase daily_performance table')
 bullet('Updates portfolio capital for compounding into the next trading day')
@@ -402,6 +425,9 @@ add_table(
         ('MIN_VOLUME_RATIO', '1.5x', 'Volume must be 1.5x the 20-day average'),
         ('MIN_AVG_VOLUME', '500,000', 'Minimum average daily volume (liquidity floor)'),
         ('MIN_PRICE', '$5.00', 'Minimum stock price (filters out penny stocks)'),
+        ('MAX_PER_SECTOR', '3', 'V2d: max positions in any single sector per day'),
+        ('DAILY_LOSS_LIMIT', '-$300', 'V5: stop opening new trades if today\'s realized P&L drops below this'),
+        ('PRICE_SANITY_PCT', '5%', 'V5: reject trade if entry price is more than 5% from current market price'),
     ]
 )
 
@@ -441,6 +467,7 @@ add_table(
         ('V3a', 'Dynamic universe refresh — weekly S&P500+Nasdaq100 screener', 'Built and deployed (v3.0)'),
         ('V2g', 'Alpaca paper trading integration — real order simulation', 'Built and deployed (v4.0)'),
         ('V2d', 'Sector correlation guard — max 3 positions per sector, drops lowest-confidence excess', 'Built and deployed (v4.1)'),
+        ('V5', 'Guardrails — 6 safety checks before any trade executes (action, whitelist, duplicate, price, capital, loss limit)', 'Built and deployed (v5.0)'),
         ('V2e', 'Sector rotation scoring — favor sectors showing relative strength', 'Planned'),
         ('V2f', 'Momentum confirmation — 15-minute rule before entry', 'Planned'),
     ]
@@ -482,6 +509,24 @@ bullet('Caps at MAX_PER_SECTOR=3 per sector — drops lowest-confidence excess t
 bullet('Confidence ranking for tiebreak: HIGH > MEDIUM > LOW, then by estimated_profit')
 bullet('Dashboard shows sector-blocked trades in Step 2 (Strategy & Risk) as a collapsible expander')
 bullet('Configured via MAX_PER_SECTOR in config/settings.py (default: 3)')
+
+heading('V5 — Guardrails (agents/guardrails.py)', 2)
+body('Runs as Step 3.75, after sector guard and before portfolio. No Claude API call — deterministic rule checks only. Six checks applied in order:')
+add_table(
+    ['Check', 'What It Prevents', 'Config'],
+    [
+        ('Daily loss limit', 'If today\'s realized P&L < -$300, blocks ALL new trades for the rest of the day', 'DAILY_LOSS_LIMIT = -300'),
+        ('Action whitelist', 'Rejects any trade action that is not BUY (prevents rogue SELL/SHORT from Claude hallucination)', 'Hard-coded: BUY only'),
+        ('Ticker whitelist', 'Rejects any ticker not in the current universe (static or dynamic Supabase list)', 'universe passed from orchestrator'),
+        ('Duplicate position guard', 'Blocks a ticker already open or already traded today — prevents doubling up on same name', 'Checks positions table (status=OPEN + closed today)'),
+        ('Price sanity', 'Rejects if entry price is >5% from actual market price — catches hallucinated or stale prices from Claude', 'PRICE_SANITY_PCT = 0.05'),
+        ('Capital check', 'Alpaca broker only: rejects if Alpaca buying_power < position_size before order submission', 'Calls alpaca_broker.get_buying_power()'),
+    ]
+)
+body('Additional safeguards in this release:')
+bullet('Concurrent run lock: premarket checks for existing scan_results for today at the very start — duplicate GitHub Actions runs exit immediately without opening positions')
+bullet('EOD close retry: if Alpaca close_position() fails, retries once after 2 seconds; prints loud warning if still failing (⚠️ manual close required in Alpaca dashboard)')
+bullet('sector_blocked and guardrail_blocked now properly persisted to scan_results JSONB in DB after both steps — fixes prior bug where sector_blocked was always stored as [] and never visible on dashboard')
 
 heading('V3a — Dynamic Universe Refresh (agents/universe_refresh.py)', 2)
 body('Runs every Monday 8:30 AM ET via a separate GitHub Actions workflow. Replaces static universe with a live-screened list:')
@@ -582,6 +627,11 @@ add_table(
         ('34', 'Generated v4.0 documentation and architecture diagrams', 'Word docs updated to v4.0; two PNG architecture diagrams embedded'),
         ('35', 'Built V2d — Sector correlation guard', 'agents/sector_guard.py: fetches sector via yfinance, caps at 3 per sector, Unknown passes through; MAX_PER_SECTOR=3 in settings.py; step 3.5 in orchestrator; dashboard shows sector-blocked trades'),
         ('36', 'Fixed strategy.py JSON extraction', 'Regex on outermost { } or [ ] — handles markdown fence edge cases that produced empty string on json.loads'),
+        ('37', 'Built V5 guardrails', 'agents/guardrails.py: 6 safety checks — action whitelist, ticker whitelist, duplicate guard, price sanity (±5%), capital check, daily loss limit (-$300)'),
+        ('38', 'Added concurrent run lock', 'orchestrator.py checks for existing premarket scan_results at startup — exits immediately if already ran today, preventing duplicate positions from overlapping GitHub Actions runs'),
+        ('39', 'EOD close retry for Alpaca', 'portfolio.py close_all_positions(): retries Alpaca close once after 2s on failure; warns loudly if still failing'),
+        ('40', 'Fixed sector_blocked/guardrail_blocked persistence', 'scan_results JSONB updated with actual values after both sector guard and guardrails (previously always stored as [])'),
+        ('41', 'Updated docs to v5.0', 'Trading_Agent_Documentation.docx and Trading_Agent_PRD.docx regenerated with V5 guardrails'),
     ]
 )
 
@@ -634,13 +684,14 @@ bullet('Rerun manually: GitHub Actions → Trading Agent → Run workflow → se
 
 # ── 15. What's Next ───────────────────────────────────────────────────────────
 heading('15. What\'s Next')
-body('The system is live and running at v4.1. Planned next steps:')
+body('The system is live and running at v5.0. Planned next steps:')
 
 add_table(
     ['Phase', 'What', 'Priority'],
     [
         ('V2g', 'Alpaca paper trading API — real bracket order simulation with fills', 'Done (v4.0)'),
         ('V2d', 'Sector correlation guard — max 3 per sector, lowest-confidence excess dropped', 'Done (v4.1)'),
+        ('V5', 'Guardrails — 6 safety checks, concurrent run lock, EOD retry', 'Done (v5.0)'),
         ('V2e', 'Sector rotation scoring — favor sectors showing relative strength this week', 'Next'),
         ('V2f', 'Momentum confirmation — 15-minute rule: wait for confirmed breakout before entry', 'Planned'),
         ('Alerts', 'SMS/email on position close (target hit or stop triggered)', 'Planned'),
