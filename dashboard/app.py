@@ -69,9 +69,10 @@ def pnl_color(val):
 if page == "Today":
     today = date.today().isoformat()
 
-    # Load scan result (premarket) — fall back to most recent
+    # Load scan result (premarket) — today only; fall back to most recent with staleness flag
     scans = db.select("scan_results", filters={"date": today, "scan_type": "premarket"})
-    if not scans:
+    is_stale = not scans
+    if is_stale:
         scans = db.select("scan_results", filters={"scan_type": "premarket"}, order="created_at", limit=1)
     scan = scans[0] if scans else None
     results = scan["results"] if scan else {}
@@ -82,10 +83,12 @@ if page == "Today":
     plan = plans[0] if plans else None
     trades = db.select("planned_trades", filters={"plan_id": plan["id"]}) if plan else []
 
-    # Live positions
-    open_pos = db.select("positions", filters={"status": "OPEN"})
+    # Positions scoped to this plan only (not all OPEN positions globally)
+    plan_trade_ids = {t["id"] for t in trades}
+    all_open = db.select("positions", filters={"status": "OPEN"})
+    open_pos = [p for p in all_open if p["planned_trade_id"] in plan_trade_ids]
     all_closed = db.select("positions", filters={"status": "CLOSED"})
-    today_closed = [p for p in all_closed if (p.get("closed_at") or "").startswith(run_date)]
+    run_closed = [p for p in all_closed if (p.get("closed_at") or "").startswith(run_date)]
 
     # Unpack scan results
     skipped       = results.get("skipped", False)
@@ -101,7 +104,9 @@ if page == "Today":
     guardrail_blocked = results.get("guardrail_blocked", [])
 
     # ── Header ─────────────────────────────────────────────────────
-    if skipped:
+    if is_stale and results:
+        badge, badge_color = "STALE", "#7f8c8d"
+    elif skipped:
         badge, badge_color = "SKIPPED", "#c0392b"
     elif not results:
         badge, badge_color = "PENDING", "#7f8c8d"
@@ -122,6 +127,9 @@ if page == "Today":
     if not results:
         st.info("No data yet. Premarket pipeline runs at 9:00 AM ET.")
         st.stop()
+
+    if is_stale:
+        st.warning(f"⚠️ No premarket run for today yet — showing {run_date} data. Next run: 9:00 AM ET on the next trading day.")
 
     st.divider()
 
@@ -293,13 +301,14 @@ if page == "Today":
     st.subheader("3️⃣  Live Positions")
 
     total_unrealized = sum(p.get("unrealized_pnl", 0) for p in open_pos)
-    total_realized   = sum(p.get("realized_pnl",   0) for p in today_closed)
+    total_realized   = sum(p.get("realized_pnl",   0) for p in run_closed)
+    closed_label     = "Closed Today" if not is_stale else f"Closed {run_date}"
 
     lp1, lp2, lp3, lp4 = st.columns(4)
     lp1.metric("Open Positions", len(open_pos),
                help="Positions currently active. Intraday agent checks prices every 30 min and closes on +3% target or -1% stop loss.")
-    lp2.metric("Closed Today", len(today_closed),
-               help="Positions closed so far today via TARGET hit (+3%), STOP hit (-1%), or EOD (4:30PM forced close).")
+    lp2.metric(closed_label, len(run_closed),
+               help="Positions closed via TARGET hit (+3%), STOP hit (-1%), or EOD (4:30PM forced close).")
     lp3.metric("Unrealized P&L", fmt_pnl(total_unrealized),
                help="Paper profit/loss on still-open positions based on current price. Not locked in until position closes.")
     lp4.metric("Realized P&L", fmt_pnl(total_realized),
@@ -323,16 +332,16 @@ if page == "Today":
             )
             st.divider()
 
-    if today_closed:
-        st.markdown("**Closed Today**")
-        df_cl = pd.DataFrame(today_closed)
+    if run_closed:
+        st.markdown(f"**{closed_label}**")
+        df_cl = pd.DataFrame(run_closed)
         cl_cols = ["ticker", "action", "entry_price", "close_price", "shares", "realized_pnl", "close_reason"]
         df_cl = df_cl[[c for c in cl_cols if c in df_cl.columns]]
         df_cl = add_company_col(df_cl)
         df_cl["realized_pnl"] = df_cl["realized_pnl"].apply(fmt_pnl)
         st.dataframe(df_cl, use_container_width=True)
 
-    if not open_pos and not today_closed:
+    if not open_pos and not run_closed:
         st.info("No positions yet.")
 
 
@@ -371,16 +380,16 @@ elif page == "Positions":
     st.subheader("Closed Today")
     today_str  = date.today().isoformat()
     all_closed = db.select("positions", filters={"status": "CLOSED"})
-    today_closed = [p for p in all_closed if (p.get("closed_at") or "").startswith(today_str)]
+    run_closed = [p for p in all_closed if (p.get("closed_at") or "").startswith(today_str)]
 
-    if today_closed:
-        total_realized = sum(p.get("realized_pnl", 0) for p in today_closed)
+    if run_closed:
+        total_realized = sum(p.get("realized_pnl", 0) for p in run_closed)
         st.markdown(
             f"**Realized P&L today: "
             f"<span style='color:{pnl_color(total_realized)}'>{fmt_pnl(total_realized)}</span>**",
             unsafe_allow_html=True
         )
-        df = pd.DataFrame(today_closed)[["ticker", "action", "entry_price", "close_price",
+        df = pd.DataFrame(run_closed)[["ticker", "action", "entry_price", "close_price",
                                           "shares", "realized_pnl", "close_reason", "closed_at"]]
         df = add_company_col(df)
         df["realized_pnl"] = df["realized_pnl"].apply(fmt_pnl)
