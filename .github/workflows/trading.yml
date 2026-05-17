@@ -64,3 +64,10 @@ jobs:
           ALPACA_API_KEY:     ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY:  ${{ secrets.ALPACA_SECRET_KEY }}
         run: python orchestrator.py --mode ${{ steps.mode.outputs.mode }} --broker ${{ steps.mode.outputs.broker }}
+
+      - name: Run eval (EOD only)
+        if: steps.mode.outputs.mode == 'eod'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python eval.py --days 30 --write

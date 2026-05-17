@@ -655,6 +655,41 @@ elif page == "Positions":
 elif page == "Performance":
     st.title("Performance History")
 
+    # ── Agent Scorecard (latest eval) ────────────────────────────
+    eval_rows = db.select("scan_results", filters={"scan_type": "eval"}, order="created_at", limit=1)
+    if eval_rows:
+        ev = eval_rows[0].get("results", {})
+        grade_color = {"A": "#1e8449", "B": "#27ae60", "C": "#f39c12", "D": "#e74c3c"}.get(ev.get("grade", ""), "#95a5a6")
+        grade_label = {"A": "Excellent", "B": "Good", "C": "Mediocre", "D": "Poor"}.get(ev.get("grade", ""), "")
+
+        with st.expander(f"Agent Scorecard — {eval_rows[0]['date']} · {ev.get('days', '?')} day window · Grade **{ev.get('grade','?')}** ({grade_label})", expanded=True):
+            sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+            sc1.metric("Score",          f"{ev.get('score', 0):.0f} / 100")
+            sc2.metric("Avg Daily P&L",  f"${ev.get('avg_daily_pnl', 0):,.0f}",
+                       delta=f"target ${DAILY_PROFIT_TARGET:,}")
+            sc3.metric("Win Days",       f"{ev.get('win_days', 0)} / {ev.get('days', 0)}")
+            sc4.metric("Trade Win Rate", f"{ev.get('avg_win_rate', 0):.1f}%")
+            sc5.metric("Actual R:R",     f"{ev.get('actual_rr', 0):.2f}x")
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown("**Trade breakdown**")
+                cr = ev.get("close_reasons", {})
+                rows = [{"Outcome": k, "Count": v} for k, v in sorted(cr.items(), key=lambda x: -x[1])]
+                if rows:
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                if ev.get("best_ticker"):
+                    st.success(f"Best: {ev['best_ticker']} +${ev['best_pnl']:,.2f}")
+                if ev.get("worst_ticker"):
+                    st.error(f"Worst: {ev['worst_ticker']} ${ev['worst_pnl']:,.2f}")
+
+            with col_b:
+                st.markdown("**Recommendations**")
+                for rec in ev.get("recommendations", []):
+                    st.markdown(f"• {rec}")
+
+        st.markdown("---")
+
     perf = db.select("daily_performance", order="date", limit=60)
     if not perf:
         st.info("No performance data yet.")
