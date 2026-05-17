@@ -1,7 +1,9 @@
+from __future__ import annotations
+from typing import Optional
 from supabase import create_client, Client
 from config.settings import SUPABASE_URL, SUPABASE_KEY
 
-_client: Client | None = None
+_client: Optional[Client] = None
 
 
 def get_client() -> Client:
@@ -26,7 +28,7 @@ def update(table: str, match: dict, data: dict) -> list:
     return q.update(data).execute().data
 
 
-def select(table: str, filters: dict | None = None, order: str | None = None, limit: int | None = None) -> list:
+def select(table: str, filters: Optional[dict] = None, order: Optional[str] = None, limit: Optional[int] = None) -> list:
     q = get_client().table(table).select("*")
     if filters:
         for col, val in filters.items():
