@@ -60,7 +60,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v2.1  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v3.0  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -72,9 +72,10 @@ heading('1. Overview')
 body(
     'The AI Trading Agent is a fully autonomous stock trading simulation system built '
     'using Python, the Anthropic Claude API, Supabase (PostgreSQL), GitHub Actions, and '
-    'Streamlit. It scans a curated universe of 430+ stocks and ETFs every trading day, '
-    'checks market conditions and news intelligence, selects the highest-conviction setups '
-    'using a multi-agent AI pipeline, manages simulated positions throughout the day, and '
+    'Streamlit. It scans a dynamic universe of 450+ stocks and ETFs every trading day — '
+    'refreshed weekly from S&P 500 + Nasdaq 100 components screened for liquidity and '
+    'volatility — checks market conditions and news intelligence, selects the highest-conviction '
+    'setups using a multi-agent AI pipeline, manages simulated positions throughout the day, and '
     'logs performance to a live password-protected dashboard — all without any human '
     'intervention after setup.'
 )
@@ -162,23 +163,26 @@ code('├── streamlit_secrets.toml       # Streamlit Cloud secrets template 
 code('├── .gitignore                   # Excludes .env and secrets files')
 code('├── .github/')
 code('│   └── workflows/')
-code('│       └── trading.yml          # GitHub Actions schedule')
+code('│       ├── trading.yml              # Premarket/intraday/EOD schedule')
+code('│       └── universe_refresh.yml     # Monday 8:30 AM ET — weekly universe update')
 code('├── scanner/')
-code('│   └── scanner.py              # Market scanner (yfinance + TA, 430+ tickers)')
+code('│   └── scanner.py                  # Market scanner (yfinance + TA, dynamic universe)')
 code('├── agents/')
-code('│   ├── market_context.py       # V2a: VIX gate + futures signal + international')
-code('│   ├── news_intel.py           # V2b: earnings blackout + news headlines')
-code('│   ├── strategy.py             # Claude picks the best trades')
-code('│   ├── risk.py                 # Claude validates risk parameters')
-code('│   ├── portfolio.py            # Opens/tracks simulated positions')
-code('│   ├── intraday.py             # Monitors open positions mid-day')
-code('│   └── performance.py          # Calculates EOD P&L')
+code('│   ├── market_context.py           # V2a: VIX gate + futures signal + international')
+code('│   ├── news_intel.py               # V2b: earnings blackout + news headlines')
+code('│   ├── universe_refresh.py         # V3a: weekly S&P500+Nasdaq100 screener')
+code('│   ├── strategy.py                 # Claude picks the best trades')
+code('│   ├── risk.py                     # Claude validates risk parameters')
+code('│   ├── portfolio.py                # Opens/tracks simulated positions')
+code('│   ├── intraday.py                 # Monitors open positions mid-day')
+code('│   └── performance.py              # Calculates EOD P&L')
 code('├── config/')
-code('│   └── settings.py             # Capital, thresholds, 430+ stock universe')
+code('│   ├── settings.py                 # Capital, thresholds, static stock universe (fallback)')
+code('│   └── company_names.py            # Static ticker→company name lookup (~430 tickers)')
 code('├── core/')
-code('│   └── db.py                   # Supabase database client')
+code('│   └── db.py                       # Supabase database client')
 code('└── dashboard/')
-code('    └── app.py                  # Streamlit dashboard — full workflow view')
+code('    └── app.py                      # Streamlit dashboard — full workflow view')
 
 # ── 3. The Agent Pipeline ─────────────────────────────────────────────────────
 doc.add_page_break()
@@ -203,11 +207,11 @@ bullet('Passes full market summary to Claude strategy agent as context')
 bullet('Stores VIX, futures, and international data in scan_results for full audit trail')
 
 body('Stage 1 — Market Scanner')
-bullet('Pulls price data for 430+ stocks and ETFs using yfinance (free, no API key needed)')
+bullet('Loads dynamic universe via load_universe() — reads latest refresh from Supabase if ≤7 days old, else falls back to static settings.py list')
+bullet('Pulls price data for 450+ stocks and ETFs using yfinance (free, no API key needed)')
 bullet('Calculates technical indicators: RSI, MACD, Bollinger Bands, volume ratio, ATR, SMA 20/50')
 bullet('Scores each ticker from -10 to +10 based on signal strength')
 bullet('Returns candidates with score ≥ 3 (configurable in settings.py)')
-bullet('Universe expanded from 52 to 430+ tickers across 15 sectors based on backtest results')
 
 body('Stage 1.5 — News Intelligence Agent (V2b)')
 bullet('Checks earnings calendar for every candidate via yfinance ticker.calendar')
@@ -310,7 +314,8 @@ body(
 add_table(
     ['Run', 'UTC Cron', 'ET Time', 'What Happens'],
     [
-        ('Premarket', '0 13 * * 1-5', '9:00 AM Mon–Fri', 'Market check → Scan → News filter → Strategy → Risk → Open positions'),
+        ('Universe Refresh', '30 12 * * 1', '8:30 AM Mondays', 'Fetch S&P500+Nasdaq100, screen for ATR/volume, save 450+ tickers to Supabase'),
+        ('Premarket', '0 13 * * 1-5', '9:00 AM Mon–Fri', 'Market check → Scan (dynamic universe) → News filter → Strategy → Risk → Open positions'),
         ('Intraday', '0,30 14-19 * * 1-5', 'Every 30 min 10AM–3:30PM', 'Monitor positions, close on target/stop'),
         ('EOD', '30 20 * * 1-5', '4:30 PM Mon–Fri', 'Close remaining, calculate daily P&L'),
     ]
@@ -346,10 +351,10 @@ body(
 add_table(
     ['Step', 'What You See'],
     [
-        ('0 — Market Conditions', 'VIX (color-coded green/yellow/red), futures bias, S&P/Nasdaq/Dow % change, international markets expandable'),
-        ('1 — Scanner', 'Total candidates found, earnings-blocked count, full table of screened stocks sorted by technical score'),
-        ('2 — Strategy & Risk', "Claude's market read, estimated profit vs $1K target, approved trades table, expandable per-trade reasoning"),
-        ('3 — Live Positions', 'Open positions with entry/current/target/stop and color-coded P&L, closed trades with realized P&L'),
+        ('0 — Market Conditions', 'VIX (color-coded green/yellow/red), Fear & Greed index, futures bias, S&P/Nasdaq/Dow % change, FOMC/CPI/NFP banners, international markets expandable. All metrics have help tooltips explaining acronyms.'),
+        ('1 — Scanner', 'Total candidates found, earnings-blocked count, full table of screened stocks with company names, sorted by technical score'),
+        ('2 — Strategy & Risk', "Claude's market read, estimated profit vs $1K target, approved trades table with company names, expandable per-trade reasoning"),
+        ('3 — Live Positions', 'Open positions labeled as "TICKER · Company" with entry/current/target/stop and color-coded P&L, closed trades with realized P&L and company names'),
     ]
 )
 
@@ -413,10 +418,10 @@ bullet('Removed drags: PYPL, META (moved to mega-cap), ARKK, IWM, JPM, IBM, MA, 
 
 # ── 9. V2 Intelligence Layer ──────────────────────────────────────────────────
 doc.add_page_break()
-heading('9. V2 Intelligence Layer')
+heading('9. V2/V3 Intelligence Layer')
 body(
-    'V2 adds pre-trade intelligence to reduce false signals and protect against market conditions '
-    'where the base strategy should not run. Built in phases, each adding a new protection or signal.'
+    'V2 adds pre-trade intelligence gates; V3 adds dynamic data sourcing. Each phase adds '
+    'a new protection, signal, or data quality improvement.'
 )
 
 add_table(
@@ -424,10 +429,13 @@ add_table(
     [
         ('V2a', 'Volatility gate + futures signal + international markets', 'Built and deployed (v2.0)'),
         ('V2b', 'Earnings blackout + news headlines for strategy context', 'Built and deployed (v2.1)'),
-        ('V2c', 'Sector correlation guard — avoid over-concentration in one sector', 'Planned'),
-        ('V2d', 'Sector rotation scoring — favor sectors showing relative strength', 'Planned'),
-        ('V2e', 'Momentum confirmation — 15-minute rule before entry', 'Planned'),
-        ('V2f', 'Alpaca paper trading integration — real order simulation', 'Planned'),
+        ('V2c', 'Fear & Greed Index + FOMC/CPI/NFP economic calendar gates', 'Built and deployed (v2.2)'),
+        ('V2c.1', 'Tune F&G gate: confirming signal only (not standalone)', 'Built and deployed (v2.3)'),
+        ('V3a', 'Dynamic universe refresh — weekly S&P500+Nasdaq100 screener', 'Built and deployed (v3.0)'),
+        ('V2d', 'Sector correlation guard — avoid over-concentration in one sector', 'Planned'),
+        ('V2e', 'Sector rotation scoring — favor sectors showing relative strength', 'Planned'),
+        ('V2f', 'Momentum confirmation — 15-minute rule before entry', 'Planned'),
+        ('V2g', 'Alpaca paper trading integration — real order simulation', 'Planned'),
     ]
 )
 
@@ -451,6 +459,21 @@ body(
     'news_context (formatted string for Claude prompt), news_by_ticker (dict for logging). '
     'Handles both DataFrame and dict formats of yfinance calendar (version compatibility).'
 )
+
+heading('V2c — Fear & Greed + Economic Calendar (agents/market_context.py)', 2)
+body('Added to market_context.py as part of V2.2 and tuned in V2.3:')
+bullet('Fear & Greed Index: fetches from alternative.me (free, no API key). Extreme Fear <25 reduces positions when confirmed by VIX>20 or bearish futures. Extreme Greed >80 caps positions at 12. F&G alone is informational — lagging indicator that reads low during bull recoveries.')
+bullet('Economic calendar: FOMC, CPI, NFP dates hardcoded for 2025+2026. FOMC day → cap at 8 positions. CPI/NFP day → cap at 10 positions.')
+bullet('V2.3 tuning: removed standalone F&G gate — gate cost dropped from -$9,596 to -$2,549 vs baseline (30-day backtest). Both grade B.')
+
+heading('V3a — Dynamic Universe Refresh (agents/universe_refresh.py)', 2)
+body('Runs every Monday 8:30 AM ET via a separate GitHub Actions workflow. Replaces static universe with a live-screened list:')
+bullet('Fetches S&P 500 (~503 tickers) and Nasdaq 100 (~101 tickers) from Wikipedia using requests with User-Agent header')
+bullet('Adds ~41 curated high-momentum tickers: quantum (IONQ, QUBT, QBTS), crypto miners (MARA, RIOT, CLSK), space/eVTOL (ASTS, RKLB, ACHR), AI (SOUN, BBAI), leveraged ETFs (SOXL, SOXS, TQQQ)')
+bullet('Screens all ~553 combined tickers: price $5–$500, avg daily volume ≥500K, ATR% ≥2%')
+bullet('Saves passing tickers sorted by ATR% descending to Supabase as scan_type="universe_refresh"')
+bullet('orchestrator.py load_universe(): reads Supabase if ≤7 days old, falls back to static settings.py')
+bullet('First run (May 17 2026): 553 screened → 458 passed. Top movers: SOXS, SOXL, QUBT, OKLO, IREN, LUNR, QBTS, IONQ, HUT')
 
 # ── 10. Backtesting ───────────────────────────────────────────────────────────
 heading('10. Backtesting (backtest.py)')
@@ -528,7 +551,11 @@ add_table(
         ('22', 'Built V2a — Market Context Agent', 'VIX gate + futures signal + international markets'),
         ('23', 'Built V2b — News Intelligence Agent', 'Earnings blackout + news headlines context for Claude'),
         ('24', 'Redesigned dashboard to workflow view', 'Today tab shows all 4 steps: market → scan → plan → positions'),
-        ('25', 'Generated documentation and PRD', 'Word documents with full project details'),
+        ('25', 'Built V2c — Fear & Greed + economic calendar', 'alternative.me F&G Index + FOMC/CPI/NFP hardcoded dates'),
+        ('26', 'Tuned V2c to confirming signal (v2.3)', 'F&G standalone gate was too aggressive — now requires VIX or futures confirmation'),
+        ('27', 'Built V3a — Universe Refresh Agent', 'Weekly S&P500+Nasdaq100 screener; 458 tickers saved to Supabase on first run'),
+        ('28', 'Added company names to dashboard tables', 'config/company_names.py static dict, company column in all ticker tables'),
+        ('29', 'Generated documentation and PRD', 'Word documents updated to v3.0'),
     ]
 )
 
@@ -579,17 +606,16 @@ bullet('Rerun manually: GitHub Actions → Trading Agent → Run workflow → se
 
 # ── 15. What's Next ───────────────────────────────────────────────────────────
 heading('15. What\'s Next')
-body('The system is live and running at v2.1. Planned next steps:')
+body('The system is live and running at v3.0. Planned next steps:')
 
 add_table(
     ['Phase', 'What', 'Priority'],
     [
-        ('V2c', 'Sector correlation guard — avoid over-concentration in one sector per run', 'Next'),
-        ('V2d', 'Sector rotation scoring — favor sectors showing relative strength this week', 'Planned'),
-        ('V2e', 'Momentum confirmation — 15-minute rule: wait for confirmed breakout before entry', 'Planned'),
-        ('V2f', 'Alpaca paper trading API — real order simulation with fills and slippage', 'Planned'),
+        ('V2d', 'Sector correlation guard — avoid over-concentration in one sector per run', 'Next'),
+        ('V2e', 'Sector rotation scoring — favor sectors showing relative strength this week', 'Planned'),
+        ('V2f', 'Momentum confirmation — 15-minute rule: wait for confirmed breakout before entry', 'Planned'),
+        ('V2g', 'Alpaca paper trading API — real order simulation with fills and slippage', 'Planned'),
         ('Alerts', 'SMS/email on position close (target hit or stop triggered)', 'Planned'),
-        ('CBRS', 'Add Cerebras to universe post-IPO (AI infrastructure, high-conviction)', 'Pending IPO'),
         ('Tune', 'If live win rate < 45% after first week, drop target back to 2.5%', 'Conditional'),
     ]
 )
