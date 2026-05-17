@@ -95,11 +95,27 @@ if page == "Summary":
     plan   = plans[0] if plans else None
     trades = db.select("planned_trades", filters={"plan_id": plan["id"]}) if plan else []
 
+    # De-duplicate planned_trades by ticker — repeated test runs can insert the same
+    # ticker multiple times into one plan; keep only the most recent entry per ticker
+    seen: set = set()
+    deduped: list = []
+    for t in reversed(trades):
+        if t["ticker"] not in seen:
+            seen.add(t["ticker"])
+            deduped.append(t)
+    trades = deduped
+
     plan_trade_ids = {t["id"] for t in trades}
     all_open   = db.select("positions", filters={"status": "OPEN"})
     open_pos   = [p for p in all_open if p["planned_trade_id"] in plan_trade_ids]
     all_closed = db.select("positions", filters={"status": "CLOSED"})
-    run_closed = [p for p in all_closed if (p.get("closed_at") or "").startswith(run_date)]
+    # Scope closed positions to this plan only; exclude manual CLEANUP entries
+    run_closed = [
+        p for p in all_closed
+        if (p.get("closed_at") or "").startswith(run_date)
+        and p.get("planned_trade_id") in plan_trade_ids
+        and p.get("close_reason") != "CLEANUP"
+    ]
 
     realized   = sum(p.get("realized_pnl",   0) or 0 for p in run_closed)
     unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in open_pos)
@@ -171,10 +187,19 @@ if page == "Summary":
         with st.spinner("Fetching sectors..."):
             sectors: dict[str, list] = {}
             for t in trades:
-                sector = get_sector(t["ticker"])
-                sectors.setdefault(sector, []).append(t)
+                raw = get_sector(t["ticker"])
+                label = "Uncategorized" if raw == "Unknown" else raw
+                sectors.setdefault(label, []).append(t)
 
-        sector_order = sorted(sectors.keys(), key=lambda s: (s == "Unknown", s == "ETF", s))
+        # Known sectors first (alphabetical), ETF next, Uncategorized last
+        sector_order = sorted(
+            sectors.keys(),
+            key=lambda s: (s == "Uncategorized", s == "ETF", s)
+        )
+
+        unknown_count = len(sectors.get("Uncategorized", []))
+        if unknown_count > 0:
+            st.caption(f"ℹ️ {unknown_count} ticker(s) in 'Uncategorized' — sector data unavailable (yfinance rate limit). Will resolve on next page load.")
 
         for sector in sector_order:
             sector_trades = sectors[sector]
@@ -189,11 +214,9 @@ if page == "Summary":
                     and pos_by_trade[t["id"]]["status"] == "OPEN"
             )
             sector_pnl = sector_realized + sector_unrealized
+            expand = sector != "Uncategorized"
 
-            header_col = f"**{sector}** — {len(sector_trades)} trade{'s' if len(sector_trades) > 1 else ''}"
-            pnl_col    = f"<span style='color:{pnl_color(sector_pnl)};font-weight:bold'>{fmt_pnl(sector_pnl)}</span>"
-
-            with st.expander(f"{sector}  ·  {len(sector_trades)} trade{'s' if len(sector_trades) > 1 else ''}  ·  {fmt_pnl(sector_pnl)}", expanded=True):
+            with st.expander(f"{sector}  ·  {len(sector_trades)} trade{'s' if len(sector_trades) > 1 else ''}  ·  {fmt_pnl(sector_pnl)}", expanded=expand):
                 rows = []
                 for t in sector_trades:
                     pos = pos_by_trade.get(t["id"])
@@ -226,8 +249,9 @@ if page == "Summary":
 
     # ── P&L Breakdown Bar ─────────────────────────────────────────
     st.subheader("P&L Breakdown")
-    if run_closed:
-        df_pnl = pd.DataFrame(run_closed)[["ticker", "realized_pnl", "close_reason"]]
+    closed_with_pnl = [p for p in run_closed if (p.get("realized_pnl") or 0) != 0]
+    if closed_with_pnl:
+        df_pnl = pd.DataFrame(closed_with_pnl)[["ticker", "realized_pnl", "close_reason"]]
         df_pnl = df_pnl.sort_values("realized_pnl", ascending=True)
         colors = ["#e74c3c" if v < 0 else "#27ae60" for v in df_pnl["realized_pnl"]]
         fig = go.Figure(go.Bar(
@@ -237,19 +261,21 @@ if page == "Summary":
             marker_color=colors,
             text=[fmt_pnl(v) for v in df_pnl["realized_pnl"]],
             textposition="outside",
-            hovertemplate="<b>%{y}</b><br>P&L: %{x:,.2f}<extra></extra>",
+            customdata=df_pnl["close_reason"],
+            hovertemplate="<b>%{y}</b><br>P&L: $%{x:,.2f}<br>Reason: %{customdata}<extra></extra>",
         ))
         fig.update_layout(
-            title="Realized P&L per Trade",
-            xaxis_title="P&L ($)",
-            height=max(250, len(df_pnl) * 35),
-            margin=dict(l=20, r=60, t=40, b=20),
+            xaxis_title="Realized P&L ($)",
+            height=min(500, max(250, len(df_pnl) * 40)),
+            margin=dict(l=20, r=80, t=20, b=20),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(fig, use_container_width=True)
     elif open_pos:
         st.info("Positions open — P&L chart will appear as trades close.")
+    elif run_closed:
+        st.info("Closed positions have $0 P&L — no chart to show.")
     else:
         st.info("No closed trades yet today.")
 
@@ -272,12 +298,17 @@ elif page == "Today":
     plan = plans[0] if plans else None
     trades = db.select("planned_trades", filters={"plan_id": plan["id"]}) if plan else []
 
-    # Positions scoped to this plan only (not all OPEN positions globally)
+    # Positions scoped to this plan only; exclude manual CLEANUP entries
     plan_trade_ids = {t["id"] for t in trades}
     all_open = db.select("positions", filters={"status": "OPEN"})
     open_pos = [p for p in all_open if p["planned_trade_id"] in plan_trade_ids]
     all_closed = db.select("positions", filters={"status": "CLOSED"})
-    run_closed = [p for p in all_closed if (p.get("closed_at") or "").startswith(run_date)]
+    run_closed = [
+        p for p in all_closed
+        if (p.get("closed_at") or "").startswith(run_date)
+        and p.get("planned_trade_id") in plan_trade_ids
+        and p.get("close_reason") != "CLEANUP"
+    ]
 
     # Unpack scan results
     skipped       = results.get("skipped", False)
