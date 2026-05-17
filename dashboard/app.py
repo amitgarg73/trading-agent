@@ -78,13 +78,15 @@ if page == "Today":
     today_closed = [p for p in all_closed if (p.get("closed_at") or "").startswith(run_date)]
 
     # Unpack scan results
-    skipped      = results.get("skipped", False)
-    vix          = results.get("vix")
-    futures      = results.get("futures", {})
-    futures_bias = results.get("futures_bias", "NEUTRAL")
-    intl         = results.get("intl_markets", {})
-    candidates   = results.get("candidates", [])
-    blackout     = results.get("blackout_tickers", [])
+    skipped       = results.get("skipped", False)
+    vix           = results.get("vix")
+    fear_greed    = results.get("fear_greed")
+    econ_events   = results.get("economic_events", [])
+    futures       = results.get("futures", {})
+    futures_bias  = results.get("futures_bias", "NEUTRAL")
+    intl          = results.get("intl_markets", {})
+    candidates    = results.get("candidates", [])
+    blackout      = results.get("blackout_tickers", [])
 
     # ── Header ─────────────────────────────────────────────────────
     if skipped:
@@ -116,27 +118,75 @@ if page == "Today":
 
     if skipped:
         st.error(f"⛔ {results.get('reason', 'Trading skipped')}")
+        c1, c2 = st.columns(2)
         if vix:
-            st.metric("VIX at skip", f"{vix:.1f}")
+            c1.metric("VIX", f"{vix:.1f}",
+                      help="CBOE Volatility Index — measures expected market volatility over 30 days. >30 = skip trading.")
+        if fear_greed:
+            c2.metric("Fear & Greed", f"{fear_greed['value']} — {fear_greed['classification']}",
+                      help="CNN Fear & Greed Index (0–100). Extreme Fear (<25) reduces positions. Extreme Greed (>80) signals overextension.")
     else:
-        vix_icon  = "🟢" if (vix or 0) < 20 else "🟡" if (vix or 0) < 30 else "🔴"
-        fut_icon  = "🟢" if futures_bias == "BULLISH" else "🔴" if futures_bias == "BEARISH" else "⚪"
-        fut_items = list(futures.items())
+        # ── Economic calendar banner ──────────────────────────────────
+        ECON_LABELS = {
+            "FOMC": "FOMC (Federal Open Market Committee) rate decision — Fed announces interest rate change at 2PM ET. High uncertainty, positions reduced to 8.",
+            "CPI":  "CPI (Consumer Price Index) release — inflation data at 8:30AM ET. Market moves sharply on surprise vs estimate. Positions reduced to 10.",
+            "NFP":  "NFP (Non-Farm Payrolls) jobs report — monthly employment data at 8:30AM ET. Strong market-mover. Positions reduced to 10.",
+        }
+        for ev in econ_events:
+            st.warning(f"📅 **{ev} day** — {ECON_LABELS.get(ev, ev)}")
 
-        cols = st.columns(5)
-        cols[0].metric(f"{vix_icon} VIX", f"{vix:.1f}" if vix else "N/A")
-        cols[1].metric(f"{fut_icon} Futures Bias", futures_bias)
+        # ── Row 1: VIX + Fear & Greed + Futures ──────────────────────
+        vix_icon = "🟢" if (vix or 0) < 20 else "🟡" if (vix or 0) < 30 else "🔴"
+        fut_icon = "🟢" if futures_bias == "BULLISH" else "🔴" if futures_bias == "BEARISH" else "⚪"
+
+        if fear_greed:
+            fg_val = fear_greed["value"]
+            fg_icon = "🔴" if fg_val < 25 else "🟡" if fg_val < 45 else "🟢" if fg_val < 80 else "🟡"
+        else:
+            fg_icon = "⚪"
+
+        fut_items = list(futures.items())
+        cols = st.columns(6)
+        cols[0].metric(
+            f"{vix_icon} VIX", f"{vix:.1f}" if vix else "N/A",
+            help="CBOE Volatility Index — expected market volatility over 30 days. <20 normal, 20–25 caution (10 pos), 25–30 high caution (5 pos), >30 skip trading."
+        )
+        cols[1].metric(
+            f"{fg_icon} Fear & Greed",
+            f"{fear_greed['value']}" if fear_greed else "N/A",
+            delta=fear_greed["classification"] if fear_greed else None,
+            delta_color="off",
+            help="CNN Fear & Greed Index (0–100). Extreme Fear <25 → reduce to 5 pos. Fear 25–45 → reduce to 10 pos. Extreme Greed >80 → reduce to 10 pos (overextended)."
+        )
+        cols[2].metric(
+            f"{fut_icon} Futures Bias", futures_bias,
+            help="Pre-market direction of US index futures. BULLISH = avg up >0.5%, BEARISH = avg down >0.5%, NEUTRAL = flat. Down >1.5% = skip trading."
+        )
         for i, (name, data) in enumerate(fut_items[:3]):
             chg = data["change_pct"]
-            cols[i + 2].metric(name, f"${data['price']:,.0f}", delta=f"{chg:+.2f}%")
+            help_map = {
+                "S&P500": "ES=F — S&P 500 E-mini futures. Broad US market direction.",
+                "Nasdaq": "NQ=F — Nasdaq 100 E-mini futures. Tech-heavy index direction.",
+                "Dow":    "YM=F — Dow Jones E-mini futures. Blue-chip index direction.",
+            }
+            cols[i + 3].metric(name, f"${data['price']:,.0f}", delta=f"{chg:+.2f}%",
+                               help=help_map.get(name, name))
 
         if intl:
             with st.expander("🌍 International Markets"):
                 icols = st.columns(len(intl))
+                intl_help = {
+                    "Nikkei (Japan)":  "^N225 — Japan's benchmark index. Asian market sentiment.",
+                    "FTSE (UK)":       "^FTSE — UK's top 100 companies. European market open signal.",
+                    "DAX (Germany)":   "^GDAXI — Germany's benchmark. European economic health.",
+                    "Hang Seng (HK)":  "^HSI — Hong Kong index. China/Asia proxy.",
+                    "Shanghai":        "000001.SS — China's main stock index.",
+                }
                 for i, (mkt_name, mkt_data) in enumerate(intl.items()):
                     chg = mkt_data["change_pct"]
                     icon = "🟢" if chg > 0 else "🔴"
-                    icols[i].metric(f"{icon} {mkt_name}", f"{chg:+.2f}%")
+                    icols[i].metric(f"{icon} {mkt_name}", f"{chg:+.2f}%",
+                                    help=intl_help.get(mkt_name, mkt_name))
 
     st.divider()
 
@@ -145,9 +195,13 @@ if page == "Today":
 
     total_scanned = len(candidates) + len(blackout)
     s1, s2, s3 = st.columns(3)
-    s1.metric("Candidates Found", total_scanned)
-    s2.metric("Earnings Blocked", len(blackout), delta=f"-{len(blackout)}" if blackout else None, delta_color="inverse")
-    s3.metric("Passed to Strategy", len(candidates))
+    s1.metric("Candidates Found", total_scanned,
+              help=f"Stocks from the 430+ universe that passed minimum filters: price ≥$5, avg volume ≥500K, technical score ≥3/10.")
+    s2.metric("Earnings Blocked", len(blackout),
+              delta=f"-{len(blackout)}" if blackout else None, delta_color="inverse",
+              help="Tickers removed because they report earnings today or tomorrow. Earnings = binary event with gap risk — not suitable for day trading.")
+    s3.metric("Passed to Strategy", len(candidates),
+              help="Remaining candidates sent to Claude's strategy agent after earnings blackout filter.")
 
     if blackout:
         with st.expander(f"⛔ Earnings Blackout — {len(blackout)} ticker(s)"):
@@ -176,12 +230,16 @@ if page == "Today":
 
         pct_of_target = plan["total_estimated_profit"] / DAILY_PROFIT_TARGET * 100
         p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Trades Selected", len(trades))
-        p2.metric("Est. Profit",     f"${plan['total_estimated_profit']:,.0f}")
-        p3.metric("Daily Target",    f"${DAILY_PROFIT_TARGET:,}")
-        p4.metric("Coverage",        f"{pct_of_target:.0f}%",
+        p1.metric("Trades Selected", len(trades),
+                  help="Number of trades approved by both strategy agent (Claude) and risk agent. May be less than max_positions if conviction is low.")
+        p2.metric("Est. Profit", f"${plan['total_estimated_profit']:,.0f}",
+                  help="Sum of estimated profit across all approved trades, assuming all hit their 3% target. Actual results will vary.")
+        p3.metric("Daily Target", f"${DAILY_PROFIT_TARGET:,}",
+                  help="$1,000/day target. At $750/day average (backtest), capital compounds to reach this naturally in ~45 trading days.")
+        p4.metric("Coverage", f"{pct_of_target:.0f}%",
                   delta=f"{pct_of_target - 100:+.0f}% vs target",
-                  delta_color="normal" if pct_of_target >= 100 else "inverse")
+                  delta_color="normal" if pct_of_target >= 100 else "inverse",
+                  help="How much of today's $1K target the selected trades could generate if all hit. <100% is common — not all trades will hit target.")
 
         if trades:
             df_t = pd.DataFrame(trades)
@@ -212,10 +270,14 @@ if page == "Today":
     total_realized   = sum(p.get("realized_pnl",   0) for p in today_closed)
 
     lp1, lp2, lp3, lp4 = st.columns(4)
-    lp1.metric("Open Positions",   len(open_pos))
-    lp2.metric("Closed Today",     len(today_closed))
-    lp3.metric("Unrealized P&L",   fmt_pnl(total_unrealized))
-    lp4.metric("Realized P&L",     fmt_pnl(total_realized))
+    lp1.metric("Open Positions", len(open_pos),
+               help="Positions currently active. Intraday agent checks prices every 30 min and closes on +3% target or -1% stop loss.")
+    lp2.metric("Closed Today", len(today_closed),
+               help="Positions closed so far today via TARGET hit (+3%), STOP hit (-1%), or EOD (4:30PM forced close).")
+    lp3.metric("Unrealized P&L", fmt_pnl(total_unrealized),
+               help="Paper profit/loss on still-open positions based on current price. Not locked in until position closes.")
+    lp4.metric("Realized P&L", fmt_pnl(total_realized),
+               help="Actual locked-in profit/loss from positions closed today. This is the real score for the day so far.")
 
     if open_pos:
         st.markdown("**Open**")

@@ -25,7 +25,13 @@ def premarket():
         db.insert("scan_results", {
             "date":      date.today().isoformat(),
             "scan_type": "premarket",
-            "results":   {"skipped": True, "reason": mkt["skip_reason"], "vix": mkt["vix"]},
+            "results":   {
+                "skipped":         True,
+                "reason":          mkt["skip_reason"],
+                "vix":             mkt["vix"],
+                "fear_greed":      mkt["fear_greed"],
+                "economic_events": mkt["economic_events"],
+            },
         })
         return
 
@@ -54,6 +60,8 @@ def premarket():
         "results":   {
             "candidates":       candidates,
             "vix":              mkt["vix"],
+            "fear_greed":       mkt["fear_greed"],
+            "economic_events":  mkt["economic_events"],
             "futures":          mkt["futures"],
             "intl_markets":     mkt["intl_markets"],
             "futures_bias":     mkt["futures_bias"],
