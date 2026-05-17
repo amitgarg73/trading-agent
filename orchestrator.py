@@ -7,7 +7,7 @@ import json
 import argparse
 from datetime import date, datetime, timedelta
 from scanner.scanner import run_scan
-from agents import strategy, risk, sector_guard, performance, market_context, news_intel, universe_refresh
+from agents import strategy, risk, sector_guard, guardrails, performance, market_context, news_intel, universe_refresh
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
@@ -35,6 +35,13 @@ def premarket(broker: str = "simulation"):
     print(f"  PREMARKET RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')} [{broker}]")
     print(f"{'='*60}\n")
 
+    # Concurrent run lock — bail out if premarket already completed today
+    today_iso = date.today().isoformat()
+    existing_scan = db.select("scan_results", filters={"date": today_iso, "scan_type": "premarket"})
+    if existing_scan:
+        print(f"  ⚠️  Premarket already ran for {today_iso} — skipping duplicate run.\n")
+        return
+
     # 0. Market context — volatility gate + futures signal
     mkt = market_context.run()
     if mkt["decision"] == "SKIP":
@@ -56,7 +63,8 @@ def premarket(broker: str = "simulation"):
 
     # 1. Scan
     print("[ 1/4 ] Running market scan...")
-    candidates = run_scan(universe=load_universe())
+    universe = load_universe()
+    candidates = run_scan(universe=universe)
     print(f"        Found {len(candidates)} candidates")
 
     if not candidates:
@@ -71,19 +79,20 @@ def premarket(broker: str = "simulation"):
         for b in intel["blackout_tickers"]:
             print(f"        ⛔ {b['ticker']}: {b['reason']}")
 
-    db.insert("scan_results", {
+    scan_row = db.insert("scan_results", {
         "date":      date.today().isoformat(),
         "scan_type": "premarket",
         "results":   {
-            "candidates":       candidates,
-            "vix":              mkt["vix"],
-            "fear_greed":       mkt["fear_greed"],
-            "economic_events":  mkt["economic_events"],
-            "futures":          mkt["futures"],
-            "intl_markets":     mkt["intl_markets"],
-            "futures_bias":     mkt["futures_bias"],
-            "blackout_tickers": intel["blackout_tickers"],
-            "sector_blocked":   [],  # populated after sector guard runs
+            "candidates":        candidates,
+            "vix":               mkt["vix"],
+            "fear_greed":        mkt["fear_greed"],
+            "economic_events":   mkt["economic_events"],
+            "futures":           mkt["futures"],
+            "intl_markets":      mkt["intl_markets"],
+            "futures_bias":      mkt["futures_bias"],
+            "blackout_tickers":  intel["blackout_tickers"],
+            "sector_blocked":    [],
+            "guardrail_blocked": [],
         },
     })
 
@@ -123,8 +132,29 @@ def premarket(broker: str = "simulation"):
     else:
         print(f"        No sector concentration issues")
 
+    # 3.75 Guardrails (V5)
+    guardrail_blocked = []
+    if approved:
+        print("[ 3.75/4 ] Running guardrails...")
+        guard_out = guardrails.filter_trades(approved, broker=broker, universe=universe)
+        approved = guard_out["approved_trades"]
+        guardrail_blocked = guard_out.get("guardrail_blocked", [])
+        if guardrail_blocked:
+            print(f"        Guardrail-blocked: {len(guardrail_blocked)}")
+        else:
+            print(f"        All trades passed guardrails")
+
+    # Persist sector_blocked + guardrail_blocked to scan_results for dashboard (always)
+    db.update("scan_results", {"id": scan_row["id"]}, {
+        "results": {
+            **scan_row["results"],
+            "sector_blocked":    sector_blocked,
+            "guardrail_blocked": guardrail_blocked,
+        }
+    })
+
     if not approved:
-        print("        No approved trades after sector guard.")
+        print("        No approved trades after sector/guardrail checks.")
         return
 
     # 4. Open positions

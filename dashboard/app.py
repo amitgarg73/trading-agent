@@ -95,9 +95,10 @@ if page == "Today":
     futures       = results.get("futures", {})
     futures_bias  = results.get("futures_bias", "NEUTRAL")
     intl          = results.get("intl_markets", {})
-    candidates      = results.get("candidates", [])
-    blackout        = results.get("blackout_tickers", [])
-    sector_blocked  = results.get("sector_blocked", [])
+    candidates        = results.get("candidates", [])
+    blackout          = results.get("blackout_tickers", [])
+    sector_blocked    = results.get("sector_blocked", [])
+    guardrail_blocked = results.get("guardrail_blocked", [])
 
     # ── Header ─────────────────────────────────────────────────────
     if skipped:
@@ -279,6 +280,12 @@ if page == "Today":
                              help="V2d: max 3 positions per sector. Lowest-confidence excess trades dropped."):
                 for s in sector_blocked:
                     st.markdown(f"- **{s['ticker']}** ({s['sector']}): {s['reason']}")
+
+        if guardrail_blocked:
+            with st.expander(f"🛑 Guardrails — {len(guardrail_blocked)} ticker(s) blocked",
+                             help="V5: safety checks — action whitelist, ticker whitelist, duplicate guard, price sanity, capital check, daily loss limit."):
+                for g in guardrail_blocked:
+                    st.markdown(f"- **{g['ticker']}**: {g['reason']}")
 
     st.divider()
 

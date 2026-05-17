@@ -1,0 +1,120 @@
+"""
+Guardrails (V5): Safety checks before opening any trade.
+Runs as step 3.75, after sector guard and before portfolio.
+
+Checks applied in order:
+  1. Daily loss limit  — stop all trading if today's realized P&L < DAILY_LOSS_LIMIT
+  2. Action whitelist  — only BUY is permitted
+  3. Ticker whitelist  — must be in our approved universe
+  4. Duplicate guard   — same ticker can't be opened twice in one day
+  5. Price sanity      — entry price must be within PRICE_SANITY_PCT of current market
+  6. Capital check     — Alpaca buying_power must cover position_size (alpaca broker only)
+"""
+from __future__ import annotations
+import yfinance as yf
+from datetime import date
+from core import db
+from config.settings import DAILY_LOSS_LIMIT, PRICE_SANITY_PCT
+
+
+def _current_price(ticker: str) -> float | None:
+    try:
+        data = yf.Ticker(ticker).history(period="1d", interval="1m")
+        if data.empty:
+            return None
+        return round(float(data["Close"].iloc[-1]), 2)
+    except Exception:
+        return None
+
+
+def _today_realized_pnl() -> float:
+    today = date.today().isoformat()
+    closed = db.select("positions", filters={"status": "CLOSED"})
+    today_closed = [p for p in closed if (p.get("closed_at") or "").startswith(today)]
+    return sum(p.get("realized_pnl", 0) or 0 for p in today_closed)
+
+
+def filter_trades(approved_trades: list, broker: str = "simulation",
+                  universe: list | None = None) -> dict:
+    """
+    Run all guardrail checks against approved_trades.
+    Returns: {"approved_trades": [...], "guardrail_blocked": [{ticker, reason}, ...]}
+    """
+    if not approved_trades:
+        return {"approved_trades": [], "guardrail_blocked": []}
+
+    universe_set = set(universe) if universe else set()
+
+    # Check 1: Daily loss limit — block all new trades if we've already hit the limit
+    today_pnl = _today_realized_pnl()
+    if today_pnl < DAILY_LOSS_LIMIT:
+        print(f"  🛑 GUARDRAIL: Daily loss limit hit (${today_pnl:,.2f} < ${DAILY_LOSS_LIMIT:,.0f}). Blocking all trades.")
+        return {
+            "approved_trades": [],
+            "guardrail_blocked": [
+                {"ticker": t["ticker"],
+                 "reason": f"Daily loss limit: P&L ${today_pnl:,.2f} below ${DAILY_LOSS_LIMIT:,.0f}"}
+                for t in approved_trades
+            ],
+        }
+
+    # Check 2: Alpaca buying power (fetch once — None if simulation)
+    buying_power = None
+    if broker == "alpaca":
+        try:
+            from agents import alpaca_broker
+            buying_power = alpaca_broker.get_buying_power()
+        except Exception:
+            pass
+
+    # Check 3: Build open-ticker set (open positions + already traded today)
+    today_str = date.today().isoformat()
+    open_pos = db.select("positions", filters={"status": "OPEN"})
+    closed_today = db.select("positions", filters={"status": "CLOSED"})
+    closed_today = [p for p in closed_today if (p.get("closed_at") or "").startswith(today_str)]
+    traded_today = set(p["ticker"] for p in open_pos) | set(p["ticker"] for p in closed_today)
+
+    passed, blocked = [], []
+    for trade in approved_trades:
+        ticker = trade["ticker"]
+        reason = None
+
+        # Action whitelist
+        if trade.get("action", "BUY") != "BUY":
+            reason = f"Action not allowed: {trade.get('action')} (only BUY permitted)"
+
+        # Ticker whitelist
+        elif universe_set and ticker not in universe_set:
+            reason = "Ticker not in approved universe"
+
+        # Duplicate position guard
+        elif ticker in traded_today:
+            reason = f"Duplicate: {ticker} already open or traded today"
+
+        # Price sanity check
+        else:
+            market_price = _current_price(ticker)
+            if market_price:
+                entry = trade["entry_price"]
+                deviation = abs(entry - market_price) / market_price
+                if deviation > PRICE_SANITY_PCT:
+                    reason = (
+                        f"Price sanity: entry ${entry:.2f} is {deviation*100:.1f}% "
+                        f"from market ${market_price:.2f} (max {PRICE_SANITY_PCT*100:.0f}%)"
+                    )
+
+        # Capital check (Alpaca only, only if other checks passed)
+        if reason is None and broker == "alpaca" and buying_power is not None:
+            if trade["position_size"] > buying_power:
+                reason = (
+                    f"Insufficient capital: need ${trade['position_size']:,} "
+                    f"but only ${buying_power:,.0f} buying power available"
+                )
+
+        if reason:
+            blocked.append({"ticker": ticker, "reason": reason})
+            print(f"        🛑 {ticker}: {reason}")
+        else:
+            passed.append(trade)
+
+    return {"approved_trades": passed, "guardrail_blocked": blocked}

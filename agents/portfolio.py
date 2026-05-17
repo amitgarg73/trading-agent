@@ -196,7 +196,13 @@ def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list
         alpaca_fill = None
         if broker == "alpaca":
             from agents import alpaca_broker
-            _, alpaca_fill = alpaca_broker.close_position(ticker)
+            import time
+            success, alpaca_fill = alpaca_broker.close_position(ticker)
+            if not success:
+                time.sleep(2)
+                success, alpaca_fill = alpaca_broker.close_position(ticker)
+            if not success:
+                print(f"        ⚠️  WARNING: Could not close {ticker} on Alpaca — manual close required")
 
         price = alpaca_fill or _current_price(ticker) or pos.get("current_price") or pos["entry_price"]
         shares = pos["shares"]

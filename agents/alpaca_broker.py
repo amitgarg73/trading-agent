@@ -109,3 +109,12 @@ def cancel_all_orders() -> None:
         _client().cancel_orders()
     except Exception:
         pass
+
+
+def get_buying_power() -> float | None:
+    """Return current buying power from Alpaca account."""
+    try:
+        account = _client().get_account()
+        return float(account.buying_power)
+    except Exception:
+        return None
