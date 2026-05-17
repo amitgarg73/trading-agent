@@ -20,6 +20,7 @@ MAX_POSITIONS        = 15         # max concurrent positions
 MAX_LOSS_PER_TRADE   = 0.01       # stop loss: 1% of position size
 MIN_REWARD_RISK      = 3.0        # minimum reward:risk ratio (3% target / 1% stop)
 TARGET_PCT           = 0.03       # 3% profit target per trade
+MAX_PER_SECTOR       = 3          # V2d: max positions in any single sector
 
 # Scanner thresholds
 RSI_OVERSOLD         = 35

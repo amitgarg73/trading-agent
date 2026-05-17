@@ -95,8 +95,9 @@ if page == "Today":
     futures       = results.get("futures", {})
     futures_bias  = results.get("futures_bias", "NEUTRAL")
     intl          = results.get("intl_markets", {})
-    candidates    = results.get("candidates", [])
-    blackout      = results.get("blackout_tickers", [])
+    candidates      = results.get("candidates", [])
+    blackout        = results.get("blackout_tickers", [])
+    sector_blocked  = results.get("sector_blocked", [])
 
     # ── Header ─────────────────────────────────────────────────────
     if skipped:
@@ -272,6 +273,12 @@ if page == "Today":
                         f"{t['reasoning']}",
                         unsafe_allow_html=True
                     )
+
+        if sector_blocked:
+            with st.expander(f"🏭 Sector Cap — {len(sector_blocked)} ticker(s) blocked",
+                             help="V2d: max 3 positions per sector. Lowest-confidence excess trades dropped."):
+                for s in sector_blocked:
+                    st.markdown(f"- **{s['ticker']}** ({s['sector']}): {s['reason']}")
 
     st.divider()
 

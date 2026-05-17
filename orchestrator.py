@@ -7,7 +7,7 @@ import json
 import argparse
 from datetime import date, datetime, timedelta
 from scanner.scanner import run_scan
-from agents import strategy, risk, performance, market_context, news_intel, universe_refresh
+from agents import strategy, risk, sector_guard, performance, market_context, news_intel, universe_refresh
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
@@ -83,6 +83,7 @@ def premarket(broker: str = "simulation"):
             "intl_markets":     mkt["intl_markets"],
             "futures_bias":     mkt["futures_bias"],
             "blackout_tickers": intel["blackout_tickers"],
+            "sector_blocked":   [],  # populated after sector guard runs
         },
     })
 
@@ -110,8 +111,20 @@ def premarket(broker: str = "simulation"):
     for r in rejected:
         print(f"        ✗ {r['ticker']}: {r['reason']}")
 
+    # 3.5 Sector correlation guard (V2d)
+    print("[ 3.5/4 ] Running sector guard...")
+    sector_out = sector_guard.run(risk_out)
+    approved = sector_out["approved_trades"]
+    sector_blocked = sector_out.get("sector_blocked", [])
+    if sector_blocked:
+        print(f"        Sector-blocked: {len(sector_blocked)}")
+        for s in sector_blocked:
+            print(f"        ✗ {s['ticker']}: {s['reason']}")
+    else:
+        print(f"        No sector concentration issues")
+
     if not approved:
-        print("        No approved trades — not enough conviction today.")
+        print("        No approved trades after sector guard.")
         return
 
     # 4. Open positions
@@ -123,9 +136,9 @@ def premarket(broker: str = "simulation"):
     else:
         plan = db.insert("trade_plans", {
             "date":                    date.today().isoformat(),
-            "market_context":          risk_out["market_context"],
-            "total_estimated_profit":  risk_out["total_estimated_profit"],
-            "risk_note":               risk_out["risk_note"],
+            "market_context":          sector_out["market_context"],
+            "total_estimated_profit":  sector_out["total_estimated_profit"],
+            "risk_note":               sector_out["risk_note"],
         })
 
     opened = open_positions(plan["id"], approved, broker=broker)

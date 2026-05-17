@@ -86,9 +86,10 @@ def run(candidates: list[dict], market_summary: str = "", max_positions: int = M
     )
 
     raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    # Extract JSON object/array — find the outermost { } or [ ]
+    import re
+    json_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', raw)
+    if json_match:
+        raw = json_match.group(1)
 
-    return json.loads(raw.strip())
+    return json.loads(raw)
