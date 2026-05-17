@@ -54,12 +54,16 @@ def premarket():
 
     # 4. Open positions
     print("[ 4/4 ] Opening simulated positions...")
-    plan = db.upsert("trade_plans", {
-        "date":                    date.today().isoformat(),
-        "market_context":          risk_out["market_context"],
-        "total_estimated_profit":  risk_out["total_estimated_profit"],
-        "risk_note":               risk_out["risk_note"],
-    })
+    existing = db.select("trade_plans", filters={"date": date.today().isoformat()})
+    if existing:
+        plan = existing[0]
+    else:
+        plan = db.insert("trade_plans", {
+            "date":                    date.today().isoformat(),
+            "market_context":          risk_out["market_context"],
+            "total_estimated_profit":  risk_out["total_estimated_profit"],
+            "risk_note":               risk_out["risk_note"],
+        })
 
     opened = open_positions(plan["id"], approved)
     print(f"        Opened {len(opened)} positions\n")
