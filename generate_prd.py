@@ -234,11 +234,12 @@ add_table(
         ('V2b: Earnings blackout + news', 'High', 'High', '90%', 'S', '9.0', 'P1 — shipped'),
         ('Workflow dashboard (Today tab)', 'High', 'Med', '90%', 'M', '8.1', 'P1 — shipped'),
         ('Eval script (eval.py)', 'Med', 'High', '85%', 'S', '8.5', 'P1 — shipped'),
-        ('V2c: Sector correlation guard', 'Med', 'Med', '80%', 'S', '7.2', 'P2 — next'),
-        ('V2d: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
+        ('V2c: Fear & Greed + FOMC/CPI/NFP calendar', 'High', 'High', '95%', 'S', '9.5', 'P1 — shipped (v2.2)'),
+        ('V2d: Sector correlation guard', 'Med', 'Med', '80%', 'S', '7.2', 'P2 — next'),
+        ('V2e: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
         ('Alpaca paper trading API', 'Med', 'High', '80%', 'L', '6.4', 'P2 — next'),
         ('SMS/email alerts', 'Med', 'Med', '90%', 'S', '8.1', 'P2 — next'),
-        ('V2e: 15-min momentum confirmation', 'Med', 'Med', '70%', 'M', '6.3', 'P3 — future'),
+        ('V2f: 15-min momentum confirmation', 'Med', 'Med', '70%', 'M', '6.3', 'P3 — future'),
         ('Macro context agent (Fed calendar)', 'Med', 'Med', '70%', 'M', '6.3', 'P3 — future'),
     ]
 )
@@ -262,8 +263,8 @@ add_table(
     ['Phase', 'Timeline', 'Deliverables'],
     [
         ('Phase 1 — Foundation', 'May 2026 (complete)', 'Scanner, strategy agent, risk agent, portfolio sim, GitHub Actions, Supabase, dashboard, backtest'),
-        ('Phase 2a — Intelligence (V2a/V2b)', 'May 2026 (complete)', 'VIX gate, futures signal, earnings blackout, news context, workflow dashboard'),
-        ('Phase 2b — More Intelligence', 'June 2026', 'V2c sector correlation guard, V2d sector rotation, V2e momentum confirmation'),
+        ('Phase 2a — Intelligence (V2a/V2b/V2c)', 'May 2026 (complete)', 'VIX gate, futures signal, earnings blackout, news context, Fear & Greed, FOMC/CPI/NFP calendar, workflow dashboard'),
+        ('Phase 2b — More Intelligence', 'June 2026', 'V2d sector correlation guard, V2e sector rotation, V2f momentum confirmation'),
         ('Phase 3 — Execution', 'July 2026', 'Alpaca paper trading API, SMS/email alerts on position close'),
         ('Phase 4 — Scale', 'Q3–Q4 2026', 'Strategy A/B testing, weekly email summaries, real capital evaluation'),
     ]
@@ -454,9 +455,9 @@ add_table(
 )
 
 h2('Roll-out Strategy')
-body('Phase 1 (current — v2.1): Paper trading simulation — no real money, full automation, live since May 2026. '
-     'V2a + V2b intelligence layer added. First live run Monday 9AM ET.')
-body('Phase 2: V2c sector correlation guard, V2d sector rotation scoring. Then connect Alpaca paper trading '
+body('Phase 1 (current — v2.2): Paper trading simulation — no real money, full automation, live since May 2026. '
+     'V2a (VIX + futures), V2b (earnings blackout + news), V2c (Fear & Greed + FOMC/CPI/NFP calendar) all deployed.')
+body('Phase 2: V2d sector correlation guard, V2e sector rotation scoring. Then connect Alpaca paper trading '
      'API for order simulation with realistic fills and slippage.')
 body('Phase 3: If win rate > 60% and reward:risk > 2x sustained over 30 live trading days, evaluate real '
      'capital deployment with strict position limits.')
@@ -475,20 +476,23 @@ body(
     'Update status as work progresses.'
 )
 
-h2('V2 Pipeline — Remaining Phases')
+h2('V2 Pipeline — Status & Remaining Phases')
 add_table(
     ['Item', 'What', 'Why', 'Status'],
     [
-        ('V2c', 'Sector correlation guard',
+        ('V2c', 'Fear & Greed Index + economic calendar (FOMC / CPI / NFP)',
+         'Fear & Greed <25 = extreme fear → reduce to 5 positions. FOMC day → cap at 8. CPI/NFP day → cap at 10. All gates stack with VIX via min().',
+         'Built and deployed (v2.2)'),
+        ('V2d', 'Sector correlation guard',
          'Avoid picking 8 semis on the same day — sector concentration amplifies risk if that sector drops',
-         'Planned — next after V2b'),
-        ('V2d', 'Sector rotation scoring',
+         'Planned — next'),
+        ('V2e', 'Sector rotation scoring',
          'Favor sectors showing relative strength this week; deprioritize lagging sectors',
          'Planned'),
-        ('V2e', 'Momentum confirmation (15-min rule)',
+        ('V2f', 'Momentum confirmation (15-min rule)',
          'Wait for confirmed breakout 15 min after open before entering; reduces false signals on gap-and-fade setups',
          'Planned'),
-        ('V2f', 'Alpaca paper trading API integration',
+        ('V2g', 'Alpaca paper trading API integration',
          'Real order simulation with realistic fills, slippage, and partial fills — more accurate than simulated positions',
          'Planned'),
     ]
