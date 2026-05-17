@@ -7,7 +7,7 @@ import json
 import argparse
 from datetime import date, datetime
 from scanner.scanner import run_scan
-from agents import strategy, risk, performance, market_context
+from agents import strategy, risk, performance, market_context, news_intel
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
@@ -36,25 +36,42 @@ def premarket():
     candidates = run_scan()
     print(f"        Found {len(candidates)} candidates")
 
-    db.insert("scan_results", {
-        "date":      date.today().isoformat(),
-        "scan_type": "premarket",
-        "results":   {
-            "candidates":    candidates,
-            "vix":           mkt["vix"],
-            "futures":       mkt["futures"],
-            "intl_markets":  mkt["intl_markets"],
-            "futures_bias":  mkt["futures_bias"],
-        },
-    })
-
     if not candidates:
         print("        No candidates — markets may be closed. Exiting.")
         return
 
+    # 1.5 News intelligence — earnings blackout + news sentiment
+    intel = news_intel.run(candidates)
+    candidates = intel["filtered_candidates"]
+
+    if intel["blackout_tickers"]:
+        for b in intel["blackout_tickers"]:
+            print(f"        ⛔ {b['ticker']}: {b['reason']}")
+
+    db.insert("scan_results", {
+        "date":      date.today().isoformat(),
+        "scan_type": "premarket",
+        "results":   {
+            "candidates":       candidates,
+            "vix":              mkt["vix"],
+            "futures":          mkt["futures"],
+            "intl_markets":     mkt["intl_markets"],
+            "futures_bias":     mkt["futures_bias"],
+            "blackout_tickers": intel["blackout_tickers"],
+        },
+    })
+
+    if not candidates:
+        print("        All candidates blocked (earnings). No trades today.")
+        return
+
     # 2. Strategy
     print("[ 2/4 ] Running strategy agent...")
-    strategy_out = strategy.run(candidates, market_summary=mkt["summary"],
+    full_market_summary = mkt["summary"]
+    if intel["news_context"]:
+        full_market_summary += "\n\n" + intel["news_context"]
+
+    strategy_out = strategy.run(candidates, market_summary=full_market_summary,
                                 max_positions=today_max_positions)
     print(f"        Selected {len(strategy_out.get('trades', []))} trades")
     print(f"        Market: {strategy_out.get('market_context', '')[:120]}")
