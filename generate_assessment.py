@@ -406,7 +406,7 @@ body(
     'constitute evidence, and to build toward signals with documented predictive power.'
 )
 
-subheading('Recommended Sprint Order (Post-June 1)')
+subheading('Recommended Sprint Order — Alpha / Product Path (Post-June 1)')
 bullet('1. 15-min momentum confirmation (low effort, filters false breakouts — improves Mode 1 marginally)')
 bullet('2. Insider buying feed from SEC EDGAR (low effort, genuinely new signal class)')
 bullet('3. PEAD mode — post-earnings drift as Mode 2 (medium effort, strongest documented edge)')
@@ -421,6 +421,159 @@ body(
     'Every sprint that improves the signal layer matters more than every sprint '
     'that improves the operational layer.'
 )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PART 6: REFRAME — CASH FLOW GOAL VS ALPHA GOAL
+# ══════════════════════════════════════════════════════════════════════════════
+doc.add_page_break()
+heading('Part 6: Reframe — Cash Flow Goal vs. Alpha Goal')
+
+body(
+    'Parts 1–5 were written against the wrong benchmark. The goal of this system '
+    'is not to beat the market, outperform hedge funds, or achieve a publishable Sharpe ratio. '
+    'The goal is to generate a reliable daily income — a predefined cash flow target — '
+    'without a day job. That is a fundamentally different problem, and most of the brutal '
+    'critique above does not apply to it.'
+)
+
+divider()
+subheading('The Math Reframe')
+body(
+    'With 3:1 reward:risk, you only need to be right more than 25% of the time to be '
+    'profitable. At a 55% win rate (what the backtest suggests):'
+)
+add_table(
+    ['Input', 'Value'],
+    [
+        ('Win rate',                    '55%'),
+        ('Avg gain per trade (2% on $6K)', '$120'),
+        ('Avg loss per trade (0.67% on $6K)', '$40'),
+        ('Expected value per trade',    '0.55 × $120 − 0.45 × $40 = $48'),
+        ('15 trades per day',           '$48 × 15 = $720/day expected value'),
+        ('Even at 40% degradation (live slippage)', '$720 × 0.60 = $432/day'),
+    ]
+)
+body(
+    'The comparison to Renaissance Medallion (39% net annualized) was irrelevant. '
+    'That benchmark applies when the goal is maximum compounding on unlimited capital. '
+    'When the goal is $500–700/day cash flow on $100K, a 55% win rate with 3:1 R:R '
+    'is a sound, achievable system — not an implausible one.'
+)
+
+divider()
+subheading('Which Brutal Assessment Points Still Apply')
+add_table(
+    ['Assessment Point', 'Still Relevant for Cash Flow?', 'Why'],
+    [
+        ('"175% annualized beats Renaissance" — implausible',
+         'No',
+         'Wrong benchmark. Cash flow does not require compounding.'),
+        ('"Technical signals have no academic edge"',
+         'Partially',
+         'Still matters — if win rate drops below 40%, the EV turns negative. But 55% + 3:1 R:R works.'),
+        ('"Claude is wrong signal source"',
+         'Less critical',
+         'If positive EV is consistent across market regimes, the source need not be Nobel-worthy.'),
+        ('"30-day backtest not statistically significant"',
+         'Yes',
+         'Still true. Need to see the system across multiple market regimes.'),
+        ('"Paper-to-live degradation"',
+         'Yes — biggest risk',
+         'Unknown how much win rate degrades on real fills. This is the key variable.'),
+        ('"Lock-in is a behavioral trap"',
+         'No — reversed',
+         'For cash flow, locking in at $716 when the day target is hit is exactly right behavior.'),
+        ('"Need Mode 2 / PEAD / insider buying"',
+         'No',
+         'Mode 2 is for alpha and product. Not needed for cash flow. Mode 1 intraday is the right fit.'),
+        ('"Replace dollar target with Sharpe ratio"',
+         'No',
+         'Sharpe ratio is for alpha optimization. Dollar target is appropriate for cash flow.'),
+    ]
+)
+
+divider()
+subheading('Why Mode 1 (Intraday) Is the Right Fit for Cash Flow')
+bullet('P&L is known every day — predictable income, not lumpy quarterly events')
+bullet('Capital resets daily — no capital tied up in 20-day PEAD holds')
+bullet('Lock-in at $716 is perfectly designed for "hit the number, protect it, done"')
+bullet('Daily loss limit (-$300) contains downside on bad days')
+bullet('No overnight risk — clean slate every morning')
+body(
+    'Mode 2 (event-driven, PEAD, multi-day holds) is better for maximizing risk-adjusted '
+    'returns and for a SaaS product signal. It is worse for predictable daily cash flow. '
+    'Keep Mode 1 as the primary engine for the cash flow goal.'
+)
+
+divider()
+subheading('The Three Real Risks That Remain')
+body('The brutal assessment shrinks to three questions for the cash flow goal:')
+
+subheading('Risk 1: Paper-to-Live Degradation', ORANGE)
+body(
+    'Does the 55% win rate hold on real fills? Limit orders at entry × 1.001 work on paper. '
+    'Real fills depend on queue position, spread, and order book depth. '
+    'If win rate drops to 45% live, EV per trade drops from $48 to $14 — still positive, '
+    'but daily output falls to ~$210. At 40% win rate, EV goes negative.'
+)
+bullet('Mitigation: start real money small ($10K–$25K); validate live fill quality before scaling')
+bullet('Mitigation: model slippage explicitly in eval — track paper price vs. actual fill price')
+
+subheading('Risk 2: Regime Sensitivity', ORANGE)
+body(
+    'The 30-day backtest ran in a momentum-favorable market (post-tariff recovery, April–May 2026). '
+    'Does the system work in a choppy sideways market? A trending-down market? '
+    'Unknown — we have not seen it run through multiple regimes.'
+)
+bullet('Mitigation: the VIX gate and futures gate already reduce exposure on bad market days')
+bullet('Mitigation: run through at least one down-trending period on paper before committing real capital')
+
+subheading('Risk 3: Capital Adequacy vs. Daily Output', ORANGE)
+body(
+    'At $100K with $5K–$7K per position, 15 trades = $75K–$105K deployed. '
+    'If the daily output goal grows (say to $1K/day), you either need more capital '
+    'or higher win rate — you cannot simply add more positions without more capital.'
+)
+bullet('Path: at $716/day → capital compounds to ~$140K in 45 trading days → same % = $1K/day')
+bullet('This is the natural scaling path without adding risk')
+
+divider()
+subheading('Two Separate Applications Going Forward', GREEN)
+body(
+    'The cash flow goal and the product/alpha goal are now explicitly decoupled. '
+    'They should be built as two separate things:'
+)
+add_table(
+    ['Application', 'Goal', 'Signal', 'Hold Period', 'Success Metric'],
+    [
+        ('This system (App 1)',
+         'Personal cash flow — $500–700/day',
+         'Intraday momentum (Mode 1)',
+         'Same day — no overnight',
+         'Consistent positive EV days; win rate ≥50% live'),
+        ('Future SaaS product (App 2)',
+         'Productize for other traders',
+         'PEAD + insider buys + unusual options (Mode 2)',
+         '3–20 days',
+         'Sharpe ≥1.5 over 200+ live trades; auditable signal quality'),
+    ]
+)
+body(
+    'App 1 is what we are building now and validating through June 2026. '
+    'App 2 is a future separate application — different signal architecture, '
+    'different hold period, different success metrics, different codebase. '
+    'Do not conflate them. Do not add Mode 2 complexity to App 1 in service of App 2.'
+)
+
+divider()
+subheading('Revised Sprint Priorities for Cash Flow Goal')
+bullet('1. Pass the June 1 gate — native trailing stop validated, win rate ≥80% on paper')
+bullet('2. 15-min momentum confirmation (2f) — small improvement to Mode 1 signal quality')
+bullet('3. Model paper-to-live degradation in eval — track expected vs. actual fill prices')
+bullet('4. Deploy $10K–$25K real capital; validate live win rate matches paper within ±10%')
+bullet('5. Scale capital once live win rate is confirmed over 60+ real trades')
+bullet('6. App 2 planning begins only after App 1 is running profitably on real money')
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 _project_dir = "/Users/amitgarg/Claude Projects/trading-agent"
