@@ -1,0 +1,39 @@
+name: Retrain ML Model
+
+on:
+  schedule:
+    - cron: '0 10 1 * *'   # 1st of each month at 10 AM UTC
+  workflow_dispatch:         # manual trigger from GitHub Actions UI
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Retrain ML model
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python3 train_model.py
+
+      - name: Commit updated model
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add models/xgb_scorer.pkl models/feature_columns.json
+          git diff --staged --quiet && echo "No model changes to commit" || \
+            git commit -m "chore: retrain ML model ($(date +%Y-%m))" && git push
