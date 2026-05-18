@@ -62,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.1  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.2  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -280,8 +280,16 @@ bullet('simulation mode: fetches current prices via yfinance, calculates unreali
 bullet('alpaca mode: calls Alpaca API (get_position_data) to sync live price and unrealized P&L for each open position')
 bullet('alpaca mode: when a position disappears from Alpaca (bracket fill triggered), fetches actual fill price from bracket order leg to compute realized P&L')
 bullet('Closes positions that hit +3% target (take profit) or -1% stop loss (cut loss)')
-bullet('Records close reason: TARGET, STOP, or EOD')
+bullet('Records close reason: TARGET, STOP, EOD, or LOCK_IN')
 bullet('No overnight holds — all positions closed by end of day')
+doc.add_paragraph()
+body('Daily profit lock-in (runs after every position sync):')
+bullet('Checks today\'s total realized P&L (excluding CLEANUP, UNFILLED, LOCK_IN positions)')
+bullet('If realized P&L ≥ DAILY_LOCK_IN_TARGET ($716 — the 30-day backtest average), closes ALL remaining open positions immediately via Alpaca with close_reason=LOCK_IN')
+bullet('Books the gain and stops trading for the day — does not wait for EOD')
+bullet('Rationale: realized P&L only (not unrealized) — no slippage risk, gain is fully locked before closing remaining positions')
+bullet('Dashboard shows LOCK_IN positions as "🎯 Day Locked" in Today\'s Plan status column')
+bullet('Threshold configurable via DAILY_LOCK_IN_TARGET in config/settings.py — raise as capital compounds')
 
 heading('3c. End of Day Pipeline (4:30 PM ET)', 2)
 bullet('simulation mode: closes remaining open positions at yfinance market close price')
@@ -463,6 +471,7 @@ add_table(
         ('MAX_PER_SECTOR', '3', 'V2d: max positions in any single sector per day'),
         ('DAILY_LOSS_LIMIT', '-$300', 'V5: stop opening new trades if today\'s realized P&L drops below this'),
         ('PRICE_SANITY_PCT', '5%', 'V5: reject trade if entry price is more than 5% from current market price'),
+        ('DAILY_LOCK_IN_TARGET', '$716', 'V5: close all open positions and lock in gains once today\'s realized P&L hits this threshold — set to 30-day backtest average daily P&L; raise as capital compounds'),
     ]
 )
 
@@ -510,8 +519,12 @@ add_table(
 
 heading('V2a — Market Context Agent (agents/market_context.py)', 2)
 body('Runs as Step 0 of premarket, before the scanner. Checks three things:')
-bullet('VIX tiered gate: ^VIX from yfinance. VIX >45 → 2 pos; VIX 30–45 → 3 pos; VIX 25–30 → 5 pos; VIX 20–25 → 10 pos; VIX <20 → 15 pos. No hard skip — always trades with reduced positions at high VIX.')
-bullet('Futures gate: ES=F, NQ=F, YM=F. Skip if average down >1.5% (strong pre-market sell-off). Caution if down >0.5%, bullish bias if up >0.5%.')
+bullet('VIX tiered gate: ^VIX from yfinance. VIX >45 → 2 pos; VIX 30–45 → 3 pos; VIX 25–30 → 5 pos; VIX 20–25 → 10 pos; VIX <20 → 15 pos. No hard skip on VIX alone — futures gate handles genuine crash days.')
+bullet('Futures gate (tiered — two separate thresholds): ES=F, NQ=F, YM=F average change. '
+       'Below -1.5% → SKIP entire day (strong pre-market sell-off, no trades at all). '
+       'Between -0.5% and -1.5% → CAUTION, reduce to 8 positions max, futures_bias=BEARISH. '
+       'Above +0.5% → BULLISH bias. '
+       'These are distinct tiers, not contradictory: caution band still trades (with fewer positions), hard skip fires only on a genuine crash.')
 bullet('International markets: Nikkei, FTSE, DAX, Hang Seng, Shanghai. Context only — no hard gate. Majority positive/negative noted in summary.')
 body(
     'Returns: decision (GO/CAUTION/SKIP), max_positions (dynamic), summary string for Claude, '
@@ -555,7 +568,7 @@ add_table(
         ('Ticker whitelist', 'Rejects any ticker not in the current universe (static or dynamic Supabase list)', 'universe passed from orchestrator'),
         ('Duplicate position guard', 'Blocks a ticker already open or already traded today — prevents doubling up on same name', 'Checks positions table (status=OPEN + closed today)'),
         ('Price sanity', 'Rejects if entry price is >5% from actual market price — catches hallucinated or stale prices from Claude', 'PRICE_SANITY_PCT = 0.05'),
-        ('Capital check', 'Alpaca broker only: rejects if Alpaca buying_power < position_size before order submission', 'Calls alpaca_broker.get_buying_power()'),
+        ('Cumulative capital check', 'Tracks total committed capital across the full approved batch — rejects any trade that would push total deployed capital past available buying_power. Applies to both Alpaca and simulation modes. Prevents margin trading and over-deployment.', 'Calls alpaca_broker.get_buying_power() for Alpaca; uses TOTAL_CAPITAL for simulation'),
     ]
 )
 body('Additional safeguards in this release:')
@@ -672,6 +685,7 @@ add_table(
         ('44', 'Added Agent Scorecard to Performance tab', 'Reads latest eval from Supabase and displays Score, Grade, Avg Daily P&L, Win Days, Trade Win Rate, Actual R:R, close reason breakdown, best/worst trade, and recommendations — updated every trading day without manual action'),
         ('45', 'Added Alpaca position reconciliation', 'intraday.py _reconcile_with_alpaca() runs first on every 30-min cycle; any Supabase OPEN position not in Alpaca is marked UNFILLED (P&L=0) — catches the rare case where a bracket order was submitted but the entry leg never filled; dashboard and eval exclude UNFILLED alongside CLEANUP'),
         ('46', 'Updated docs to v5.1', 'Trading_Agent_Documentation.docx and Trading_Agent_PRD.docx regenerated with Summary redesign, eval automation, Agent Scorecard, and Alpaca reconciliation'),
+        ('47', 'Added no-margin cumulative capital check and daily profit lock-in', 'guardrails.py: committed_capital tracked across full approved batch for both Alpaca and simulation — rejects any trade that would push total deployed capital past buying_power (no margin); intraday.py: LOCK_IN trigger closes all open positions when realized P&L ≥ $716; dashboard shows LOCK_IN as "🎯 Day Locked"; settings.py: DAILY_LOCK_IN_TARGET = 716; docs updated to v5.2'),
     ]
 )
 

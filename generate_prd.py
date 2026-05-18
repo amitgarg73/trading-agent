@@ -53,7 +53,7 @@ title = doc.add_heading('AI Product Requirements Doc', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = RGBColor(0x1A, 0x3A, 0x6A)
 
-sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.1')
+sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.2')
 sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.bold = True
@@ -243,6 +243,8 @@ add_table(
         ('Summary tab: In Flight / Plan / Heatmap', 'High', 'High', '99%', 'S', '9.9', 'P1 — shipped (v5.1)'),
         ('Automated EOD eval + Agent Scorecard', 'High', 'High', '99%', 'S', '9.9', 'P1 — shipped (v5.1)'),
         ('Alpaca position reconciliation (UNFILLED)', 'High', 'High', '95%', 'S', '9.5', 'P1 — shipped (v5.1)'),
+        ('No-margin cumulative capital check', 'High', 'High', '99%', 'S', '9.9', 'P0 — shipped (v5.2)'),
+        ('Daily profit lock-in (LOCK_IN at $716)', 'High', 'High', '95%', 'S', '9.5', 'P1 — shipped (v5.2)'),
         ('V2e: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
         ('Alpaca paper trading API (V2g)', 'Med', 'High', '80%', 'L', '6.4', 'P0 — shipped (v4.0)'),
         ('SMS/email alerts', 'Med', 'Med', '90%', 'S', '8.1', 'P2 — next'),
@@ -315,6 +317,9 @@ add_table(
         ('Max positions', '15 (reduced by VIX/futures)', 'Dynamic — VIX 20-25 → 10, VIX 25-30 → 5, VIX >30 → skip'),
         ('No overnight holds', 'All positions closed EOD', 'Eliminates gap risk from overnight news'),
         ('Earnings blackout', 'No trades day-of or day-before earnings', 'Earnings = binary event = unacceptable gap risk'),
+        ('Daily loss limit', 'Stop trading if realized P&L < -$300', 'Guardrail — blocks all new trades for the rest of the day if early losses hit the floor'),
+        ('No margin trading', 'Cumulative position sizes ≤ buying_power', 'Guardrail — tracks total committed capital across full approved batch; rejects any trade that would exceed available capital (applies to both Alpaca and simulation)'),
+        ('Daily lock-in target', 'Close all if realized P&L ≥ $716', 'Intraday — books the gain and stops trading once the 30-day backtest average is locked in; LOCK_IN close reason; configurable via DAILY_LOCK_IN_TARGET'),
     ]
 )
 
@@ -481,6 +486,7 @@ body('Phase 1 (current — v4.0): Paper trading running through Alpaca Paper Tra
      'Dashboard shows company names in all ticker tables.')
 body('Phase 2 (v4.1–v5.0, complete): V2d sector correlation guard, V5 guardrails (6 safety checks), concurrent run lock, EOD close retry.')
 body('Phase 2b (v5.1, complete): Summary tab redesign (In Flight / Today\'s Plan / Trade Heatmap); automated EOD eval (eval.py --write saves Agent Scorecard to Supabase after every EOD close); Agent Scorecard on Performance tab; Alpaca position reconciliation in intraday agent (UNFILLED detection).')
+body('Phase 2c (v5.2, complete): No-margin enforcement — cumulative capital tracking across full approved batch in guardrails (both Alpaca and simulation modes); daily profit lock-in — intraday agent closes all positions when realized P&L ≥ $716 (30-day backtest average) with LOCK_IN reason; dashboard shows LOCK_IN as "🎯 Day Locked" in Today\'s Plan; DAILY_LOCK_IN_TARGET configurable in settings.py.')
 body('Phase 3: V2e sector rotation scoring, V2f momentum confirmation.')
 body('Phase 3: If win rate > 60% and reward:risk > 2x sustained over 30 live trading days, evaluate real '
      'capital deployment with strict position limits.')
