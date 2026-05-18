@@ -62,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.3  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.4  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -198,8 +198,8 @@ body(
     'pipeline runs: Premarket, Intraday, and End of Day.'
 )
 
-heading('3a. Premarket Pipeline (9:00 AM ET)', 2)
-body('Runs once before the market opens. Seven stages:')
+heading('3a. Premarket Pipeline (9:45 AM ET)', 2)
+body('Runs once at 9:45 AM ET — skips first 15 min of market (widest spreads). Seven stages plus two new pre-entry steps:')
 body('Concurrent Run Lock')
 bullet('First action before any pipeline stage runs')
 bullet('Checks if a premarket scan_results row already exists for today — if yes, exits immediately with a skip message')
@@ -229,6 +229,20 @@ bullet('Removes any ticker with earnings today or tomorrow (binary event = gap r
 bullet('Fetches 3 most recent news headlines for each remaining candidate')
 bullet('Passes earnings-filtered candidate list and news context string to strategy agent')
 bullet('Logs all blocked tickers with reason for audit trail')
+
+body('Stage 1.75 — Strategy Pre-Filter')
+bullet('Runs before Claude — no API call needed (deterministic score filter)')
+bullet('Filters candidates to technical_score >= STRATEGY_MIN_SCORE (default: 4) and positive score only')
+bullet('Typical reduction: 150+ candidates → 30–50 passed to Claude — cuts input tokens ~60–70%')
+bullet('Log signature: [ 1.75/4 ] Strategy pre-filter: X → Y candidates (score ≥ 4)')
+bullet('Tuning: lower STRATEGY_MIN_SCORE to 3 if missing good setups; raise to 6–7 for further token cuts')
+
+body('Stage 1.8 — Live Price Refresh (Alpaca mode only)')
+bullet('Fetches real-time ask prices for all pre-filter candidates via Alpaca Market Data API (batch call)')
+bullet('Updates candidate current_price with live ask — overrides 15-min delayed yfinance price')
+bullet('10% sanity guard: rejects update if ask differs >10% from yfinance price (data anomaly protection)')
+bullet('Log signature: [ 1.8/4 ] Live price refresh: X/Y tickers updated from Alpaca')
+bullet('Why: Claude was setting entry prices on 15-min stale data — target price could already be eaten before order submitted')
 
 body('Stage 2 — Strategy Agent (Claude AI)')
 bullet('Receives scored candidates, market summary (VIX + futures + news), and max_positions for today')
@@ -264,11 +278,12 @@ bullet('scan_results updated in DB with sector_blocked and guardrail_blocked dat
 body('Stage 4 — Portfolio Agent')
 bullet('Broker abstraction: broker="simulation" (default, yfinance) or broker="alpaca"')
 bullet('simulation mode: writes positions to Supabase only')
-bullet('alpaca mode: submits bracket order (entry market + take-profit limit + stop-loss) to Alpaca; stores alpaca_order_id in positions table')
+bullet('alpaca mode: submits bracket order as LIMIT entry (entry_price × 1.001) + take-profit limit + stop-loss; stores alpaca_order_id in positions table')
+bullet('Limit order vs market: pays slightly less than ask; still fills quickly on liquid stocks (1M+ avg volume); avoids paying full spread on entry')
 bullet('Check-before-insert prevents duplicate key errors on manual reruns')
 bullet('Writes trade plan summary and all individual positions to the database')
 
-heading('3b. Intraday Pipeline (Every 30 min, 10:00 AM – 3:30 PM ET)', 2)
+heading('3b. Intraday Pipeline (Every 15 min, 10:00 AM – 3:45 PM ET)', 2)
 body('Reconciliation (alpaca mode only — runs first):')
 bullet('Compares all Supabase OPEN positions against Alpaca\'s actual live positions (get_open_tickers())')
 bullet('Any Supabase OPEN position not in Alpaca → marked UNFILLED (status=CLOSED, close_reason=UNFILLED, realized_pnl=0, close_price=entry_price)')
@@ -279,7 +294,7 @@ body('Position monitoring:')
 bullet('simulation mode: fetches current prices via yfinance, calculates unrealized P&L')
 bullet('alpaca mode: calls Alpaca API (get_position_data) to sync live price and unrealized P&L for each open position')
 bullet('alpaca mode: when a position disappears from Alpaca (bracket fill triggered), fetches actual fill price from bracket order leg to compute realized P&L')
-bullet('Trailing stop: effective_stop = max(original_stop_loss, high_watermark × 0.99); high_watermark updated every 30-min cycle to track the highest price seen since entry; fires if price pulls back 1% from its peak while still in profit — locks in gains on strong movers before reversal; Alpaca mode calls close_position() directly (bracket auto-cancels)')
+bullet('Trailing stop: effective_stop = max(original_stop_loss, high_watermark × 0.99); high_watermark updated every 15-min cycle to track the highest price seen since entry; fires if price pulls back 1% from its peak while still in profit — locks in gains on strong movers before reversal; Alpaca mode calls close_position() directly (bracket auto-cancels)')
 bullet('Closes positions that hit +3% target (take profit) or effective stop (cut loss or protect gain); close_reason=TARGET or STOP')
 bullet('Records close reason: TARGET, STOP, EOD, or LOCK_IN')
 bullet('No overnight holds — all positions closed by end of day')
@@ -368,11 +383,12 @@ add_table(
     ['Run', 'UTC Cron', 'ET Time', 'What Happens'],
     [
         ('Universe Refresh', '30 12 * * 1', '8:30 AM Mondays', 'Fetch S&P500+Nasdaq100, screen for ATR/volume, save 450+ tickers to Supabase'),
-        ('Premarket', '0 13 * * 1-5', '9:00 AM Mon–Fri', 'Market check → Scan (dynamic universe) → News filter → Strategy → Risk → Open positions'),
-        ('Intraday', '0,30 14-19 * * 1-5', 'Every 30 min 10AM–3:30PM', 'Monitor positions, close on target/stop'),
+        ('Premarket', '45 13 * * 1-5', '9:45 AM Mon–Fri', 'Market check → Scan → Pre-filter → Live prices → News → Strategy → Risk → Limit orders'),
+        ('Intraday', '*/15 14-19 * * 1-5', 'Every 15 min 10AM–3:45PM', 'Monitor positions, close on target/stop, trail stop check'),
         ('EOD', '30 20 * * 1-5', '4:30 PM Mon–Fri', 'Close remaining, calculate daily P&L, then auto-run eval (30-day, saves to Supabase)'),
     ]
 )
+body('Cron reliability: GitHub Actions scheduler can fire 5–15 min late. cron-job.org external service fires workflow_dispatch at exact UTC times — more reliable for time-sensitive premarket runs. GitHub schedule kept as backup; concurrent run lock handles any duplicates.')
 
 body('Each run:')
 bullet('Checks out the code from GitHub')
@@ -467,7 +483,8 @@ add_table(
         ('RSI_OVERSOLD', '35', 'RSI level considered oversold (buy signal)'),
         ('RSI_OVERBOUGHT', '65', 'RSI level considered overbought (sell signal)'),
         ('MIN_VOLUME_RATIO', '1.5x', 'Volume must be 1.5x the 20-day average'),
-        ('MIN_AVG_VOLUME', '500,000', 'Minimum average daily volume (liquidity floor)'),
+        ('MIN_AVG_VOLUME', '1,000,000', 'Minimum average daily volume (liquidity floor — raised from 500K to reduce spreads and slippage)'),
+        ('STRATEGY_MIN_SCORE', '4', 'Pre-filter: only pass candidates with technical_score >= this to Claude; reduces input tokens ~60–70%'),
         ('MIN_PRICE', '$5.00', 'Minimum stock price (filters out penny stocks)'),
         ('MAX_PER_SECTOR', '3', 'V2d: max positions in any single sector per day'),
         ('DAILY_LOSS_LIMIT', '-$300', 'V5: stop opening new trades if today\'s realized P&L drops below this'),
@@ -515,6 +532,10 @@ add_table(
         ('V2g', 'Alpaca paper trading integration — real order simulation', 'Built and deployed (v4.0)'),
         ('V2d', 'Sector correlation guard — max 3 positions per sector, drops lowest-confidence excess', 'Built and deployed (v4.1)'),
         ('V5', 'Guardrails — 6 safety checks before any trade executes (action, whitelist, duplicate, price, capital, loss limit)', 'Built and deployed (v5.0)'),
+        ('—', 'Prompt caching (strategy SYSTEM ephemeral, 90% discount on cached tokens)', 'Built and deployed (v5.4)'),
+        ('—', 'Strategy pre-filter (score ≥ 4 before Claude call, ~60–70% token reduction)', 'Built and deployed (v5.4)'),
+        ('—', 'Execution friction: 1M volume floor, live Alpaca prices, limit orders, 9:45 AM start, 15-min intraday', 'Built and deployed (v5.4)'),
+        ('—', 'Reliable cron via cron-job.org; mode detection time windows; eval date filter fix', 'Built and deployed (v5.4)'),
         ('V2e', 'Sector rotation scoring — favor sectors showing relative strength', 'Planned'),
         ('V2f', 'Momentum confirmation — 15-minute rule before entry', 'Planned'),
     ]
@@ -692,6 +713,16 @@ add_table(
         ('48', 'Added GitHub Actions retry logic', 'trading.yml: Run agent step retries up to 3 times with 60s backoff before failing — handles transient yfinance/Alpaca/API failures without manual rerun; concurrent run lock ensures retries after partial success exit cleanly'),
         ('49', 'Trailing stops + confidence-weighted position sizing', 'portfolio.py: high_watermark per position updated each intraday cycle; eff_stop = max(original_stop, peak × 0.99) ratchets as stock rises; Alpaca mode: close_position() fires when trail triggers (bracket auto-cancels); risk.py: _apply_confidence_sizing() maps HIGH→$7K, MEDIUM→$6K, LOW→$5K before validation; strategy.py prompt updated; settings.py: TRAIL_PCT=0.01, POSITION_SIZE_BY_CONFIDENCE; schema.sql: high_watermark column (ALTER TABLE run in Supabase)'),
         ('50', 'Dashboard trailing stop annotations + docs v5.3', 'fmt_stop() helper shows "Trail $X.XX ↑" on In Flight cards (Summary, Today, Positions tabs) when stop has ratcheted; trade_status() shows "🔶 Trail Stop" for STOP closes with positive P&L vs "🔴 Stop Hit" for losses; docs updated to v5.3'),
+        ('51', 'Prompt caching', 'strategy.py SYSTEM prompt expanded to 1,243 tokens and marked cache_control: ephemeral; API call uses anthropic-beta: prompt-caching-2024-07-31 header; logs 💾 WRITE (first call) and ⚡ HIT (subsequent calls); ~90% discount on cached tokens'),
+        ('52', 'Strategy pre-filter', 'orchestrator step 1.75: filters candidates to technical_score >= STRATEGY_MIN_SCORE (default 4) and positive only before Claude call; combined with caching cuts input tokens ~70–75% per premarket run'),
+        ('53', 'Liquidity floor raised 500K → 1M avg volume', 'MIN_AVG_VOLUME in settings.py raised from 500,000 to 1,000,000 — filters thinly-traded tickers, reduces spread and slippage on entries'),
+        ('54', 'Real-time Alpaca price refresh', 'get_live_prices() added to alpaca_broker.py using StockLatestQuoteRequest; orchestrator step 1.8 updates candidate current_price with live ask before Claude call; 10% sanity guard rejects anomalous data'),
+        ('55', 'Limit order entries', 'submit_bracket_order() changed from MarketOrderRequest to LimitOrderRequest at entry_price × 1.001; avoids paying full spread on entry; portfolio.py updated to pass entry_price'),
+        ('56', 'Premarket moved 9:00 → 9:45 AM ET + intraday every 15 min', 'trading.yml cron: premarket 0 13 → 45 13; intraday 0,30 14-19 → */15 14-19; mode detection rewritten to use time windows (not exact minute match) so late runs still classified correctly'),
+        ('57', 'cron-job.org external triggers', 'GitHub Actions scheduler fires 5–15 min late — replaced with cron-job.org workflow_dispatch triggers; GitHub schedule kept as backup; concurrent run lock handles duplicates; PAT needs repo+workflow scopes and must be updated in both git credentials AND cron-job.org on regeneration'),
+        ('58', 'eval.py date filter fix', 'positions query had no date filter — fetched all history regardless of --days; fixed by building eval_dates set from perf_rows and filtering closed_at date'),
+        ('59', 'Futures unavailable on Mondays', 'period="2d" returns only 1 row after weekend (needs 2 for % change calc); fixed to period="5d" in market_context.py; added error logging for insufficient data'),
+        ('60', 'Updated docs to v5.4', 'Trading_Agent_Documentation.docx and Trading_Agent_PRD.docx regenerated with all v5.4 friction fixes'),
     ]
 )
 
@@ -717,6 +748,12 @@ add_table(
         ('yfinance calendar format varies by version', 'ticker.calendar returns DataFrame or dict depending on yfinance version', 'Added isinstance checks in news_intel._get_earnings_date()'),
         ('git commit blocked in Claude Code', 'Claude Code permission mode requires approval for git commit', 'User approves in permission prompt or runs git push from own terminal'),
         ('Risk agent false rejects on exact thresholds', 'Float arithmetic on 2dp stock prices produces 1.000000002 instead of 1.0 — fails strict > comparison', 'round(potential_loss, 4) + tolerance; round(rr, 2) for reward:risk; 2dp display in rejection message'),
+        ('GitHub Actions scheduler 5–15 min late', 'GitHub cron scheduler is not guaranteed to fire at exact times', 'cron-job.org external service fires workflow_dispatch at exact UTC times; GitHub schedule kept as backup'),
+        ('Mode detection bug on late runs', 'Exact minute match (HOUR=13 AND MIN=00) fails when run fires 10 min late — classified as intraday instead of premarket', 'Rewritten to time window arithmetic: if TIME >= 810 && TIME < 840 → premarket'),
+        ('cron-job.org 401 Unauthorized', 'Classic GitHub PAT missing workflow scope (had repo only)', 'Regenerate PAT with both repo + workflow scopes; update in git credential store AND all 3 cron-job.org jobs'),
+        ('Streamlit ImportError on TRAIL_PCT', 'Stale Streamlit Cloud deployment had old settings.py without TRAIL_PCT', 'Reboot app from Streamlit Cloud dashboard (⋮ → Reboot app)'),
+        ('Futures unavailable on Mondays', 'period="2d" returns 1 row after weekend — not enough for % change calc', 'Changed to period="5d" in market_context.py; added error logging for insufficient data'),
+        ('eval.py showing wrong trade count', 'Positions query had no date filter — fetched all historical positions regardless of --days window', 'Build eval_dates set from perf_rows; filter positions by closed_at date'),
     ]
 )
 
@@ -727,8 +764,8 @@ body('Once deployed, the system requires zero daily intervention. What happens a
 add_table(
     ['Time (ET)', 'What Happens', 'Where to See It'],
     [
-        ('9:00 AM Mon–Fri', 'Market check → Scan → Earnings filter → Strategy → Risk → Open positions', 'GitHub Actions logs + Dashboard Today tab'),
-        ('Every 30 min 10AM–3:30PM', 'Intraday position monitoring, close on target/stop', 'Dashboard Positions tab'),
+        ('9:45 AM Mon–Fri', 'Market check → Scan → Pre-filter → Live prices → News → Strategy → Risk → Limit orders', 'GitHub Actions logs + Dashboard Today tab'),
+        ('Every 15 min 10AM–3:45PM', 'Intraday position monitoring, close on target/stop, trail stop check', 'Dashboard Positions tab'),
         ('4:30 PM Mon–Fri', 'EOD close + daily P&L + auto eval (saves Agent Scorecard to Supabase)', 'Dashboard Performance tab'),
         ('Anytime', 'Manual trigger via GitHub Actions → Run workflow', 'GitHub Actions'),
         ('Anytime', 'View live workflow dashboard (Summary, Today, Positions, Performance, Scan Log)', 'Streamlit Cloud URL'),
@@ -745,18 +782,18 @@ bullet('Rerun manually: GitHub Actions → Trading Agent → Run workflow → se
 
 # ── 15. What's Next ───────────────────────────────────────────────────────────
 heading('15. What\'s Next')
-body('The system is live and running at v5.0. Planned next steps:')
+body('The system is live and running at v5.4. All execution friction fixes are deployed. Next steps:')
 
 add_table(
     ['Phase', 'What', 'Priority'],
     [
-        ('V2g', 'Alpaca paper trading API — real bracket order simulation with fills', 'Done (v4.0)'),
-        ('V2d', 'Sector correlation guard — max 3 per sector, lowest-confidence excess dropped', 'Done (v4.1)'),
-        ('V5', 'Guardrails — 6 safety checks, concurrent run lock, EOD retry', 'Done (v5.0)'),
-        ('V2e', 'Sector rotation scoring — favor sectors showing relative strength this week', 'Next'),
-        ('V2f', 'Momentum confirmation — 15-minute rule: wait for confirmed breakout before entry', 'Planned'),
+        ('Native trailing stop (OTO-OCO)', 'Replace 15-min polling with Alpaca native trail_percent — P0 before real money deployment; needs feature flag + unit tests + 2-week A/B paper test', 'P0 — pre-real-money'),
+        ('2-week paper validation', 'Validate all friction fixes live over 2 weeks; rerun backtest; target 6+/10 confidence before real capital', 'P0 — pre-real-money'),
+        ('V2e — Sector rotation scoring', 'Favor sectors showing relative strength this week; deprioritize lagging sectors', 'Next — feature sprint'),
+        ('V2f — Momentum confirmation', '15-minute rule: wait for confirmed breakout before entry; reduces false signals on gap-and-fade setups', 'Planned'),
         ('Alerts', 'SMS/email on position close (target hit or stop triggered)', 'Planned'),
-        ('Tune', 'If live win rate < 45% after first week, drop target back to 2.5%', 'Conditional'),
+        ('Post-earnings momentum agent', 'Scan for stocks 1–3 days post-positive earnings — momentum window before analyst upgrades', 'Real Edge backlog'),
+        ('Market regime classifier', 'Label trending vs ranging vs reversal days; adjust strategy per regime', 'Real Edge backlog'),
     ]
 )
 
