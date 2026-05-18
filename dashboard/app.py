@@ -951,6 +951,54 @@ elif page == "Performance":
                 else:
                     st.info("⏳ No NATIVE_TRAIL exits yet — stop hasn't fired; need a reversal day to validate")
 
+            st.markdown("---")
+
+            # ── Tailwind Analysis ──────────────────────────────────────
+            st.markdown("#### Tailwind Analysis")
+            st.caption(f"Extra P&L captured by letting winners ride past ${DAILY_LOCK_IN_TARGET:,} floor → ${DAILY_BONUS_TARGET:,} ceiling.")
+            tw = ev.get("tailwind")
+
+            if not tw:
+                st.info(f"No tailwind days yet — realized P&L hasn't crossed ${DAILY_LOCK_IN_TARGET:,} in this eval window.")
+            else:
+                tw1, tw2, tw3, tw4 = st.columns(4)
+                tw1.metric("Tailwind Days",    f"{tw['tailwind_day_count']} / {days}")
+                tw2.metric("Tier 2 Ceiling Hit", f"{tw['tier2_day_count']} / {tw['tailwind_day_count']}",
+                           help=f"Days where total P&L (realized+unrealized) hit ${DAILY_BONUS_TARGET:,} and all positions were locked")
+                tw3.metric("Total Extra Captured", f"${tw['total_extra_captured']:,.2f}")
+                tw4.metric("Avg Extra / Day",       f"${tw['avg_extra_per_day']:,.2f}")
+
+                for d in tw.get("tailwind_days", []):
+                    t2_badge = " 🏆" if d["tier2_hit"] else ""
+                    with st.expander(
+                        f"{d['date']}  —  Floor ${d['floor_pnl']:,.0f} → Final ${d['final_day_pnl']:,.0f}"
+                        f"  (+${d['extra_captured']:,.0f} extra){t2_badge}"
+                    ):
+                        if d["riders"]:
+                            rider_rows = []
+                            for r in d["riders"]:
+                                note = ""
+                                if r["close_reason"] == "LOCK_IN":
+                                    note = "Tier 2 ceiling close"
+                                elif r["close_reason"] == "STOP" and r["pnl"] > 0:
+                                    note = "Trail caught reversal — still profitable"
+                                elif r["close_reason"] == "STOP" and r["pnl"] <= 0:
+                                    note = "Stopped out after riding"
+                                rider_rows.append({
+                                    "Ticker": r["ticker"],
+                                    "Exit":   r["close_reason"],
+                                    "P&L":    fmt_pnl(r["pnl"]),
+                                    "Note":   note,
+                                })
+                            st.dataframe(pd.DataFrame(rider_rows), use_container_width=True, hide_index=True)
+                        else:
+                            st.caption("No riders — all positions closed before Tier 1 trigger.")
+
+                if tw["total_extra_captured"] > 0:
+                    st.success(f"✅ Tailwind mode captured ${tw['total_extra_captured']:,.2f} extra vs. closing everything at ${DAILY_LOCK_IN_TARGET:,}.")
+                else:
+                    st.warning("⚠️ No net extra captured yet — riders may be closing at a loss after Tier 1.")
+
         st.markdown("---")
 
     perf = db.select("daily_performance", order="date", limit=60)

@@ -12,8 +12,81 @@ from core import db
 from config.settings import (
     DAILY_PROFIT_TARGET, TOTAL_CAPITAL,
     MIN_REWARD_RISK, MAX_POSITION_PCT, MIN_POSITION_PCT,
-    DAILY_LOSS_LIMIT, DAILY_LOCK_IN_TARGET,
+    DAILY_LOSS_LIMIT, DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET,
 )
+
+
+def _tailwind_analysis(all_closed_in_window: list, eval_dates: set, perf_rows: list) -> dict | None:
+    """
+    For each day where realized P&L crossed the $716 floor, identify which positions
+    rode the tailwind (closed after Tier 1 triggered) and how much extra was captured
+    above the floor vs. what would have been locked in under the old all-or-nothing close.
+    """
+    perf_by_date = {r["date"]: r for r in perf_rows}
+
+    # Group positions by day, excluding noise; sort by close time
+    pos_by_date: dict = defaultdict(list)
+    for p in all_closed_in_window:
+        day = (p.get("closed_at") or "")[:10]
+        if day in eval_dates and p.get("close_reason") not in ("CLEANUP", "UNFILLED"):
+            pos_by_date[day].append(p)
+    for day in pos_by_date:
+        pos_by_date[day].sort(key=lambda p: p.get("closed_at") or "")
+
+    tailwind_days = []
+
+    for day in sorted(eval_dates):
+        day_positions = pos_by_date.get(day, [])
+        final_pnl     = float((perf_by_date.get(day) or {}).get("total_pnl") or 0)
+
+        if final_pnl < DAILY_LOCK_IN_TARGET:
+            continue  # Tier 1 never triggered
+
+        # Walk positions in close-time order; find where cumulative first crossed $716
+        cumulative = 0.0
+        tier1_idx  = -1
+        floor_pnl  = 0.0
+        for i, pos in enumerate(day_positions):
+            cumulative += float(pos.get("realized_pnl") or 0)
+            if tier1_idx == -1 and cumulative >= DAILY_LOCK_IN_TARGET:
+                tier1_idx = i
+                floor_pnl = cumulative
+                break
+
+        if tier1_idx == -1:
+            continue
+
+        # Positions that closed AFTER the Tier 1 trigger = rode the tailwind
+        riders = [
+            {
+                "ticker":       pos["ticker"],
+                "close_reason": pos.get("close_reason") or "UNKNOWN",
+                "pnl":          round(float(pos.get("realized_pnl") or 0), 2),
+            }
+            for pos in day_positions[tier1_idx + 1:]
+        ]
+
+        tailwind_days.append({
+            "date":           day,
+            "floor_pnl":      round(floor_pnl, 2),
+            "final_day_pnl":  round(final_pnl, 2),
+            "extra_captured": round(final_pnl - floor_pnl, 2),
+            "tier2_hit":      final_pnl >= DAILY_BONUS_TARGET,
+            "riders":         riders,
+            "rider_count":    len(riders),
+        })
+
+    if not tailwind_days:
+        return None
+
+    total_extra = sum(d["extra_captured"] for d in tailwind_days)
+    return {
+        "tailwind_day_count":   len(tailwind_days),
+        "tier2_day_count":      sum(1 for d in tailwind_days if d["tier2_hit"]),
+        "total_extra_captured": round(total_extra, 2),
+        "avg_extra_per_day":    round(total_extra / len(tailwind_days), 2),
+        "tailwind_days":        tailwind_days,
+    }
 
 
 def _compute_metrics(days: int) -> dict | None:
@@ -150,6 +223,9 @@ def _compute_metrics(days: int) -> dict | None:
     if not recs:
         recs.append("Keep monitoring.")
 
+    # Tailwind analysis — which positions rode past the $716 floor
+    tailwind = _tailwind_analysis(all_closed_in_window, eval_dates, perf_rows)
+
     # Native trail validation — compare native vs manual trail positions
     native  = [p for p in positions if p.get("native_trail_active")]
     manual  = [p for p in positions if not p.get("native_trail_active")]
@@ -213,6 +289,8 @@ def _compute_metrics(days: int) -> dict | None:
         "rr_violations":    rr_violations,
         "size_violations":  size_violations,
         "confidence_stats": confidence_stats,
+        # Tailwind
+        "tailwind":         tailwind,
     }
 
 
@@ -428,6 +506,53 @@ def _print_metrics(m: dict):
                 print(f"  ✅ Native trail exits confirmed — Alpaca trailing stop leg firing correctly")
             else:
                 print(f"  ⏳ No NATIVE_TRAIL exits yet — stop hasn't fired; need a reversal day to validate")
+
+    tw = m.get("tailwind")
+    print(f"\n[ TAILWIND ANALYSIS ]")
+    print(f"  Tracks extra P&L captured by letting winners ride past the ${DAILY_LOCK_IN_TARGET:,} floor")
+    print(f"  to the ${DAILY_BONUS_TARGET:,} ceiling, instead of closing everything at Tier 1.\n")
+
+    if not tw:
+        print(f"  No tailwind days yet — realized P&L hasn't crossed ${DAILY_LOCK_IN_TARGET:,} in the eval window.")
+        print(f"  Once Tier 1 fires, riders and extra capture will appear here.")
+    else:
+        td_count = tw["tailwind_day_count"]
+        t2_count = tw["tier2_day_count"]
+        total_ex = tw["total_extra_captured"]
+        avg_ex   = tw["avg_extra_per_day"]
+
+        print(f"  Tailwind days (realized ≥ ${DAILY_LOCK_IN_TARGET:,}):  {td_count} / {m['days']} days")
+        print(f"  Tier 2 ceiling hit (${DAILY_BONUS_TARGET:,} total):   {t2_count} / {td_count} tailwind days"
+              f"  {'🏆' if t2_count > 0 else ''}")
+        print(f"  Total extra captured above floor:      ${total_ex:,.2f}")
+        print(f"  Avg extra per tailwind day:            ${avg_ex:,.2f}")
+
+        print(f"\n  Day-by-day breakdown:")
+        for d in tw["tailwind_days"]:
+            t2_badge = "  🏆 Tier 2 ceiling" if d["tier2_hit"] else ""
+            print(f"\n  {d['date']}  "
+                  f"Floor ${d['floor_pnl']:,.2f} → Final ${d['final_day_pnl']:,.2f}  "
+                  f"(+${d['extra_captured']:,.2f} extra){t2_badge}")
+            if d["riders"]:
+                for r in d["riders"]:
+                    pnl_str = f"+${r['pnl']:,.2f}" if r["pnl"] >= 0 else f"-${abs(r['pnl']):,.2f}"
+                    note = ""
+                    if r["close_reason"] == "LOCK_IN":
+                        note = "  ← Tier 2 ceiling close"
+                    elif r["close_reason"] == "STOP" and r["pnl"] > 0:
+                        note = "  ← trail caught reversal, still profitable"
+                    elif r["close_reason"] == "STOP" and r["pnl"] <= 0:
+                        note = "  ← stopped out after riding"
+                    print(f"    {r['ticker']:<6}  {r['close_reason']:<8}  {pnl_str}{note}")
+            else:
+                print(f"    (no riders — all positions closed before or at Tier 1 trigger)")
+
+        # Summary verdict
+        print()
+        if total_ex > 0:
+            print(f"  ✅ Tailwind mode captured ${total_ex:,.2f} extra vs. locking in at ${DAILY_LOCK_IN_TARGET:,} floor.")
+        else:
+            print(f"  ⚠️  No extra captured yet — riders may be closing at a loss after Tier 1.")
 
     total_attempted = m.get("total_attempted", 0)
     unfilled = m.get("unfilled_count", 0)
