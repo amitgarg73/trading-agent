@@ -118,6 +118,14 @@ add_table(
          'Daily and intraday alignment filters out counter-trend noise; higher-quality setups',
          'M', 'P2', 'IDEA'),
 
+        ('VWAP + Relative Strength enrichment vs. SPY (Thread 1)',
+         'Step 1.85: StockSnapshotRequest fetches above_vwap, vwap, today_pct_change, rs_vs_spy '
+         'per candidate; re-sorts above-VWAP candidates first before Claude call; '
+         'Claude SYSTEM prompt explains interpretation; eval.py validates signal quality',
+         'Above-VWAP = institutional buying pressure confirmed; RS vs SPY identifies market leaders. '
+         'Candidates sorted so Claude sees live confirmed setups first — not just overnight technicals',
+         'S', 'P1', 'SHIPPED'),
+
         ('Relative strength vs. sector index',
          'Score each candidate by performance relative to its sector ETF (e.g., NVDA vs. SOXX)',
          'Sector leaders outperform laggards; relative strength is a proven momentum factor',
@@ -181,6 +189,17 @@ add_table(
          'Block a trade if it is highly correlated with 2+ already-open positions (e.g., 5 semiconductors)',
          'Sector guard handles the cap but not intra-sector correlation; prevents concentrated exposure',
          'M', 'P2', 'IDEA'),
+
+        ('Tiered lock-in — let winners ride (Thread 2)',
+         'Tier 1 ($716 realized): stop closing positions, tighten trail to 0.5%; '
+         'Tier 2 ($1,000 realized+unrealized): close everything, protect exceptional day. '
+         'DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET, LOCK_IN_TRAIL_PCT settings; '
+         'effective_trail in portfolio.py; tiered logic in intraday.py; '
+         'tailwind banners + VWAP badges in dashboard; tailwind analysis in eval.py',
+         'Old system closed all positions at $716 even when winners were still running. '
+         'On strong momentum days, the top trades are still moving at Tier 1 — '
+         'tiered logic captures the additional $284+ toward $1,000 without adding risk',
+         'S', 'P1', 'SHIPPED'),
 
         ('Raise DAILY_LOCK_IN_TARGET as capital compounds',
          'Auto-scale DAILY_LOCK_IN_TARGET proportionally as ending_capital grows past thresholds',
@@ -251,13 +270,12 @@ add_table(
          'Useful during testing phases; verifies Claude picks and risk validation before live submission',
          'S', 'P3', 'BACKLOG'),
 
-        ('Native Alpaca trailing stop (OTO-OCO) — REQUIRED BEFORE REAL MONEY',
-         'Replace bracket order with OTO-OCO: limit entry → OCO (take-profit + trail_percent=1.0). '
-         'Current 15-min polling can miss fast reversals; native stop fires in real-time. '
-         'Risks: gap window (unprotected between fill and OCO submit), double-sell, OCO failure. '
-         'Mitigation: USE_NATIVE_TRAILING_STOP feature flag, entry_filled_at DB column, '
-         'idempotent OCO guard, unit tests with mocked Alpaca client, 2-week paper A/B before enabling.',
-         'L', 'P0', 'BACKLOG'),
+        ('Native Alpaca trailing stop',
+         'StopLossRequest(trail_percent=TRAIL_PCT*100) in bracket order stop-loss leg. '
+         'USE_NATIVE_TRAILING_STOP feature flag (enabled 2026-05-18). '
+         'native_trail_active boolean per position. exit_mechanism column tracks NATIVE_TRAIL exits. '
+         '2-week paper validation gate running — closes 2026-06-01.',
+         'L', 'P0', 'SHIPPED'),
     ]
 )
 
@@ -575,25 +593,27 @@ add_table(
         ('—', 'ML candidate scorer (step 1.76)', 'Signal Quality', 'M', 'SHIPPED v5.5 — sorts candidates by P(hit +2%) before Claude; AUC 0.78'),
         ('—', 'Target 2% / stop 0.67% (3:1 R:R)', 'Risk Mgmt', 'XS', 'SHIPPED v5.5 — lower achievable target; break-even at 25% win rate'),
         ('—', 'Time-of-day entry filter (9:45 AM ET)', 'Execution', 'XS', 'SHIPPED v5.4 — skips noisiest first 15 min of market'),
-        ('—', 'Pre-market gap filter (live Alpaca prices)', 'Execution', 'S', 'SHIPPED v5.4 — real-time ask prices replace 15-min stale yfinance'),
-        ('1', 'ML model live validation (30 days)', 'Validation', 'M', 'Verify AUC 0.78 translates to higher win rate vs baseline; run A/B comparison'),
-        ('2', 'Native Alpaca trailing stop (OTO-OCO)', 'Execution', 'L', 'P0 pre-real-money — replace 15-min polling; 8 hrs; feature flag + unit tests'),
+        ('—', 'Live price refresh (Alpaca ask prices)', 'Execution', 'S', 'SHIPPED v5.4 — real-time ask prices replace 15-min stale yfinance at step 1.8'),
+        ('—', 'Native Alpaca trailing stop', 'Execution', 'L', 'SHIPPED v5.6 — trail_percent bracket leg; 2-week paper gate closes 2026-06-01'),
+        ('—', 'Tiered lock-in — Thread 2', 'Position Mgmt', 'S', 'SHIPPED v5.7 — Tier 1 $716 ride with tighter trail, Tier 2 $1,000 ceiling close'),
+        ('—', 'VWAP + RS vs SPY enrichment — Thread 1', 'Signal Quality', 'S', 'SHIPPED v5.7 — step 1.85 enriches candidates with live institutional signals before Claude'),
+        ('1', 'VWAP signal quality validation (June 1)', 'Validation', 'M', '~8 trading days accumulating; eval.py reports cohort deltas on June 1'),
+        ('2', 'June 1 gate: python3 eval.py --days 14', 'Validation', 'S', 'Pass criteria: win rate ≥80%, avg P&L ≥$500/day, NATIVE_TRAIL confirmed'),
         ('3', 'Momentum confirmation — 15-min rule (V2f)', 'Signal Quality', 'M', 'Reduces false entries; should improve win rate by 3–5%'),
         ('4', 'Sector rotation scoring (V2e)', 'Signal Quality', 'M', 'Favors momentum sectors; expected to improve avg daily P&L'),
         ('5', 'Per-trade email on close', 'Monitoring', 'S', 'Highest quality-of-life; know immediately when a target is hit'),
         ('6', 'Partial profit taking (50% at +1%)', 'Position Mgmt', 'M', 'Locks in gain on fast movers; reduces STOP losses on reversals'),
         ('7', 'Daily 4:30 PM summary email', 'Monitoring', 'S', 'Replaces manual dashboard check at EOD'),
-        ('8', 'Automated capital compounding', 'Infrastructure', 'M', 'Makes growth automatic; currently manual'),
-        ('9', 'Short selling / mean reversion', 'Strategy', 'M', 'Doubles opportunity set; hedges on down days'),
-        ('10', 'Intraday price chart per position', 'Dashboard', 'M', 'Most requested UX improvement; visual trade context'),
+        ('8', 'Short selling / mean reversion', 'Strategy', 'M', 'Doubles opportunity set; hedges on down days'),
+        ('9', 'Intraday price chart per position', 'Dashboard', 'M', 'Most requested UX improvement; visual trade context'),
     ]
 )
 
 body(
-    'Items 1–2 are the immediate next sprint. ML validation tells us whether AUC 0.78 '
-    'translates to real win-rate improvement; native trailing stop is P0 before real money. '
-    'Items 3 and 4 require backtest validation before deploying. '
-    'Item 9 (short selling) requires the most design work but opens a new profit dimension.'
+    'Items 1–2 are the immediate next milestone: accumulate 8 trading days of paper data '
+    'and run the June 1 gate. Items 3 and 4 are the next signal-quality sprint after the gate. '
+    'Item 5 (email alerts) is the highest quality-of-life gap remaining. '
+    'Item 8 (short selling) requires the most design work but opens a full two-sided strategy.'
 )
 
 # ── Save ──────────────────────────────────────────────────────────────────────

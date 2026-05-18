@@ -74,7 +74,7 @@ title = doc.add_heading('AI Trading Agent — Session Changelog', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = NAVY
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.6  ·  Living document — update each sprint')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.7  ·  Living document — update each sprint')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(11)
 meta.runs[0].font.color.rgb = GRAY
@@ -85,6 +85,115 @@ body(
     'why it was built, the impact on the trading agent, and the real-money confidence score '
     'at each point. Update this file every time a new version ships. '
     'Run python3 generate_changelog.py to regenerate Trading_Agent_Changelog.docx.'
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v5.7 — 2026-05-18
+# ══════════════════════════════════════════════════════════════════════════════
+doc.add_page_break()
+heading('v5.7 — 2026-05-18')
+body('Confidence score: 6.5/10 (was 6/10)')
+body(
+    'Theme: Stock selection quality (Thread 1 — VWAP + RS vs SPY) + '
+    'win-more-on-good-days mechanics (Thread 2 — tiered lock-in) + '
+    'validation analytics in eval and dashboard.'
+)
+
+divider()
+subheading('1. Thread 2 — Tiered Lock-In: Let Winners Ride Past $716')
+body(
+    'What: Two-tier daily P&L management replacing the old all-or-nothing close. '
+    'Tier 1 ($716 realized): stop forcing position closes — let open positions ride '
+    'with a tighter 0.5% trail (simulation) or Alpaca native trail (paper). '
+    'Tier 2 ($1,000 realized+unrealized): close everything and protect the exceptional day. '
+    'New settings: DAILY_LOCK_IN_TARGET=716, DAILY_BONUS_TARGET=1000, LOCK_IN_TRAIL_PCT=0.005. '
+    'effective_trail computed before simulation loop — switches to tighter trail when Tier 1 is hit.'
+)
+body(
+    'Why: The old system closed all positions the moment realized P&L hit $716, '
+    'leaving open positions that were still moving in the right direction. '
+    'On strong momentum days, the best trades are still running at $716 — '
+    'a 1% pull from a peak that had not yet reversed. '
+    'Closing at $716 on a $1,200 day meant giving away ~$484 of captured value.'
+)
+body(
+    'Impact: On tailwind days (realized ≥ $716), the system now lets winners ride '
+    'to the $1,000 ceiling while protecting against reversals with the tighter trail. '
+    'eval.py and Agent Scorecard track tailwind days, riders, and extra captured above the floor — '
+    'gives a direct before/after comparison in the June 1 eval.'
+)
+
+divider()
+subheading('2. Thread 1 — VWAP + Relative Strength Signal Enrichment (Step 1.85)')
+body(
+    'What: New get_intraday_signals(tickers) in alpaca_broker.py uses StockSnapshotRequest '
+    'to fetch per-ticker: above_vwap (bool), vwap (price level), today_pct_change (% from open), '
+    'rs_vs_spy (stock % move ÷ SPY % move since open). '
+    'Step 1.85 in orchestrator (after live prices at 1.8, before Claude call at 2) enriches '
+    'each candidate dict and re-sorts the list — above-VWAP candidates first, ties broken by RS descending. '
+    'Strategy SYSTEM prompt updated: explains all four fields and teaches Claude to prefer '
+    '"above VWAP + RS > 1.5× = ideal momentum setup".'
+)
+body(
+    'Why: The existing scanner uses overnight technical signals — RSI, MACD, Bollinger Bands — '
+    'which can be stale by the time the market opens. A stock can be oversold on the 1-day chart '
+    'but already selling off at open (below VWAP) with negative relative strength. '
+    'VWAP and RS vs SPY provide live confirmation that momentum is intact at entry time. '
+    'These are the signals institutional desks use to decide whether a setup is "working" today.'
+)
+body(
+    'Impact: Claude now selects from a pre-sorted list where confirmed momentum setups appear first. '
+    'VWAP data persisted to scan_results (vwap_signals dict) for dashboard and eval consumption. '
+    'Alpaca mode only — gracefully absent in simulation runs.'
+)
+
+divider()
+subheading('3. Dashboard — Tailwind Mode + VWAP Badges')
+body(
+    'Tailwind mode: Blue info banner + progress bar when Tier 1 is active '
+    '(realized ≥ $716, positions still open). Green success banner when Tier 2 ceiling is hit. '
+    'Position cards show "🚀 tailwind" badge and switch to "Tight Trail" stop label '
+    '(0.5% instead of 1%). Applied to Summary In Flight, Today Live Positions.'
+)
+body(
+    'VWAP badges: Each open position card shows an inline ▲ VWAP · RS N× badge (dark blue) '
+    'or ▼ VWAP (gray) reflecting the entry-time signal. '
+    'Collapsible ℹ️ VWAP & RS signals explained expander defines both metrics with '
+    'interpretation thresholds. Candidates table in Today tab gains above_vwap and rs_vs_spy columns. '
+    'Applied to Summary, Today, and Positions pages.'
+)
+
+divider()
+subheading('4. eval.py — Tailwind Analysis + VWAP Signal Quality')
+body(
+    'Tailwind analysis: _tailwind_analysis() reconstructs the intraday close timeline by '
+    'sorting positions by closed_at, walks cumulative P&L to find the exact Tier 1 trigger point, '
+    'identifies "riders" (positions that closed after the trigger), and computes extra P&L captured '
+    'above the $716 floor. Prints day-by-day breakdown with per-rider exit context. '
+    'Available in both console output and Agent Scorecard.'
+)
+body(
+    'VWAP signal quality: _vwap_signal_analysis() loads vwap_signals from each day\'s premarket '
+    'scan_result and cross-references every closed position. Produces four cohort tables: '
+    'Above VWAP, Below VWAP, RS ≥ 1.5×, RS < 1.5×. '
+    'Delta metrics (avg P&L, win rate) measure whether Thread 1 actually adds alpha. '
+    'Pass/warn/fail verdict by June 1 gate with ~8 trading days of data.'
+)
+
+add_table(
+    ['Item', 'Status'],
+    [
+        ('Thread 2: Tiered lock-in (Tier 1 $716 / Tier 2 $1,000)', '✅ Done'),
+        ('Thread 1: VWAP + RS enrichment at step 1.85', '✅ Done'),
+        ('Dashboard tailwind mode (banners, badges, tighter trail)', '✅ Done'),
+        ('Dashboard VWAP badges + explanation on position cards', '✅ Done'),
+        ('eval.py tailwind analysis section', '✅ Done'),
+        ('eval.py VWAP signal quality section', '✅ Done'),
+        ('Agent Scorecard tailwind + VWAP sections', '✅ Done'),
+        ('VWAP signal quality validation (June 1 gate)', '⏳ ~8 trading days of data accumulating'),
+        ('June 1 gate: python3 eval.py --days 14', '⏳ Gate date: 2026-06-01'),
+    ]
 )
 
 
