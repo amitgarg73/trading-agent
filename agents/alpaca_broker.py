@@ -67,23 +67,29 @@ def get_live_prices(tickers: list[str]) -> dict[str, float]:
 def submit_bracket_order(
     ticker: str,
     shares: int,
+    entry_price: float,
     target_price: float,
     stop_price: float,
     action: str = "BUY",
 ) -> str:
     """
-    Submit a bracket order: market entry + limit take-profit + stop-loss.
-    Returns the Alpaca parent order ID (store in DB to track exit fills).
+    Submit a bracket order: limit entry + limit take-profit + stop-loss.
+    Uses limit order (not market) to avoid paying the spread on entry.
+    Limit set at entry_price + 0.1% buffer to ensure fill on liquid stocks
+    while avoiding chasing stocks that gap far above our signal price.
+    Returns the Alpaca parent order ID.
     """
-    from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
+    from alpaca.trading.requests import LimitOrderRequest, TakeProfitRequest, StopLossRequest
     from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
-    side = OrderSide.BUY if action == "BUY" else OrderSide.SELL
-    req = MarketOrderRequest(
+    side        = OrderSide.BUY if action == "BUY" else OrderSide.SELL
+    limit_price = round(entry_price * 1.001, 2)  # 0.1% buffer for fill probability
+    req = LimitOrderRequest(
         symbol=ticker,
         qty=shares,
         side=side,
         time_in_force=TimeInForce.DAY,
+        limit_price=limit_price,
         order_class=OrderClass.BRACKET,
         take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
         stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),

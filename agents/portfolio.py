@@ -50,11 +50,13 @@ def open_positions(plan_id: str, approved_trades: list, broker: str = "simulatio
                 alpaca_order_id = alpaca_broker.submit_bracket_order(
                     ticker=ticker,
                     shares=trade["shares"],
+                    entry_price=trade["entry_price"],
                     target_price=trade["target_price"],
                     stop_price=trade["stop_loss"],
                     action=trade["action"],
                 )
-                print(f"        Alpaca order submitted: {ticker} → {alpaca_order_id}")
+                limit_price = round(trade["entry_price"] * 1.001, 2)
+                print(f"        Alpaca limit order: {ticker} @ ${limit_price} → {alpaca_order_id}")
             except Exception as e:
                 print(f"        ⚠️  Alpaca order failed for {ticker}: {e}")
 
