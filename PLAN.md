@@ -31,7 +31,7 @@
 | 2 | Real-time Alpaca price refresh before Claude call | ✅ DONE | — |
 | 3 | Limit order entries instead of market orders | ✅ DONE | — |
 | 4 | Skip first 15 min (no entries before 9:45 AM ET) | ✅ DONE | — |
-| 5 | Native Alpaca trailing stop (OTO-OCO) | ⏸ DEFERRED — real money only | 6–8 hrs |
+| 5 | Native Alpaca trailing stop (OTO-OCO) | ✅ DONE — live on paper 2026-05-18 | — |
 | 5b | 15-min intraday checks (pragmatic fix for fix 5) | ✅ DONE | — |
 | 6 | Reliable cron triggering (cron-job.org) | ✅ DONE | — |
 
@@ -123,23 +123,6 @@ simulation mode still needs the manual approach.
 
 ---
 
-## Fix 5 — Native Trailing Stop (Deferred)
-
-Native Alpaca trailing stop requires moving from bracket orders to OTO-OCO structure.
-Build this before deploying real money. Key risks to mitigate:
-- Gap window: position unprotected between entry fill and OCO submission (up to 15 min now)
-- Double-sell: if take-profit and trailing stop both fire, accidental short position
-- OCO failure: no exit orders if API call fails
-
-Mitigation plan when building:
-- `USE_NATIVE_TRAILING_STOP = False` feature flag in settings.py
-- Track `entry_filled_at` in positions table
-- Idempotent OCO submission guard
-- Unit tests: mock Alpaca client, test all state transitions
-- A/B test on paper for 2 weeks before enabling on real money
-
----
-
 ## After All Fixes — Rerun Backtest
 
 Once all fixes are validated over 1 week of live paper trading, run a fresh backtest:
@@ -180,13 +163,31 @@ unacceptable on real capital where a fast reversal can cost hundreds of dollars.
 
 ---
 
+## v5.6 — Native Trailing Stop + Automated Validation (2026-05-18)
+
+| # | Feature | Status |
+|---|---------|--------|
+| 1 | `USE_NATIVE_TRAILING_STOP` feature flag in settings.py (default True as of 2026-05-18) | ✅ DONE |
+| 2 | `submit_bracket_order()` — `StopLossRequest(trail_percent=...)` when flag True | ✅ DONE |
+| 3 | `portfolio.py` — passes flag on open; stores `native_trail_active` in DB; skips manual trail check when True | ✅ DONE |
+| 4 | `dashboard/app.py` — `fmt_stop()` shows "Trail 1% ↑ (native)" for native trail positions | ✅ DONE |
+| 5 | `exit_mechanism` column on positions — NATIVE_TRAIL, TARGET, MANUAL_TRAIL, STOP, EOD | ✅ DONE |
+| 6 | `alpaca_broker.get_order_fill()` — returns NATIVE_TRAIL when trailing_stop leg fires | ✅ DONE |
+| 7 | `eval.py` — VERDICT summary (plain-language What's working / Watch / Action required) | ✅ DONE |
+| 8 | `eval.py` — annotated metrics with ✅/⚠️/❌ flags and benchmark targets | ✅ DONE |
+| 9 | `eval.py` — TRAILING STOP VALIDATION section (native vs manual cohort comparison) | ✅ DONE |
+| 10 | `eval.py` — INTEGRITY CHECKS (UNFILLED rate, orphaned positions, duplicates, missing exit_mechanism) | ✅ DONE |
+| 11 | `eval.py` — CLAUDE QUALITY CHECKS (R:R violations, size violations, confidence cohort performance) | ✅ DONE |
+| 12 | Supabase: `native_trail_active` and `exit_mechanism` columns added to positions table | ✅ DONE |
+
+---
+
 ## Then: Next Feature Sprint
 
-After validation, pick from `Trading_Agent_Features.docx` Section 10 (Priority Summary):
-1. **ML model live validation** — 30 days paper; compare win rate vs baseline (no scorer)
-2. **Native Alpaca trailing stop (OTO-OCO)** — P0 before real money; feature flag + 2-week A/B test
-3. Real-time Alpaca data (already partially done by Fix 2 / step 1.8)
+After June 1 validation gate, pick from `Trading_Agent_Features.docx` Section 10 (Priority Summary):
+1. **Backtest rerun post-fixes** — `python3 backtest.py --days 30 --top 15`; compare to $716/day baseline
+2. **Real money capital sizing** — decide capital amount, rescale POSITION_SIZE_BY_CONFIDENCE and DAILY_LOCK_IN_TARGET
+3. **ML model live validation** — 30 days paper; compare win rate vs baseline (no scorer)
 4. Post-earnings momentum agent
-5. Market regime classifier
-6. Options flow signal
-7. Insider buying (Form 4)
+5. Options flow signal
+6. Insider buying (Form 4)
