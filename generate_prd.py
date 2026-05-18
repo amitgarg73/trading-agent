@@ -53,7 +53,7 @@ title = doc.add_heading('AI Product Requirements Doc', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = RGBColor(0x1A, 0x3A, 0x6A)
 
-sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.4')
+sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.5')
 sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.bold = True
@@ -257,6 +257,9 @@ add_table(
         ('Premarket 9:45 AM ET (skip first 15 min)', 'High', 'High', '95%', 'XS', '9.5', 'P1 — shipped (v5.4)'),
         ('15-min intraday checks (was 30 min)', 'High', 'Med', '95%', 'XS', '9.0', 'P1 — shipped (v5.4)'),
         ('cron-job.org external triggers', 'High', 'High', '99%', 'S', '9.9', 'P0 — shipped (v5.4)'),
+        ('Target 2%, stop 0.67% (3:1 R:R, 25% break-even)', 'High', 'High', '90%', 'XS', '9.0', 'P1 — shipped (v5.5)'),
+        ('ML scorer step 1.76 (HistGradientBoosting, AUC 0.78)', 'High', 'High', '85%', 'M', '8.5', 'P1 — shipped (v5.5)'),
+        ('Monthly ML retrain workflow (retrain_model.yml)', 'High', 'Med', '90%', 'S', '8.1', 'P1 — shipped (v5.5)'),
         ('Native trailing stop (OTO-OCO)', 'High', 'High', '80%', 'L', '7.2', 'P0 — pre-real-money'),
         ('V2e: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
         ('Alpaca paper trading API (V2g)', 'Med', 'High', '80%', 'L', '6.4', 'P0 — shipped (v4.0)'),
@@ -272,7 +275,7 @@ bullet('Agent 1 (Strategy): claude-sonnet-4-6 — receives structured JSON of sc
        'market summary (VIX, futures, news headlines), returns selected trades with '
        'entry/target/stop/confidence/reasoning in JSON. Max positions dynamic based on market conditions.')
 bullet('Agent 2 (Risk): claude-sonnet-4-6 — receives proposed trades, applies hard rules '
-       '(3% target, 1% stop, 3:1 reward:risk, $5K–$7K position size), returns approved/rejected split '
+       '(2% target, 0.67% stop, 3:1 reward:risk, $5K–$7K position size; break-even at 25% win rate), returns approved/rejected split '
        'with plain-English rejection reasons.')
 body(
     'Both agents use structured output (JSON) for deterministic downstream processing. '
@@ -291,6 +294,7 @@ add_table(
         ('Phase 2c — More Intelligence (V2d)', 'May 2026 (complete)', 'V2d sector correlation guard — max 3 per sector, drops lowest-confidence excess'),
         ('Phase 2d — Safety (V5)', 'May 2026 (complete)', 'V5 guardrails — 6 safety checks (action whitelist, ticker whitelist, duplicate guard, price sanity, capital check, daily loss limit), concurrent run lock, EOD close retry'),
         ('Phase 2e — Execution Friction Fixes (v5.4)', 'May 2026 (complete)', 'Prompt caching, pre-filter, 1M volume floor, live prices, limit orders, 9:45 AM start, 15-min intraday, cron-job.org'),
+        ('Phase 2f — ML Scoring + Target Tuning (v5.5)', 'May 2026 (complete)', '2% target / 0.67% stop (3:1 R:R, break-even 25%); ML scorer (HistGradientBoosting, AUC 0.78, 429 tickers, 13 features); monthly retrain workflow (commits pkl back to repo); full architecture + docs updated'),
         ('Phase 3 — Real Edge Features', 'June 2026', 'V2e sector rotation scoring, V2f momentum confirmation; post-earnings momentum; native trailing stop (P0 pre-real-money)'),
         ('Phase 3 — Alerts & Monitoring', 'July 2026', 'SMS/email alerts on position close, weekly email summaries'),
         ('Phase 4 — Scale', 'Q3–Q4 2026', 'Strategy A/B testing, weekly email summaries, real capital evaluation'),
@@ -326,8 +330,8 @@ h2('Key Hard Rules (Enforced by Risk Agent)')
 add_table(
     ['Rule', 'Value', 'Why'],
     [
-        ('Profit target', '3% above entry', 'Hard-coded in prompt — risk agent rejects if not set'),
-        ('Stop loss', '1% below entry', 'Hard-coded in prompt — risk agent rejects if wider'),
+        ('Profit target', '2% above entry', 'Lowered from 3% — more achievable intraday move; hard-coded; risk agent rejects if not set'),
+        ('Stop loss', '0.67% below entry', 'Lowered from 1% to maintain 3:1 R:R with 2% target; break-even at 25% win rate'),
         ('Reward:risk minimum', '3:1', 'Ensures winners outpace losers even at 50% win rate'),
         ('Position size', '$5,000–$7,000', '5–7% of $100K — limits single-position impact'),
         ('Max positions', '15 (reduced by VIX/futures)', 'Dynamic — VIX 20-25 → 10, VIX 25-30 → 5, VIX >30 → skip'),
@@ -400,7 +404,8 @@ bullet('Strategy agent must return structured JSON with entry (3% target, 1% sto
 bullet('Risk agent must enforce all 7 hard rules and return rejected trades with specific plain-English reasons')
 bullet('Guardrails must run after sector guard and block any trade that fails action whitelist, ticker whitelist, duplicate check, price sanity, capital check, or daily loss limit — with specific rejection reason logged')
 bullet('Concurrent run lock must prevent any premarket run from executing if scan_results for today already exists in Supabase')
-bullet('Intraday agent must reconcile Supabase OPEN positions against Alpaca\'s actual positions on every 30-min cycle — any mismatch marked UNFILLED automatically')
+bullet('ML scorer must score all pre-filter candidates before Claude call, sort by P(hit +2%), and gracefully fall back to no-scoring if model file is missing')
+bullet('Intraday agent must reconcile Supabase OPEN positions against Alpaca\'s actual positions on every 15-min cycle — any mismatch marked UNFILLED automatically')
 bullet('Intraday agent must check prices and close positions within 5 minutes of target/stop being hit')
 bullet('EOD agent must produce a complete daily_performance record including P&L, win rate, and capital')
 bullet('eval.py --days 30 --write must run automatically after every EOD close and save results to Supabase for dashboard display')
@@ -507,6 +512,7 @@ body('Phase 2b (v5.1, complete): Summary tab redesign (In Flight / Today\'s Plan
 body('Phase 2c (v5.2, complete): No-margin enforcement — cumulative capital tracking across full approved batch in guardrails (both Alpaca and simulation modes); daily profit lock-in — intraday agent closes all positions when realized P&L ≥ $716 (30-day backtest average) with LOCK_IN reason; dashboard shows LOCK_IN as "🎯 Day Locked" in Today\'s Plan; DAILY_LOCK_IN_TARGET configurable in settings.py.')
 body('Phase 2d (v5.3, complete): GitHub Actions retry (3x, 60s backoff); trailing stops — high_watermark tracked per position, effective_stop ratchets up as stock rises, closes on 1% pullback from peak; confidence-weighted sizing — risk agent maps HIGH→$7K, MEDIUM→$6K, LOW→$5K before validation; dashboard annotations — "Trail $X.XX ↑" on In Flight cards, "🔶 Trail Stop" vs "🔴 Stop Hit" in Today\'s Plan status.')
 body('Phase 2e (v5.4, complete): Prompt caching (strategy SYSTEM ephemeral, ~70–75% input token reduction); strategy pre-filter (STRATEGY_MIN_SCORE=4, step 1.75); 1M avg volume liquidity floor; real-time Alpaca price refresh before Claude call (step 1.8); limit order entries at entry × 1.001 (was market orders); premarket moved 9:00 → 9:45 AM ET; intraday every 15 min (was 30 min); cron-job.org external triggers for exact-time scheduling; eval.py date filter fix; futures period fix for Monday availability.')
+body('Phase 2f (v5.5, complete): Target lowered 3% → 2%, stop 1% → 0.67% — maintains 3:1 R:R, break-even at 25% win rate (was 25% break-even, lower risk per trade). ML scorer (step 1.76): HistGradientBoostingClassifier trained on 2y price data for all 429 tickers; 13 features (rsi, macd_hist, bb_pct, vol_ratio, atr_pct, dist_sma20, dist_sma50, mom1, mom5, range_52w_pct, dow, vix, technical_score); AUC 0.78 ± 0.04 (5-fold TimeSeriesSplit CV); top feature: atr_pct (0.165 importance). Monthly retrain workflow (retrain_model.yml): GitHub Actions runs 1st of each month, downloads fresh price history, retrains model, commits updated pkl + feature_columns.json back to main — fully automated, no manual step. Full architecture diagrams (high-level + low-level) regenerated at v5.5 showing all 13 pipeline steps, ML feedback loop, cron-job.org interdependencies.')
 body('Phase 3: V2e sector rotation scoring, V2f momentum confirmation.')
 body('Phase 3: If win rate > 60% and reward:risk > 2x sustained over 30 live trading days, evaluate real '
      'capital deployment with strict position limits.')

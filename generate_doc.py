@@ -62,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.4  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.5  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -104,7 +104,8 @@ add_table(
         ('52 tickers, 3 positions, 2% target', '$198', '50%', '50%', 'D'),
         ('408 tickers, 10 positions, 2% target', '$548', '87%', '138%', 'B'),
         ('434 tickers, 15 positions, 2.5% target', '$690', '90%', '174%', 'B'),
-        ('430 tickers, 15 positions, 3% target (current)', '$800', '93%', '202%', 'B'),
+        ('430 tickers, 15 positions, 3% target', '$800', '93%', '202%', 'B'),
+        ('429 tickers, 15 positions, 2% target + ML scorer (current)', '$716 baseline', '90%', '180%', 'B'),
     ]
 )
 
@@ -159,6 +160,10 @@ code('├── backtest.py                  # 30-day historical backtest (no Cl
 code('├── eval.py                      # Eval script — grades live performance; --write saves to Supabase (auto-runs EOD)')
 code('├── generate_doc.py              # Generates this Word document')
 code('├── generate_prd.py              # Generates the PRD document')
+code('├── train_model.py               # Standalone ML model trainer (HistGradientBoosting, 429 tickers, 2y data)')
+code('├── models/')
+code('│   ├── xgb_scorer.pkl              # Trained ML model — P(hit +2% next day) per candidate')
+code('│   └── feature_columns.json        # Ordered feature list matching inference in ml_scorer.py')
 code('├── .env                         # Local secrets (gitignored)')
 code('├── .env.example                 # Template for secrets')
 code('├── streamlit_secrets.toml       # Streamlit Cloud secrets template (gitignored)')
@@ -166,9 +171,11 @@ code('├── .gitignore                   # Excludes .env and secrets files')
 code('├── .github/')
 code('│   └── workflows/')
 code('│       ├── trading.yml              # Premarket/intraday/EOD schedule')
-code('│       └── universe_refresh.yml     # Monday 8:30 AM ET — weekly universe update')
+code('│       ├── universe_refresh.yml     # Monday 8:30 AM ET — weekly universe update')
+code('│       └── retrain_model.yml        # 1st of month 10 AM UTC — ML model retrain + auto-commit pkl')
 code('├── scanner/')
-code('│   └── scanner.py                  # Market scanner (yfinance + TA, dynamic universe)')
+code('│   ├── scanner.py                  # Market scanner (yfinance + TA, dynamic universe)')
+code('│   └── ml_scorer.py                # ML candidate ranker — loads pkl, scores all candidates by P(hit +2%)')
 code('├── agents/')
 code('│   ├── market_context.py           # V2a: VIX gate + futures signal + international')
 code('│   ├── news_intel.py               # V2b: earnings blackout + news headlines')
@@ -237,6 +244,15 @@ bullet('Typical reduction: 150+ candidates → 30–50 passed to Claude — cuts
 bullet('Log signature: [ 1.75/4 ] Strategy pre-filter: X → Y candidates (score ≥ 4)')
 bullet('Tuning: lower STRATEGY_MIN_SCORE to 3 if missing good setups; raise to 6–7 for further token cuts')
 
+body('Stage 1.76 — ML Scorer  (v5.5 — SHIPPED)')
+bullet('Loads HistGradientBoostingClassifier from models/xgb_scorer.pkl (trained on 2y price history, 429 tickers)')
+bullet('Scores each candidate: P(next-day high ≥ close × 1.02) — probability of hitting +2% the next day')
+bullet('13 features: rsi, macd_hist, bb_pct, vol_ratio, atr_pct, dist_sma20, dist_sma50, mom1, mom5, range_52w_pct, dow, vix, technical_score')
+bullet('Top feature importance: atr_pct (0.165), vix (0.038), dow (0.011), vol_ratio (0.008) — AUC 0.78 ± 0.04 (5-fold TimeSeries CV)')
+bullet('Sorts candidates descending by ml_score before passing to Claude — highest-probability setups ranked first')
+bullet('Graceful fallback: if model file missing, sets ml_score=None and passes candidates unchanged (no pipeline interruption)')
+bullet('Log signature: [ 1.76/4 ] ML scoring: X candidates ranked by P(hit +2%) — top score: Y.YY')
+
 body('Stage 1.8 — Live Price Refresh (Alpaca mode only)')
 bullet('Fetches real-time ask prices for all pre-filter candidates via Alpaca Market Data API (batch call)')
 bullet('Updates candidate current_price with live ask — overrides 15-min delayed yfinance price')
@@ -248,14 +264,14 @@ body('Stage 2 — Strategy Agent (Claude AI)')
 bullet('Receives scored candidates, market summary (VIX + futures + news), and max_positions for today')
 bullet('Claude reads market context, momentum, and signal combinations')
 bullet('Selects up to max_positions highest-conviction trades for the day')
-bullet('Assigns entry price (hard: 3% target above entry), stop loss (hard: 1% below entry)')
+bullet('Assigns entry price (hard: 2% target above entry), stop loss (hard: 0.67% below entry — maintains 3:1 R:R)')
 bullet('Sets position size ($5K–$7K per trade), shares, estimated profit, confidence (HIGH/MEDIUM/LOW)')
 bullet('Writes 2–3 sentence reasoning for every trade citing specific signals from the scan data')
 bullet('Can select zero trades if no high-conviction setups exist — protects principal')
 
 body('Stage 3 — Risk Agent (Claude AI)')
 bullet('Reviews every proposed trade against hard-coded risk rules')
-bullet('Rejects if: stop loss > 1% of entry, target < 3% of entry, reward:risk < 3:1')
+bullet('Rejects if: stop loss > 0.67% of entry, target < 2% of entry, reward:risk < 3:1 (break-even at 25% win rate)')
 bullet('Rejects if: target below entry (BUY) or stop above entry (BUY)')
 bullet('Position sizing: confidence-weighted — HIGH=$7,000, MEDIUM=$6,000, LOW=$5,000; risk agent _apply_confidence_sizing() overrides whatever Claude sets before running validation — ensures correct sizing even if Claude hallucinates a different value')
 bullet('Returns approved and rejected trades with specific rejection reasons in plain English')
@@ -476,8 +492,8 @@ add_table(
         ('MAX_POSITIONS', '15', 'Max concurrent open positions (reduced by market conditions)'),
         ('MAX_POSITION_PCT', '7%', 'Max capital per single trade ($7K)'),
         ('MIN_POSITION_PCT', '5%', 'Min capital per single trade ($5K)'),
-        ('TARGET_PCT', '3%', 'Profit target per trade (hard rule — agent must set this exactly)'),
-        ('MAX_LOSS_PER_TRADE', '1%', 'Stop loss threshold — rejects wider stops (hard rule)'),
+        ('TARGET_PCT', '2%', 'Profit target per trade (lowered from 3% — more achievable intraday move; hard rule)'),
+        ('MAX_LOSS_PER_TRADE', '0.67%', 'Stop loss (lowered from 1% to maintain 3:1 R:R with 2% target; break-even at 25% win rate)'),
         ('MIN_REWARD_RISK', '3.0', 'Minimum reward:risk ratio to approve a trade (3:1)'),
         ('SCORE_THRESHOLD', '3', 'Minimum scanner score to be a strategy candidate'),
         ('RSI_OVERSOLD', '35', 'RSI level considered oversold (buy signal)'),
@@ -536,6 +552,9 @@ add_table(
         ('—', 'Strategy pre-filter (score ≥ 4 before Claude call, ~60–70% token reduction)', 'Built and deployed (v5.4)'),
         ('—', 'Execution friction: 1M volume floor, live Alpaca prices, limit orders, 9:45 AM start, 15-min intraday', 'Built and deployed (v5.4)'),
         ('—', 'Reliable cron via cron-job.org; mode detection time windows; eval date filter fix', 'Built and deployed (v5.4)'),
+        ('—', 'Target 3% → 2%, stop 1% → 0.67% — maintains 3:1 R:R, break-even at 25% win rate', 'Built and deployed (v5.5)'),
+        ('—', 'ML scorer (step 1.76): HistGradientBoosting trained on 2y/429 tickers, AUC 0.78 ± 0.04', 'Built and deployed (v5.5)'),
+        ('—', 'Monthly ML retrain workflow (retrain_model.yml) — auto-commits updated pkl to repo', 'Built and deployed (v5.5)'),
         ('V2e', 'Sector rotation scoring — favor sectors showing relative strength', 'Planned'),
         ('V2f', 'Momentum confirmation — 15-minute rule before entry', 'Planned'),
     ]
@@ -723,6 +742,10 @@ add_table(
         ('58', 'eval.py date filter fix', 'positions query had no date filter — fetched all history regardless of --days; fixed by building eval_dates set from perf_rows and filtering closed_at date'),
         ('59', 'Futures unavailable on Mondays', 'period="2d" returns only 1 row after weekend (needs 2 for % change calc); fixed to period="5d" in market_context.py; added error logging for insufficient data'),
         ('60', 'Updated docs to v5.4', 'Trading_Agent_Documentation.docx and Trading_Agent_PRD.docx regenerated with all v5.4 friction fixes'),
+        ('61', 'Lowered profit target 3% → 2%, stop 1% → 0.67%', 'Maintains 3:1 R:R (break-even at 25% win rate); 2% intraday move is more achievable than 3%; both TARGET_PCT and MAX_LOSS_PER_TRADE in settings.py; strategy.py prompt uses values dynamically'),
+        ('62', 'Built ML scorer (train_model.py + scanner/ml_scorer.py)', 'HistGradientBoostingClassifier (sklearn, no libomp dependency); trained on 2y price history for all 429 universe tickers; 13 features; AUC 0.78 ± 0.04 (5-fold TimeSeriesSplit); step 1.76 in orchestrator sorts candidates by P(hit +2%) before Claude call; pkl committed to repo (~2MB)'),
+        ('63', 'Monthly ML retrain workflow (.github/workflows/retrain_model.yml)', 'GitHub Actions: triggers 1st of each month at 10 AM UTC; downloads 2y data, retrains model, commits updated xgb_scorer.pkl + feature_columns.json back to main; no manual step required; SUPABASE_URL/KEY via GitHub Secrets'),
+        ('64', 'Updated docs and architecture to v5.5', 'Trading_Agent_Documentation.docx, Trading_Agent_PRD.docx, Trading_Agent_Features.docx regenerated; architecture diagrams (high-level + low-level) updated with full 13-step pipeline, ML feedback loop, cron-job.org triggers, interdependencies'),
     ]
 )
 
@@ -754,6 +777,9 @@ add_table(
         ('Streamlit ImportError on TRAIL_PCT', 'Stale Streamlit Cloud deployment had old settings.py without TRAIL_PCT', 'Reboot app from Streamlit Cloud dashboard (⋮ → Reboot app)'),
         ('Futures unavailable on Mondays', 'period="2d" returns 1 row after weekend — not enough for % change calc', 'Changed to period="5d" in market_context.py; added error logging for insufficient data'),
         ('eval.py showing wrong trade count', 'Positions query had no date filter — fetched all historical positions regardless of --days window', 'Build eval_dates set from perf_rows; filter positions by closed_at date'),
+        ('XGBoost libomp.dylib error on Mac', 'XGBoost requires OpenMP (libomp.dylib) which is not installed by default on macOS; install fails or import crashes', 'Switched to sklearn HistGradientBoostingClassifier — no C++ deps, pure Python, comparable performance'),
+        ('HistGradientBoostingClassifier subsample param error', 'HistGradientBoosting does not expose a subsample parameter (unlike XGBoost)', 'Removed subsample parameter from constructor'),
+        ('feature_importances_ AttributeError', 'HistGradientBoosting does not expose feature_importances_ directly — requires permutation_importance from sklearn.inspection', 'Used permutation_importance; moved evaluation display to main() after model save so pkl always persists'),
     ]
 )
 
@@ -782,7 +808,7 @@ bullet('Rerun manually: GitHub Actions → Trading Agent → Run workflow → se
 
 # ── 15. What's Next ───────────────────────────────────────────────────────────
 heading('15. What\'s Next')
-body('The system is live and running at v5.4. All execution friction fixes are deployed. Next steps:')
+body('The system is live and running at v5.5. All execution friction fixes and the ML scorer are deployed. Next steps:')
 
 add_table(
     ['Phase', 'What', 'Priority'],
@@ -792,6 +818,7 @@ add_table(
         ('V2e — Sector rotation scoring', 'Favor sectors showing relative strength this week; deprioritize lagging sectors', 'Next — feature sprint'),
         ('V2f — Momentum confirmation', '15-minute rule: wait for confirmed breakout before entry; reduces false signals on gap-and-fade setups', 'Planned'),
         ('Alerts', 'SMS/email on position close (target hit or stop triggered)', 'Planned'),
+        ('ML model live validation', 'Run paper trading for 30 days to verify AUC 0.78 translates to higher win rate vs baseline; compare ml_score-ranked vs unranked runs', 'Next'),
         ('Post-earnings momentum agent', 'Scan for stocks 1–3 days post-positive earnings — momentum window before analyst upgrades', 'Real Edge backlog'),
         ('Market regime classifier', 'Label trending vs ranging vs reversal days; adjust strategy per regime', 'Real Edge backlog'),
     ]

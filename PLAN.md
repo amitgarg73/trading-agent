@@ -167,11 +167,26 @@ unacceptable on real capital where a fast reversal can cost hundreds of dollars.
 
 ---
 
+## v5.5 — ML Scoring + Target Tuning (Complete)
+
+| # | Feature | Status |
+|---|---------|--------|
+| 1 | Target 3% → 2%, stop 1% → 0.67% (maintains 3:1 R:R, break-even 25%) | ✅ DONE |
+| 2 | ML scorer — train_model.py (HistGradientBoosting, 429 tickers, 2y, AUC 0.78) | ✅ DONE |
+| 3 | scanner/ml_scorer.py — step 1.76 in orchestrator, sorts by P(hit +2%) | ✅ DONE |
+| 4 | Monthly retrain workflow — retrain_model.yml, auto-commits pkl to main | ✅ DONE |
+| 5 | Architecture diagrams updated to v5.5 (13 steps, ML feedback loop, interdependencies) | ✅ DONE |
+| 6 | All docs updated to v5.5 (generate_doc.py, generate_prd.py, generate_features.py) | ✅ DONE |
+
+---
+
 ## Then: Next Feature Sprint
 
-After friction fixes are validated, pick from `Trading_Agent_Features.docx` Section 9 (Real Edge):
-1. Real-time Alpaca data (already partially done by Fix 2)
-2. Post-earnings momentum agent
-3. Market regime classifier
-4. Options flow signal
-5. Insider buying (Form 4)
+After validation, pick from `Trading_Agent_Features.docx` Section 10 (Priority Summary):
+1. **ML model live validation** — 30 days paper; compare win rate vs baseline (no scorer)
+2. **Native Alpaca trailing stop (OTO-OCO)** — P0 before real money; feature flag + 2-week A/B test
+3. Real-time Alpaca data (already partially done by Fix 2 / step 1.8)
+4. Post-earnings momentum agent
+5. Market regime classifier
+6. Options flow signal
+7. Insider buying (Form 4)

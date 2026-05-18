@@ -472,7 +472,7 @@ add_table(
         ('Real money, volatility spike',  'Reduced but protected', 'VIX gates reduce position count — good design'),
     ]
 )
-body('Overall confidence: 6/10 paper, 4/10 real money with current signals only.')
+body('Overall confidence: 6.5/10 paper, 4.5/10 real money with ML scorer + lower target. ML scorer (AUC 0.78) adds a quantitative filter before Claude, increasing signal quality. Lower 2% target (vs 3%) is more achievable intraday — increases win rate at the cost of smaller wins per trade. 3:1 R:R maintained; break-even at 25% win rate.')
 
 heading('Features That Create Real Edge', level=2)
 body('Ranked by signal quality and buildability. Each addresses a specific gap in the current system.')
@@ -480,6 +480,17 @@ body('Ranked by signal quality and buildability. Each addresses a specific gap i
 add_table(
     ['Priority', 'Feature', 'Edge Type', 'What', 'Why It Works', 'Effort', 'Status'],
     [
+        ('0',
+         'ML candidate scorer (shipped v5.5)',
+         'Analytical',
+         'HistGradientBoosting model trained on 2y price history for 429 tickers; '
+         'P(next-day high ≥ close × 1.02); 13 features; AUC 0.78 ± 0.04 (5-fold TimeSeries CV); '
+         'sorts candidates before Claude; monthly auto-retrain via GitHub Actions',
+         'ML pre-ranks candidates so Claude sees the highest-probability setups first — '
+         'quantitative signal that complements LLM qualitative reasoning; '
+         'top feature atr_pct (0.165) confirms volatility is the dominant predictor',
+         'M', 'SHIPPED'),
+
         ('1',
          'Real-time data (Alpaca streams)',
          'Execution',
@@ -548,14 +559,18 @@ heading('10. Priority Summary — What to Build Next')
 body('Ranked by impact × effort. Focus on P1 ideas first, validate via backtest before deploying.')
 
 add_table(
-    ['Rank', 'Feature', 'Category', 'Effort', 'Expected Impact'],
+    ['Rank', 'Feature', 'Category', 'Effort', 'Status / Expected Impact'],
     [
-        ('1', 'Per-trade email on close', 'Monitoring', 'S', 'Highest quality-of-life; know immediately when a target is hit'),
-        ('2', 'Momentum confirmation — 15-min rule (V2f)', 'Signal Quality', 'M', 'Reduces false entries; should improve win rate by 3–5%'),
-        ('3', 'Sector rotation scoring (V2e)', 'Signal Quality', 'M', 'Favors momentum sectors; expected to improve avg daily P&L'),
-        ('4', 'Partial profit taking (50% at +1.5%)', 'Position Mgmt', 'M', 'Locks in gain on fast movers; reduces STOP losses on reversals'),
-        ('5', 'Time-of-day entry filter (skip first 15 min)', 'Execution', 'S', 'Easy win; eliminates noisiest part of the day'),
-        ('6', 'Pre-market gap filter (exclude >+2% gappers)', 'Signal Quality', 'S', 'Avoids entries with limited upside remaining to target'),
+        ('—', 'ML candidate scorer (step 1.76)', 'Signal Quality', 'M', 'SHIPPED v5.5 — sorts candidates by P(hit +2%) before Claude; AUC 0.78'),
+        ('—', 'Target 2% / stop 0.67% (3:1 R:R)', 'Risk Mgmt', 'XS', 'SHIPPED v5.5 — lower achievable target; break-even at 25% win rate'),
+        ('—', 'Time-of-day entry filter (9:45 AM ET)', 'Execution', 'XS', 'SHIPPED v5.4 — skips noisiest first 15 min of market'),
+        ('—', 'Pre-market gap filter (live Alpaca prices)', 'Execution', 'S', 'SHIPPED v5.4 — real-time ask prices replace 15-min stale yfinance'),
+        ('1', 'ML model live validation (30 days)', 'Validation', 'M', 'Verify AUC 0.78 translates to higher win rate vs baseline; run A/B comparison'),
+        ('2', 'Native Alpaca trailing stop (OTO-OCO)', 'Execution', 'L', 'P0 pre-real-money — replace 15-min polling; 8 hrs; feature flag + unit tests'),
+        ('3', 'Momentum confirmation — 15-min rule (V2f)', 'Signal Quality', 'M', 'Reduces false entries; should improve win rate by 3–5%'),
+        ('4', 'Sector rotation scoring (V2e)', 'Signal Quality', 'M', 'Favors momentum sectors; expected to improve avg daily P&L'),
+        ('5', 'Per-trade email on close', 'Monitoring', 'S', 'Highest quality-of-life; know immediately when a target is hit'),
+        ('6', 'Partial profit taking (50% at +1%)', 'Position Mgmt', 'M', 'Locks in gain on fast movers; reduces STOP losses on reversals'),
         ('7', 'Daily 4:30 PM summary email', 'Monitoring', 'S', 'Replaces manual dashboard check at EOD'),
         ('8', 'Automated capital compounding', 'Infrastructure', 'M', 'Makes growth automatic; currently manual'),
         ('9', 'Short selling / mean reversion', 'Strategy', 'M', 'Doubles opportunity set; hedges on down days'),
@@ -564,10 +579,10 @@ add_table(
 )
 
 body(
-    'Items 1, 5, 6, and 7 are quick wins (Effort S or XS) with meaningful impact — '
-    'good candidates for the next iteration. Items 2 and 3 require backtest validation '
-    'before deploying. Item 9 (short selling) requires the most design work but opens '
-    'a new profit dimension.'
+    'Items 1–2 are the immediate next sprint. ML validation tells us whether AUC 0.78 '
+    'translates to real win-rate improvement; native trailing stop is P0 before real money. '
+    'Items 3 and 4 require backtest validation before deploying. '
+    'Item 9 (short selling) requires the most design work but opens a new profit dimension.'
 )
 
 # ── Save ──────────────────────────────────────────────────────────────────────
