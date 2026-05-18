@@ -204,8 +204,9 @@ def premarket(broker: str = "simulation"):
         else:
             print(f"        All trades passed guardrails")
 
-    # Persist sector_blocked + guardrail_blocked + VWAP signals to scan_results for dashboard.
-    # vwap_signals: {ticker: {above_vwap, vwap, today_pct_change, rs_vs_spy}} — empty in simulation mode.
+    # Persist final enriched state to scan_results for dashboard.
+    # Re-save candidates list (now post-filter + VWAP-enriched) so Today tab shows live signals.
+    # vwap_signals: {ticker: signals} lookup for position card badges — empty in simulation mode.
     vwap_signals = {
         c["ticker"]: {k: c[k] for k in ("above_vwap", "vwap", "today_pct_change", "rs_vs_spy") if k in c}
         for c in candidates if "above_vwap" in c
@@ -213,6 +214,7 @@ def premarket(broker: str = "simulation"):
     db.update("scan_results", {"id": scan_row["id"]}, {
         "results": {
             **scan_row["results"],
+            "candidates":        candidates,
             "sector_blocked":    sector_blocked,
             "guardrail_blocked": guardrail_blocked,
             "vwap_signals":      vwap_signals,
