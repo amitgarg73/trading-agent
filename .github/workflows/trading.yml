@@ -4,7 +4,7 @@ on:
   schedule:
     # All times UTC (EDT = UTC-4)
     - cron: '45 13 * * 1-5'       # 9:45 AM ET — premarket (skip first 15 min of market)
-    - cron: '0,30 14-19 * * 1-5'  # Every 30 min 10:00-3:30 PM ET — intraday
+    - cron: '0,15,30,45 14-19 * * 1-5'  # Every 15 min 10:00-3:45 PM ET — intraday
     - cron: '30 20 * * 1-5'       # 4:30 PM ET — EOD
   workflow_dispatch:
     inputs:
