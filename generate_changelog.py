@@ -181,6 +181,33 @@ body(
     'Pass/warn/fail verdict by June 1 gate with ~8 trading days of data.'
 )
 
+divider()
+subheading('5. Pipeline Funnel Transparency — Today Tab')
+body(
+    'What: Orchestrator now stores pipeline_counts in scan_results after each filter step: '
+    'post_blackout (after earnings filter), post_prefilter + prefilter_dropped (after score ≥4 filter), '
+    'ml_scored (candidates with ML probability), live_price_updated (Alpaca price refreshes), '
+    'vwap_enriched + above_vwap (VWAP enrichment stats), final_count (what Claude actually saw). '
+    'Dashboard Today tab Step 1 replaced with a pipeline funnel expander showing each intermediate '
+    'count and a plain-English selection funnel (Universe → Passed scanner → Earnings clear → '
+    'Score filter → ML ranked → VWAP enriched → Sent to Claude). '
+    'Candidates table now includes ml_score column and is sorted in the exact order Claude received them. '
+    '"Passed to Strategy" metric renamed "Sent to Claude" with accurate help text.'
+)
+body(
+    'Why: The Today tab previously showed only three metrics (Candidates Found, Earnings Blocked, '
+    'Passed to Strategy) with help text claiming candidates went straight to Claude after earnings filter. '
+    'In reality four more filters run: score pre-filter at 1.75, ML ranking at 1.76, live prices at 1.8, '
+    'VWAP enrichment at 1.85. A user reading the dashboard had no visibility into why certain stocks '
+    'appeared or what order Claude saw them in — making the "why trades were selected" section '
+    'structurally incomplete.'
+)
+body(
+    'Impact: Complete audit trail from raw universe to Claude\'s exact input. '
+    'Works immediately with historical data for the non-pipeline fields; '
+    'pipeline_counts populates from the next live premarket run onward.'
+)
+
 add_table(
     ['Item', 'Status'],
     [
@@ -191,6 +218,7 @@ add_table(
         ('eval.py tailwind analysis section', '✅ Done'),
         ('eval.py VWAP signal quality section', '✅ Done'),
         ('Agent Scorecard tailwind + VWAP sections', '✅ Done'),
+        ('Pipeline funnel transparency in Today tab', '✅ Done'),
         ('VWAP signal quality validation (June 1 gate)', '⏳ ~8 trading days of data accumulating'),
         ('June 1 gate: python3 eval.py --days 14', '⏳ Gate date: 2026-06-01'),
     ]

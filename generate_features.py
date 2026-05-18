@@ -381,6 +381,14 @@ add_table(
          'Makes the trailing stop feature visible and verifiable; shipped v5.3',
          'XS', 'P1', 'SHIPPED'),
 
+        ('Pipeline funnel transparency — Today tab',
+         'Step 1 shows full selection funnel: Universe → Earnings filter → Score pre-filter → ML ranking → VWAP enrichment → Sent to Claude. '
+         'Orchestrator stores pipeline_counts per step in scan_results. Candidates table includes ml_score column, '
+         'sorted in the exact order Claude received them.',
+         'Today tab previously showed 3 metrics and described candidates going straight to Claude after earnings filter — '
+         'hiding 4 intermediate steps. Full audit trail now visible for every premarket run.',
+         'S', 'P1', 'SHIPPED v5.7'),
+
         ('Intraday price chart with entry/exit markers',
          'Show a 1-day candlestick chart per position with entry price, target, stop, and trail stop marked',
          'Visual context for each trade; immediately shows whether price is trending toward target or stalling',
