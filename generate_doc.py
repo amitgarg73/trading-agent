@@ -62,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.5  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.6  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -746,6 +746,14 @@ add_table(
         ('62', 'Built ML scorer (train_model.py + scanner/ml_scorer.py)', 'HistGradientBoostingClassifier (sklearn, no libomp dependency); trained on 2y price history for all 429 universe tickers; 13 features; AUC 0.78 ± 0.04 (5-fold TimeSeriesSplit); step 1.76 in orchestrator sorts candidates by P(hit +2%) before Claude call; pkl committed to repo (~2MB)'),
         ('63', 'Monthly ML retrain workflow (.github/workflows/retrain_model.yml)', 'GitHub Actions: triggers 1st of each month at 10 AM UTC; downloads 2y data, retrains model, commits updated xgb_scorer.pkl + feature_columns.json back to main; no manual step required; SUPABASE_URL/KEY via GitHub Secrets'),
         ('64', 'Updated docs and architecture to v5.5', 'Trading_Agent_Documentation.docx, Trading_Agent_PRD.docx, Trading_Agent_Features.docx regenerated; architecture diagrams (high-level + low-level) updated with full 13-step pipeline, ML feedback loop, cron-job.org triggers, interdependencies'),
+        ('65', 'Native Alpaca trailing stop (v5.6)', 'USE_NATIVE_TRAILING_STOP feature flag (True); submit_bracket_order() uses StopLossRequest(trail_percent=TRAIL_PCT*100); native_trail_active boolean per position; refresh_positions() skips manual trail check when active; dashboard fmt_stop() shows "Trail 1% ↑ (native)"'),
+        ('66', 'Exit mechanism tracking', 'exit_mechanism column added to positions (NATIVE_TRAIL, TARGET, MANUAL_TRAIL, STOP, EOD); all close paths in portfolio.py and alpaca_broker.get_order_fill() populate it; trailing_stop leg type distinguished from fixed stop leg'),
+        ('67', 'eval.py — VERDICT summary', 'Plain-language What\'s working / Watch / Action required section at top of eval output; synthesizes all metrics into a 10-second read with specific actionable calls'),
+        ('68', 'eval.py — annotated metrics', 'Inline ✅/⚠️/❌ flags with benchmark targets on every number; grade score broken into P&L (40pts) / win-day (30pts) / win-rate (30pts) components; exit reason distribution with healthy mix interpretation'),
+        ('69', 'eval.py — integrity checks', 'UNFILLED rate, orphaned open positions, duplicate ticker detection, missing exit_mechanism count, loss-limit day count, lock-in trigger count — all previously invisible'),
+        ('70', 'eval.py — Claude quality checks', 'R:R integrity per planned trade (guardrails don\'t enforce R:R — Claude can slip <3:1 trades); position size bounds check; confidence cohort table: HIGH/MEDIUM/LOW win rate, avg P&L, total P&L with signal on whether HIGH outperforms LOW'),
+        ('71', 'eval.py — trailing stop validation', 'Native vs manual cohort comparison; delta on win rate and avg P&L; explicit confirmation when NATIVE_TRAIL exits are clean with no double-sells; ⏳ flag when no stop exits yet'),
+        ('72', 'Updated docs and architecture to v5.6', 'All generate_*.py scripts updated; Trading_Agent_Changelog.docx created as living session-by-session record of what was built, why, and impact'),
     ]
 )
 
@@ -808,19 +816,18 @@ bullet('Rerun manually: GitHub Actions → Trading Agent → Run workflow → se
 
 # ── 15. What's Next ───────────────────────────────────────────────────────────
 heading('15. What\'s Next')
-body('The system is live and running at v5.5. All execution friction fixes and the ML scorer are deployed. Next steps:')
+body('The system is live and running at v5.6. Native trailing stop is enabled on paper. 2-week validation gate open (2026-05-18 → 2026-06-01). Next steps:')
 
 add_table(
     ['Phase', 'What', 'Priority'],
     [
-        ('Native trailing stop (OTO-OCO)', 'Replace 15-min polling with Alpaca native trail_percent — P0 before real money deployment; needs feature flag + unit tests + 2-week A/B paper test', 'P0 — pre-real-money'),
-        ('2-week paper validation', 'Validate all friction fixes live over 2 weeks; rerun backtest; target 6+/10 confidence before real capital', 'P0 — pre-real-money'),
-        ('V2e — Sector rotation scoring', 'Favor sectors showing relative strength this week; deprioritize lagging sectors', 'Next — feature sprint'),
-        ('V2f — Momentum confirmation', '15-minute rule: wait for confirmed breakout before entry; reduces false signals on gap-and-fade setups', 'Planned'),
-        ('Alerts', 'SMS/email on position close (target hit or stop triggered)', 'Planned'),
-        ('ML model live validation', 'Run paper trading for 30 days to verify AUC 0.78 translates to higher win rate vs baseline; compare ml_score-ranked vs unranked runs', 'Next'),
-        ('Post-earnings momentum agent', 'Scan for stocks 1–3 days post-positive earnings — momentum window before analyst upgrades', 'Real Edge backlog'),
-        ('Market regime classifier', 'Label trending vs ranging vs reversal days; adjust strategy per regime', 'Real Edge backlog'),
+        ('2-week paper validation gate', 'Run python3 eval.py --days 14 on June 1; confirm NATIVE_TRAIL exits firing correctly, win rate ≥80%, avg P&L ≥$500/day, no integrity flags', 'P0 — gate: 2026-06-01'),
+        ('Post-fix backtest', 'python3 backtest.py --days 30 --top 15; compare to $716/day pre-fix baseline', 'After June 1'),
+        ('Real money capital sizing', 'Decide capital amount; rescale POSITION_SIZE_BY_CONFIDENCE and DAILY_LOCK_IN_TARGET proportionally', 'After June 1'),
+        ('ML model live validation', 'Compare win rate vs baseline (no scorer) over 30 days paper; validate AUC 0.78 holds live', 'Next sprint'),
+        ('Post-earnings momentum agent', 'Scan for stocks 1–3 days post-positive earnings — momentum window before analyst upgrades', 'Backlog'),
+        ('Options flow signal', 'Unusual options activity as leading indicator for next-day momentum plays', 'Backlog'),
+        ('Insider buying (Form 4)', 'SEC Form 4 filings as conviction signal; weight Claude selection toward insider-bought tickers', 'Backlog'),
     ]
 )
 

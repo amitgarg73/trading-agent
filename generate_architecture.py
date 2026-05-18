@@ -67,7 +67,7 @@ def make_high_level():
     fig.patch.set_facecolor(WHITE)
 
     # ── Title ─────────────────────────────────────────────────────────────────
-    ax.text(8, 9.72, 'AI Trading Agent — High-Level Architecture  v5.5',
+    ax.text(8, 9.72, 'AI Trading Agent — High-Level Architecture  v5.6',
             ha='center', va='center', fontsize=16,
             color=NAVY, fontweight='bold')
 
@@ -255,7 +255,7 @@ def make_high_level():
         lx += 3.5
 
     # ── Footer ────────────────────────────────────────────────────────────────
-    ax.text(8, 0.35, 'AI Trading Agent v5.5  ·  Amit Garg  ·  May 2026',
+    ax.text(8, 0.35, 'AI Trading Agent v5.6  ·  Amit Garg  ·  May 2026',
             ha='center', va='center', fontsize=8, color=GRAY, style='italic')
 
     plt.tight_layout(pad=0.3)
@@ -267,7 +267,7 @@ def make_high_level():
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Diagram 2: Low-Level Pipeline  (11 × 24 inches, vertical)
-# Shows full v5.5 pipeline with all 13 steps + interdependencies
+# Shows full v5.6 pipeline with all 13 steps + interdependencies
 # ─────────────────────────────────────────────────────────────────────────────
 
 def make_low_level():
@@ -278,7 +278,7 @@ def make_low_level():
     fig.patch.set_facecolor(WHITE)
 
     # Title
-    ax.text(5.5, 23.65, 'AI Trading Agent — Detailed Pipeline (Low-Level)  v5.5',
+    ax.text(5.5, 23.65, 'AI Trading Agent — Detailed Pipeline (Low-Level)  v5.6',
             ha='center', va='center', fontsize=14,
             color=NAVY, fontweight='bold')
     ax.text(5.5, 23.3, 'Premarket → Intraday → EOD  ·  All 13 Steps + Feedback Loops',
@@ -385,7 +385,7 @@ def make_low_level():
     # ── Step 1.76 ─────────────────────────────────────────────────────────────
     s176 = s175 - step_total
     step_box(s176,
-             'Step 1.76 — ML Scorer  (SHIPPED v5.5)',
+             'Step 1.76 — ML Scorer  (SHIPPED v5.6)',
              'HistGradientBoostingClassifier: P(next-day high ≥ close × 1.02)  ·  AUC 0.78 ± 0.04 (5-fold CV)\n'
              '13 features: rsi · macd_hist · bb_pct · vol_ratio · atr_pct · dist_sma20 · dist_sma50 · mom1\n'
              '             mom5 · range_52w_pct · dow · vix · technical_score  ·  top feature: atr_pct (0.165)\n'
@@ -566,7 +566,7 @@ def make_low_level():
             ha='left', va='bottom', fontsize=7, color=GRAY, zorder=3)
 
     # ── Footer ────────────────────────────────────────────────────────────────
-    ax.text(5.5, 0.3, 'AI Trading Agent v5.5  ·  Amit Garg  ·  May 2026',
+    ax.text(5.5, 0.3, 'AI Trading Agent v5.6  ·  Amit Garg  ·  May 2026',
             ha='center', va='center', fontsize=8, color=GRAY, style='italic')
 
     plt.tight_layout(pad=0.4)

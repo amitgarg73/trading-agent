@@ -53,7 +53,7 @@ title = doc.add_heading('AI Product Requirements Doc', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = RGBColor(0x1A, 0x3A, 0x6A)
 
-sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.5')
+sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.6')
 sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.bold = True
@@ -260,7 +260,10 @@ add_table(
         ('Target 2%, stop 0.67% (3:1 R:R, 25% break-even)', 'High', 'High', '90%', 'XS', '9.0', 'P1 — shipped (v5.5)'),
         ('ML scorer step 1.76 (HistGradientBoosting, AUC 0.78)', 'High', 'High', '85%', 'M', '8.5', 'P1 — shipped (v5.5)'),
         ('Monthly ML retrain workflow (retrain_model.yml)', 'High', 'Med', '90%', 'S', '8.1', 'P1 — shipped (v5.5)'),
-        ('Native trailing stop (OTO-OCO)', 'High', 'High', '80%', 'L', '7.2', 'P0 — pre-real-money'),
+        ('Native Alpaca trailing stop (trail_percent bracket leg)', 'High', 'High', '95%', 'S', '9.5', 'P0 — shipped (v5.6)'),
+        ('Exit mechanism tracking (exit_mechanism per position)', 'High', 'Med', '99%', 'XS', '9.0', 'P1 — shipped (v5.6)'),
+        ('eval.py VERDICT + annotated metrics + integrity checks', 'High', 'Med', '99%', 'S', '9.0', 'P1 — shipped (v5.6)'),
+        ('eval.py confidence cohort + Claude quality checks', 'High', 'Med', '95%', 'XS', '9.0', 'P1 — shipped (v5.6)'),
         ('V2e: Sector rotation scoring', 'Med', 'Med', '75%', 'M', '6.8', 'P2 — next'),
         ('Alpaca paper trading API (V2g)', 'Med', 'High', '80%', 'L', '6.4', 'P0 — shipped (v4.0)'),
         ('SMS/email alerts', 'Med', 'Med', '90%', 'S', '8.1', 'P2 — next'),

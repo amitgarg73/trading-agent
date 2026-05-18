@@ -481,6 +481,17 @@ add_table(
     ['Priority', 'Feature', 'Edge Type', 'What', 'Why It Works', 'Effort', 'Status'],
     [
         ('0',
+         'Native Alpaca trailing stop (shipped v5.6)',
+         'Execution',
+         'StopLossRequest(trail_percent=TRAIL_PCT*100) in bracket order stop-loss leg; '
+         'USE_NATIVE_TRAILING_STOP feature flag; native_trail_active per position; '
+         'exit_mechanism column tracks NATIVE_TRAIL / TARGET / MANUAL_TRAIL / STOP / EOD; '
+         'eval.py validates cohort automatically',
+         'Alpaca tracks peak price in real-time and fires stop on reversal — no 15-min polling gap; '
+         'P0 blocker for real money removed; 2-week paper validation gate running (closes June 1)',
+         'S', 'SHIPPED'),
+
+        ('0',
          'ML candidate scorer (shipped v5.5)',
          'Analytical',
          'HistGradientBoosting model trained on 2y price history for 429 tickers; '
