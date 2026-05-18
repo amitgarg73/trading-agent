@@ -18,6 +18,7 @@ _SECRET  = os.getenv("ALPACA_SECRET_KEY", "")
 _PAPER   = os.getenv("ALPACA_PAPER", "true").lower() != "false"
 
 _trading_client = None
+_data_client    = None
 
 
 def _client():
@@ -26,6 +27,41 @@ def _client():
         from alpaca.trading.client import TradingClient
         _trading_client = TradingClient(_API_KEY, _SECRET, paper=_PAPER)
     return _trading_client
+
+
+def _dclient():
+    global _data_client
+    if _data_client is None:
+        from alpaca.data import StockHistoricalDataClient
+        _data_client = StockHistoricalDataClient(_API_KEY, _SECRET)
+    return _data_client
+
+
+def get_live_prices(tickers: list[str]) -> dict[str, float]:
+    """
+    Fetch real-time ask prices for a list of tickers via Alpaca market data.
+    Returns {ticker: ask_price} for tickers where data is available.
+    Uses ask price (what you pay to BUY) — more realistic than mid or yfinance close.
+    Falls back gracefully: missing tickers are simply absent from the result dict.
+    """
+    if not tickers:
+        return {}
+    try:
+        from alpaca.data.requests import StockLatestQuoteRequest
+        req    = StockLatestQuoteRequest(symbol_or_symbols=tickers)
+        quotes = _dclient().get_stock_latest_quote(req)
+        prices = {}
+        for ticker, quote in quotes.items():
+            ask = getattr(quote, "ask_price", None)
+            bid = getattr(quote, "bid_price", None)
+            if ask and float(ask) > 0:
+                prices[ticker] = round(float(ask), 4)
+            elif bid and float(bid) > 0:
+                prices[ticker] = round(float(bid), 4)
+        return prices
+    except Exception as e:
+        print(f"        ⚠️  Live price fetch failed: {e}")
+        return {}
 
 
 def submit_bracket_order(

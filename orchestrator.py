@@ -12,6 +12,7 @@ from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
 from config.settings import UNIVERSE, STRATEGY_MIN_SCORE
+from agents import alpaca_broker
 
 
 def load_universe() -> list:
@@ -112,6 +113,20 @@ def premarket(broker: str = "simulation"):
     if not candidates:
         print("        No candidates above strategy threshold. No trades today.")
         return
+
+    # 1.8 Live price refresh (Alpaca only) — replace stale yfinance prices with
+    # real-time ask prices so Claude sets entry prices on accurate data.
+    if broker == "alpaca":
+        tickers    = [c["ticker"] for c in candidates]
+        live       = alpaca_broker.get_live_prices(tickers)
+        updated    = 0
+        for c in candidates:
+            ask = live.get(c["ticker"])
+            if ask and abs(ask - c["current_price"]) / c["current_price"] < 0.10:
+                # Only update if within 10% of yfinance price — guards against bad data
+                c["current_price"] = ask
+                updated += 1
+        print(f"[ 1.8/4 ] Live price refresh: {updated}/{len(candidates)} tickers updated from Alpaca")
 
     # 2. Strategy
     print("[ 2/4 ] Running strategy agent...")
