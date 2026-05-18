@@ -46,9 +46,14 @@ jobs:
           else
             HOUR=$(date -u +%H)
             MIN=$(date -u +%M)
-            if [ "$HOUR" = "13" ] && [ "$MIN" = "00" ]; then
+            TIME=$((HOUR * 60 + MIN))
+            # Use windows, not exact minutes — GitHub scheduler can fire 5-15 min late
+            # Premarket window: 13:00-13:29 UTC (9:00-9:29 AM ET)
+            # EOD window:       20:30-23:59 UTC (4:30+ PM ET)
+            # Intraday:         everything else
+            if [ $TIME -ge 780 ] && [ $TIME -lt 810 ]; then
               echo "mode=premarket" >> $GITHUB_OUTPUT
-            elif [ "$HOUR" = "20" ] && [ "$MIN" = "30" ]; then
+            elif [ $TIME -ge 1230 ]; then
               echo "mode=eod" >> $GITHUB_OUTPUT
             else
               echo "mode=intraday" >> $GITHUB_OUTPUT
