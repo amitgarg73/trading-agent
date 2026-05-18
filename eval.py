@@ -224,10 +224,118 @@ def _flag(val, good, warn, higher=True):
         return "✅" if val <= good else "⚠️ " if val <= warn else "❌"
 
 
+def _print_summary(m: dict):
+    """Plain-language verdict at the top — 10-second read before diving into details."""
+    days  = m["days"]
+    grade = m["grade"]
+    score = m["score"]
+
+    grade_word = {"A": "strong", "B": "good", "C": "mixed", "D": "poor"}.get(grade, "")
+    print(f"\n{'='*60}")
+    print(f"  VERDICT — last {days} day{'s' if days != 1 else ''}  |  Grade {grade} ({score:.0f}/100)  |  {grade_word.upper()}")
+    print(f"{'='*60}")
+
+    wins   = []
+    watchs = []
+    actions = []
+
+    # P&L vs target
+    pnl_pct = m["avg_daily_pnl"] / DAILY_PROFIT_TARGET * 100 if DAILY_PROFIT_TARGET else 0
+    if m["avg_daily_pnl"] >= DAILY_PROFIT_TARGET:
+        wins.append(f"Avg daily P&L ${m['avg_daily_pnl']:,.0f} — on or above ${DAILY_PROFIT_TARGET:,} target")
+    elif pnl_pct >= 60:
+        watchs.append(f"Avg daily P&L ${m['avg_daily_pnl']:,.0f} is {pnl_pct:.0f}% of ${DAILY_PROFIT_TARGET:,} target — close but not there yet")
+    else:
+        actions.append(f"Avg daily P&L ${m['avg_daily_pnl']:,.0f} well below ${DAILY_PROFIT_TARGET:,} target ({pnl_pct:.0f}%) — review score threshold and universe")
+
+    # Win day rate
+    win_day_pct = m["win_days"] / days * 100 if days else 0
+    if win_day_pct >= 80:
+        wins.append(f"{m['win_days']}/{days} profitable days ({win_day_pct:.0f}%) — consistent daily execution")
+    elif win_day_pct >= 60:
+        watchs.append(f"{m['win_days']}/{days} profitable days ({win_day_pct:.0f}%) — more losing days than ideal")
+    else:
+        actions.append(f"Only {m['win_days']}/{days} profitable days — strategy inconsistency, review entry timing")
+
+    # Trade win rate
+    if m["avg_win_rate"] >= 60:
+        wins.append(f"{m['avg_win_rate']:.0f}% trade win rate — well above 25% break-even for 3:1 R:R")
+    elif m["avg_win_rate"] >= 50:
+        watchs.append(f"{m['avg_win_rate']:.0f}% trade win rate — above break-even but room to improve")
+    else:
+        watchs.append(f"{m['avg_win_rate']:.0f}% trade win rate — approaching break-even; tighten RSI or entry criteria")
+
+    # Actual R:R
+    if m["actual_rr"] >= 3.0:
+        wins.append(f"Reward:risk {m['actual_rr']:.1f}x — meeting 3:1 target; wins outpacing losses")
+    elif m["actual_rr"] >= 2.0:
+        watchs.append(f"Reward:risk {m['actual_rr']:.1f}x — below 3.0x target; losers running slightly large or winners cutting early")
+    else:
+        actions.append(f"Reward:risk {m['actual_rr']:.1f}x — significantly below target; stops may be too tight or targets too far")
+
+    # Exit mix
+    cr = m.get("close_reasons", {})
+    total_cr = sum(cr.values()) or 1
+    tgt_pct = cr.get("TARGET", 0) / total_cr * 100
+    if tgt_pct >= 50:
+        wins.append(f"{tgt_pct:.0f}% of exits hit target — momentum strategy executing as designed")
+    elif cr.get("STOP", 0) / total_cr > 0.5:
+        watchs.append(f"More stops than targets ({cr.get('STOP',0)} vs {cr.get('TARGET',0)}) — entries may be too late in the move")
+
+    # Confidence cohort
+    cs = m.get("confidence_stats", {})
+    high, low = cs.get("HIGH"), cs.get("LOW")
+    if high and low:
+        if high["avg_pnl"] > low["avg_pnl"]:
+            wins.append(f"HIGH confidence trades earning ${high['avg_pnl']:,.0f} avg vs ${low['avg_pnl']:,.0f} for LOW — sizing justified")
+        else:
+            watchs.append(f"LOW confidence trades outperforming HIGH (${low['avg_pnl']:,.0f} vs ${high['avg_pnl']:,.0f}) — confidence signal unreliable")
+
+    # Trailing stop validation
+    native = m.get("native_trail")
+    if native:
+        nt_exits = native.get("exits", {}).get("NATIVE_TRAIL", 0)
+        if nt_exits > 0:
+            wins.append(f"Native trailing stop confirmed — {nt_exits} clean exits, no double-sells")
+        else:
+            watchs.append("Native trailing stop enabled but no stop exits yet — need a reversal day to validate")
+
+    # Integrity flags
+    orphaned = m.get("orphaned", [])
+    if orphaned:
+        actions.append(f"{len(orphaned)} orphaned position(s) stuck OPEN from a prior day — manual review required")
+    if m.get("rr_violations"):
+        actions.append(f"{len(m['rr_violations'])} trade(s) submitted below {MIN_REWARD_RISK}x R:R — Claude constraint drift")
+    if m.get("duplicate_count", 0) > 0:
+        actions.append(f"{m['duplicate_count']} duplicate ticker(s) same day — guardrail may have failed")
+    unfill_pct = m.get("unfilled_count", 0) / m.get("total_attempted", 1) * 100
+    if unfill_pct >= 15:
+        actions.append(f"{unfill_pct:.0f}% unfilled rate — limit entry price too tight, orders not filling")
+    elif unfill_pct >= 5:
+        watchs.append(f"{unfill_pct:.0f}% unfilled rate — monitor; acceptable now but rising trend is a problem")
+
+    if wins:
+        print(f"\n  What's working:")
+        for w in wins:
+            print(f"    ✅ {w}")
+    if watchs:
+        print(f"\n  Watch:")
+        for w in watchs:
+            print(f"    ⚠️  {w}")
+    if actions:
+        print(f"\n  Action required:")
+        for a in actions:
+            print(f"    ❌ {a}")
+    if not actions:
+        print(f"\n  No action required — keep monitoring.")
+    print()
+
+
 def _print_metrics(m: dict):
     days = m["days"]
+    _print_summary(m)
     print(f"\n{'='*60}")
-    print(f"  TRADING AGENT EVAL — last {days} trading day{'s' if days != 1 else ''}")
+    print(f"  DETAIL — last {days} trading day{'s' if days != 1 else ''}")
     print(f"{'='*60}\n")
 
     win_day_pct = m["win_days"] / days * 100 if days else 0
