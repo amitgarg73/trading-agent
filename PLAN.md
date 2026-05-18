@@ -156,11 +156,11 @@ Before deploying any real capital, complete ALL of the following:
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | Native Alpaca trailing stop (OTO-OCO) | ⬜ TODO — P0 |
-| 2 | 2-week paper trading validation (all friction fixes live) | ⬜ TODO |
-| 3 | Backtest rerun post-fixes | ⬜ TODO |
-| 4 | Real money confidence assessment (target: 7/10 minimum) | ⬜ TODO |
-| 5 | DAILY_LOCK_IN_TARGET review for real capital | ⬜ TODO |
+| 1 | Native Alpaca trailing stop (OTO-OCO) | ✅ DONE — USE_NATIVE_TRAILING_STOP=True as of 2026-05-18 |
+| 2 | 2-week paper trading validation (all friction fixes live) | 🔄 IN PROGRESS — started 2026-05-18, gate: 2026-06-01 |
+| 3 | Backtest rerun post-fixes | ⬜ TODO — run after 2-week gate |
+| 4 | Real money confidence assessment (target: 7/10 minimum) | 🔄 IN PROGRESS — current: 5/10, target: 7/10 after validation |
+| 5 | DAILY_LOCK_IN_TARGET review for real capital | ⬜ TODO — after capital amount decided |
 
 **Native trailing stop is P0 for real money** — 15-min polling is acceptable on paper,
 unacceptable on real capital where a fast reversal can cost hundreds of dollars.
