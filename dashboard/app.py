@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 from datetime import date, datetime
 from core import db
-from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT, MIN_REWARD_RISK
+from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT, LOCK_IN_TRAIL_PCT, MIN_REWARD_RISK, DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET
 from config.company_names import COMPANY_NAMES
 
 _ETF_SET = set(ETF_UNIVERSE)
@@ -78,14 +78,18 @@ def fmt_pnl(val):
 def pnl_color(val):
     return "green" if val > 0 else "red" if val < 0 else "gray"
 
-def fmt_stop(pos):
-    """Show trailing stop level when it has ratcheted above the original stop; else show original."""
+def fmt_stop(pos, tight=False):
+    """Show trailing stop level. In tailwind mode (tight=True), reflects tighter 0.5% trail."""
+    trail = LOCK_IN_TRAIL_PCT if tight else TRAIL_PCT
     if pos.get("native_trail_active"):
+        if tight:
+            return f"Trail **{LOCK_IN_TRAIL_PCT*100:.1f}%** ↑ (native · tailwind)"
         return f"Trail **{TRAIL_PCT*100:.0f}%** ↑ (native)"
     hw       = float(pos.get("high_watermark") or pos.get("entry_price", 0))
-    eff_stop = max(pos["stop_loss"], round(hw * (1 - TRAIL_PCT), 4))
+    eff_stop = max(pos["stop_loss"], round(hw * (1 - trail), 4))
     if eff_stop > pos["stop_loss"]:
-        return f"Trail **${eff_stop:.2f}** ↑"
+        label = "Tight Trail" if tight else "Trail"
+        return f"**{label}** ${eff_stop:.2f} ↑"
     return f"Stop ${pos['stop_loss']:.2f}"
 
 
@@ -129,6 +133,14 @@ if page == "Summary":
     pct_return = total_pnl / TOTAL_CAPITAL * 100
     anticipated = plan["total_estimated_profit"] if plan else 0
     coverage    = anticipated / DAILY_PROFIT_TARGET * 100 if anticipated else 0
+
+    # Tiered lock-in state for display
+    realized_ex_lockin = sum(
+        p.get("realized_pnl", 0) or 0 for p in run_closed
+        if p.get("close_reason") not in ("LOCK_IN",)
+    )
+    in_tailwind   = realized_ex_lockin >= DAILY_LOCK_IN_TARGET and total_pnl < DAILY_BONUS_TARGET and bool(open_pos)
+    exceptional_day = total_pnl >= DAILY_BONUS_TARGET
 
     # ── Header ────────────────────────────────────────────────────
     h1, h2 = st.columns([4, 1])
@@ -179,6 +191,21 @@ if page == "Summary":
               delta_color="off")
     t4.metric("Total Trades",   len(trades), help="Trades selected by Claude today")
 
+    # ── Tiered lock-in banner ─────────────────────────────────────
+    if exceptional_day:
+        st.success(
+            f"🏆 **Exceptional day locked** — Total P&L **{fmt_pnl(total_pnl)}** hit the "
+            f"${DAILY_BONUS_TARGET:,} ceiling. All positions closed and gains protected."
+        )
+    elif in_tailwind:
+        progress = max(0.0, min(1.0, (total_pnl - DAILY_LOCK_IN_TARGET) / (DAILY_BONUS_TARGET - DAILY_LOCK_IN_TARGET)))
+        st.info(
+            f"🚀 **Tailwind Mode** — **{fmt_pnl(realized_ex_lockin)}** realized and secured. "
+            f"{len(open_pos)} position(s) riding to **${DAILY_BONUS_TARGET:,}** with tight "
+            f"{LOCK_IN_TRAIL_PCT*100:.1f}% trail."
+        )
+        st.progress(progress, text=f"Total {fmt_pnl(total_pnl)}  →  ${DAILY_BONUS_TARGET:,} ceiling")
+
     # Build position lookup (planned_trade_id → position)
     pos_by_trade = {p["planned_trade_id"]: p for p in open_pos + run_closed}
 
@@ -188,6 +215,8 @@ if page == "Summary":
         if not pos:
             return "⏳ Pending", 0
         if pos["status"] == "OPEN":
+            if in_tailwind:
+                return "🚀 Riding Tailwind", pos.get("unrealized_pnl", 0) or 0
             return "🟢 In Flight", pos.get("unrealized_pnl", 0) or 0
         reason = (pos.get("close_reason") or "Closed").upper()
         pnl = pos.get("realized_pnl", 0) or 0
@@ -203,18 +232,24 @@ if page == "Summary":
     st.divider()
 
     # ── In Flight ─────────────────────────────────────────────────
-    st.subheader(f"🟢 In Flight — {len(open_pos)} position{'s' if len(open_pos) != 1 else ''}")
+    section_header = "🚀 Riding Tailwind" if in_tailwind else ("🏆 Exceptional Day" if exceptional_day else "🟢 In Flight")
+    st.subheader(f"{section_header} — {len(open_pos)} position{'s' if len(open_pos) != 1 else ''}")
     if open_pos:
+        tail_badge = (
+            "<span style='background:#1e8449;color:white;padding:2px 8px;"
+            "border-radius:4px;font-size:11px;margin-left:6px'>🚀 tailwind</span>"
+            if in_tailwind else ""
+        )
         for pos in open_pos:
             pnl  = pos.get("unrealized_pnl", 0) or 0
             icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
             name = COMPANY_NAMES.get(pos["ticker"], "")
             label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 2])
-            c1.markdown(f"**{icon} {label}**")
+            c1.markdown(f"**{icon} {label}**{tail_badge}", unsafe_allow_html=True)
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Now: **${pos.get('current_price', 0):.2f}**")
-            c4.markdown(f"Target ${pos['target_price']:.2f}  ·  {fmt_stop(pos)}")
+            c4.markdown(f"Target ${pos['target_price']:.2f}  ·  {fmt_stop(pos, tight=in_tailwind)}")
             c5.markdown(
                 f"<span style='color:{pnl_color(pnl)};font-weight:bold;font-size:16px'>{fmt_pnl(pnl)}</span>",
                 unsafe_allow_html=True
@@ -571,6 +606,25 @@ elif page == "Today":
     total_realized   = sum(p.get("realized_pnl",   0) for p in run_closed)
     closed_label     = "Closed Today" if not is_stale else f"Closed {run_date}"
 
+    # Tailwind state for Today tab
+    _realized_ex = sum(
+        p.get("realized_pnl", 0) or 0 for p in run_closed
+        if p.get("close_reason") not in ("LOCK_IN",)
+    )
+    _total = total_realized + total_unrealized
+    _in_tailwind    = _realized_ex >= DAILY_LOCK_IN_TARGET and _total < DAILY_BONUS_TARGET and bool(open_pos)
+    _exceptional    = _total >= DAILY_BONUS_TARGET
+
+    if _exceptional:
+        st.success(f"🏆 **Exceptional day locked** — Total P&L **{fmt_pnl(_total)}** hit ${DAILY_BONUS_TARGET:,} ceiling.")
+    elif _in_tailwind:
+        _progress = max(0.0, min(1.0, (_total - DAILY_LOCK_IN_TARGET) / (DAILY_BONUS_TARGET - DAILY_LOCK_IN_TARGET)))
+        st.info(
+            f"🚀 **Tailwind Mode** — **{fmt_pnl(_realized_ex)}** secured. "
+            f"{len(open_pos)} position(s) riding to **${DAILY_BONUS_TARGET:,}** with {LOCK_IN_TRAIL_PCT*100:.1f}% trail."
+        )
+        st.progress(_progress, text=f"Total {fmt_pnl(_total)}  →  ${DAILY_BONUS_TARGET:,} ceiling")
+
     lp1, lp2, lp3, lp4 = st.columns(4)
     lp1.metric("Open Positions", len(open_pos),
                help="Positions currently active. Intraday agent checks prices every 30 min and closes on +3% target or -1% stop loss.")
@@ -582,17 +636,23 @@ elif page == "Today":
                help="Actual locked-in profit/loss from positions closed today. This is the real score for the day so far.")
 
     if open_pos:
-        st.markdown("**Open**")
+        open_header = "**🚀 Riding Tailwind**" if _in_tailwind else "**Open**"
+        st.markdown(open_header)
+        _tail_badge = (
+            "<span style='background:#1e8449;color:white;padding:2px 8px;"
+            "border-radius:4px;font-size:11px;margin-left:6px'>🚀 tailwind</span>"
+            if _in_tailwind else ""
+        )
         for pos in open_pos:
             pnl  = pos.get("unrealized_pnl", 0)
             icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 2])
             name = COMPANY_NAMES.get(pos["ticker"], "")
             label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
-            c1.markdown(f"**{icon} {label}** `{pos['action']}`")
+            c1.markdown(f"**{icon} {label}** `{pos['action']}`{_tail_badge}", unsafe_allow_html=True)
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
-            c4.markdown(f"Target: ${pos['target_price']:.2f} | {fmt_stop(pos)}")
+            c4.markdown(f"Target: ${pos['target_price']:.2f} | {fmt_stop(pos, tight=_in_tailwind)}")
             c5.markdown(
                 f"<span style='color:{pnl_color(pnl)};font-weight:bold'>{fmt_pnl(pnl)}</span>",
                 unsafe_allow_html=True
