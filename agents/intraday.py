@@ -2,9 +2,10 @@
 Intraday Agent: refreshes positions every 30 min, logs updates to DB.
 Runs via GitHub Actions schedule during market hours.
 """
-from datetime import datetime
-from agents.portfolio import refresh_positions
+from datetime import date, datetime
+from agents.portfolio import refresh_positions, close_all_positions
 from core import db
+from config.settings import DAILY_LOCK_IN_TARGET
 
 
 def _reconcile_with_alpaca():
@@ -30,6 +31,17 @@ def _reconcile_with_alpaca():
             })
 
 
+def _today_realized_pnl() -> float:
+    today = date.today().isoformat()
+    closed = db.select("positions", filters={"status": "CLOSED"})
+    return sum(
+        p.get("realized_pnl", 0) or 0
+        for p in closed
+        if (p.get("closed_at") or "").startswith(today)
+        and p.get("close_reason") not in ("CLEANUP", "UNFILLED", "LOCK_IN")
+    )
+
+
 def run(broker: str = "simulation") -> dict:
     now = datetime.utcnow().isoformat()
 
@@ -37,6 +49,17 @@ def run(broker: str = "simulation") -> dict:
         _reconcile_with_alpaca()
 
     updated = refresh_positions(broker=broker)
+
+    # Check lock-in: if realized P&L already hit the daily target, close everything
+    realized = _today_realized_pnl()
+    if realized >= DAILY_LOCK_IN_TARGET:
+        open_pos = db.select("positions", filters={"status": "OPEN"})
+        if open_pos:
+            print(f"\n  🎯 LOCK-IN: Realized P&L ${realized:,.2f} ≥ ${DAILY_LOCK_IN_TARGET:,.0f} target")
+            print(f"     Closing {len(open_pos)} remaining position(s) and locking in gains.\n")
+            close_all_positions(reason="LOCK_IN", broker=broker)
+        else:
+            print(f"  🎯 Daily target locked in (${realized:,.2f}) — no open positions remaining.")
 
     open_pos    = [p for p in updated if not p.get("close_reason")]
     just_closed = [p for p in updated if p.get("close_reason")]

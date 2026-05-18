@@ -182,9 +182,10 @@ if page == "Summary":
         reason = (pos.get("close_reason") or "Closed").upper()
         pnl = pos.get("realized_pnl", 0) or 0
         label_map = {
-            "TARGET": "✅ Target Hit",
-            "STOP":   "🔴 Stop Hit",
-            "EOD":    "⏰ EOD Close",
+            "TARGET":  "✅ Target Hit",
+            "STOP":    "🔴 Stop Hit",
+            "EOD":     "⏰ EOD Close",
+            "LOCK_IN": "🎯 Day Locked",
         }
         return label_map.get(reason, f"⚪ {reason.title()}"), pnl
 

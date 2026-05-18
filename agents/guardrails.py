@@ -14,7 +14,7 @@ from __future__ import annotations
 import yfinance as yf
 from datetime import date
 from core import db
-from config.settings import DAILY_LOSS_LIMIT, PRICE_SANITY_PCT
+from config.settings import DAILY_LOSS_LIMIT, PRICE_SANITY_PCT, TOTAL_CAPITAL
 
 
 def _current_price(ticker: str) -> float | None:
@@ -58,14 +58,18 @@ def filter_trades(approved_trades: list, broker: str = "simulation",
             ],
         }
 
-    # Check 2: Alpaca buying power (fetch once — None if simulation)
-    buying_power = None
+    # Check 2: Available capital (fetch once)
+    # Alpaca: use live buying_power. Simulation: use TOTAL_CAPITAL as ceiling.
     if broker == "alpaca":
         try:
             from agents import alpaca_broker
             buying_power = alpaca_broker.get_buying_power()
         except Exception:
-            pass
+            buying_power = None
+    else:
+        buying_power = float(TOTAL_CAPITAL)
+
+    committed_capital = 0.0  # cumulative position sizes approved in this batch
 
     # Check 3: Build open-ticker set (open positions + already traded today)
     today_str = date.today().isoformat()
@@ -103,12 +107,14 @@ def filter_trades(approved_trades: list, broker: str = "simulation",
                         f"from market ${market_price:.2f} (max {PRICE_SANITY_PCT*100:.0f}%)"
                     )
 
-        # Capital check (Alpaca only, only if other checks passed)
-        if reason is None and broker == "alpaca" and buying_power is not None:
-            if trade["position_size"] > buying_power:
+        # Capital check — cumulative across this batch (no margin, no over-deployment)
+        if reason is None and buying_power is not None:
+            remaining = buying_power - committed_capital
+            if trade["position_size"] > remaining:
                 reason = (
-                    f"Insufficient capital: need ${trade['position_size']:,} "
-                    f"but only ${buying_power:,.0f} buying power available"
+                    f"Insufficient capital: ${committed_capital:,.0f} already committed, "
+                    f"need ${trade['position_size']:,.0f} but only ${remaining:,.0f} remaining "
+                    f"of ${buying_power:,.0f} available"
                 )
 
         if reason:
@@ -116,5 +122,6 @@ def filter_trades(approved_trades: list, broker: str = "simulation",
             print(f"        🛑 {ticker}: {reason}")
         else:
             passed.append(trade)
+            committed_capital += trade.get("position_size", 0)
 
     return {"approved_trades": passed, "guardrail_blocked": blocked}
