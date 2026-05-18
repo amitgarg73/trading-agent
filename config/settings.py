@@ -37,7 +37,29 @@ RSI_OVERBOUGHT       = 65
 MIN_VOLUME_RATIO     = 1.5        # vs 20-day avg
 MIN_PRICE            = 5.0
 MIN_AVG_VOLUME       = 500_000    # liquidity floor
-SCORE_THRESHOLD      = 3          # minimum score to be a candidate
+SCORE_THRESHOLD      = 3          # minimum score to be a scanner candidate (absolute value)
+
+# Strategy pre-filter — applied in orchestrator BEFORE the Claude API call.
+#
+# WHY THIS EXISTS:
+#   The scanner uses SCORE_THRESHOLD=3 (absolute value) and passes 100-200+ candidates
+#   per day — both bullish (+) and bearish (-). The strategy agent only selects BUY trades,
+#   so bearish candidates are tokens Claude reads but never acts on. Weak bullish candidates
+#   (score 3-4) are almost never selected either. Filtering here shrinks the candidates JSON
+#   from ~20K tokens to ~3-5K tokens, cutting Claude API input cost by 60-70%.
+#
+# TRADEOFF TO REVISIT:
+#   A score-4 ticker with one unusual signal combo (e.g., extreme RSI + volume spike on
+#   a low-liquidity day) might get filtered out even if it would have been Claude's pick.
+#   If you notice good setups getting missed, lower this to 4. If you want to cut costs
+#   further, raise to 6 (top-tier signals only).
+#
+#   Score reference: 3 = scanner floor | 4-5 = moderate signal | 6-7 = strong | 8-10 = rare
+#   Typical daily distribution: ~150 candidates at score≥3, ~50 at score≥5, ~20 at score≥7
+#
+# NOTE: This filters to score >= STRATEGY_MIN_SCORE (positive), not abs(score).
+#   Bearish candidates (negative scores) are always excluded — correct for a BUY-only system.
+STRATEGY_MIN_SCORE   = 5          # pre-filter before Claude call: only bullish candidates with score ≥ this
 
 # Stock + ETF universe
 # Removed drags: PYPL, META, ARKK, IWM, JPM, IBM, MA, ROOT, PSA, TWLO

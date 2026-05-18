@@ -11,7 +11,7 @@ from agents import strategy, risk, sector_guard, guardrails, performance, market
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
-from config.settings import UNIVERSE
+from config.settings import UNIVERSE, STRATEGY_MIN_SCORE
 
 
 def load_universe() -> list:
@@ -98,6 +98,19 @@ def premarket(broker: str = "simulation"):
 
     if not candidates:
         print("        All candidates blocked (earnings). No trades today.")
+        return
+
+    # 1.75 Strategy pre-filter — trim to bullish candidates above STRATEGY_MIN_SCORE.
+    # Reduces Claude input tokens by ~60-70% without meaningful loss of trade quality.
+    # See config/settings.py STRATEGY_MIN_SCORE for full tradeoff documentation.
+    pre_filter_count = len(candidates)
+    candidates = [c for c in candidates if c.get("technical_score", 0) >= STRATEGY_MIN_SCORE]
+    if len(candidates) < pre_filter_count:
+        print(f"[ 1.75/4 ] Strategy pre-filter: {pre_filter_count} → {len(candidates)} candidates "
+              f"(score ≥ {STRATEGY_MIN_SCORE})")
+
+    if not candidates:
+        print("        No candidates above strategy threshold. No trades today.")
         return
 
     # 2. Strategy
