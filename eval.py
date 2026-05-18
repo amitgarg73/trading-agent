@@ -117,11 +117,22 @@ def _compute_metrics(days: int) -> dict | None:
         "best_pnl":       round(best["realized_pnl"]  or 0, 2) if best  else 0,
         "worst_ticker":   worst["ticker"] if worst else None,
         "worst_pnl":      round(worst["realized_pnl"] or 0, 2) if worst else 0,
-        "close_reasons":  close_reasons,
+        "close_reasons":   close_reasons,
         "recommendations": recs,
-        "native_trail":   _cohort_stats(native),
-        "manual_trail":   _cohort_stats(manual),
+        "native_trail":    _cohort_stats(native),
+        "manual_trail":    _cohort_stats(manual),
+        "pnl_score":       round(pnl_score, 1),
+        "winday_score":    round(winday_score, 1),
+        "winrate_score":   round(winrate_score, 1),
     }
+
+
+def _flag(val, good, warn, higher=True):
+    """Return ✅/⚠️/❌ based on thresholds."""
+    if higher:
+        return "✅" if val >= good else "⚠️ " if val >= warn else "❌"
+    else:
+        return "✅" if val <= good else "⚠️ " if val <= warn else "❌"
 
 
 def _print_metrics(m: dict):
@@ -130,64 +141,96 @@ def _print_metrics(m: dict):
     print(f"  TRADING AGENT EVAL — last {days} trading day{'s' if days != 1 else ''}")
     print(f"{'='*60}\n")
 
+    win_day_pct = m["win_days"] / days * 100 if days else 0
+
     print("[ PERFORMANCE SUMMARY ]")
     print(f"  Days evaluated:       {days}")
     print(f"  Total P&L:            ${m['total_pnl']:,.2f}")
-    print(f"  Avg daily P&L:        ${m['avg_daily_pnl']:,.2f}  (target: ${DAILY_PROFIT_TARGET:,})")
-    print(f"  Win days / Loss days: {m['win_days']} / {m['loss_days']}")
-    print(f"  Days hitting target:  {m['target_days']} / {days}")
-    print(f"  Avg trade win rate:   {m['avg_win_rate']:.1f}%")
+    print(f"  Avg daily P&L:        ${m['avg_daily_pnl']:,.2f}  {_flag(m['avg_daily_pnl'], DAILY_PROFIT_TARGET, DAILY_PROFIT_TARGET*0.5)}"
+          f"  (target: ${DAILY_PROFIT_TARGET:,})")
+    print(f"  Win days / Loss days: {m['win_days']} / {m['loss_days']}  {_flag(win_day_pct, 80, 60)}"
+          f"  ({win_day_pct:.0f}% — target: ≥80%)")
+    print(f"  Days hitting target:  {m['target_days']} / {days}"
+          f"  ({m['target_days']/days*100:.0f}% of days cleared ${DAILY_PROFIT_TARGET:,})")
+    print(f"  Avg trade win rate:   {m['avg_win_rate']:.1f}%  {_flag(m['avg_win_rate'], 60, 50)}"
+          f"  (target: ≥60%; break-even at 3:1 R:R is just 25%)")
     print(f"  Portfolio value:      ${m['latest_capital']:,.0f}")
-    print(f"  Total return:         {m['total_return']:+.2f}%")
-    print(f"  Annualized return:    {m['ann_return']:+.1f}%")
+    print(f"  Total return:         {m['total_return']:+.2f}%  {_flag(m['total_return'], 1.0, 0, higher=True)}")
+    print(f"  Annualized return:    {m['ann_return']:+.1f}%  {_flag(m['ann_return'], 50, 20)}"
+          f"  (>50% = exceptional; >20% = strong for intraday)")
 
     print(f"\n[ GRADE ]")
-    print(f"  Score: {m['score']:.0f}/100")
+    print(f"  Score: {m['score']:.0f}/100  →  Grade: {m['grade']}")
     grade_desc = {
-        "A": "Excellent. Strategy is working.",
-        "B": "Good. Minor tuning may improve results.",
-        "C": "Mediocre. Review thresholds and universe.",
-        "D": "Poor. Strategy needs significant rework.",
+        "A": "Excellent — strategy is working, consider scaling up.",
+        "B": "Good — minor tuning may improve results.",
+        "C": "Mediocre — review score thresholds and stock universe.",
+        "D": "Poor — strategy needs significant rework.",
     }
-    print(f"  Grade: {m['grade']} — {grade_desc.get(m['grade'], '')}")
+    print(f"  {grade_desc.get(m['grade'], '')}")
+    print(f"  Score breakdown:")
+    print(f"    P&L vs target:  {m['pnl_score']:.1f}/40 pts  (avg daily P&L / ${DAILY_PROFIT_TARGET:,} target × 40)")
+    print(f"    Win day rate:   {m['winday_score']:.1f}/30 pts  (win days / total days × 30)")
+    print(f"    Trade win rate: {m['winrate_score']:.1f}/30 pts  (avg trade win rate × 30)")
 
     if m["total_trades"]:
+        total = m["total_trades"]
+        win_pct = m["winners"] / total * 100 if total else 0
         print(f"\n[ TRADE BREAKDOWN ]")
-        print(f"  Total closed trades:  {m['total_trades']}")
-        print(f"  Winners:              {m['winners']} (avg +${m['avg_win']:,.2f})")
-        print(f"  Losers:               {m['losers']} (avg ${m['avg_loss']:,.2f})")
-        print(f"  Actual reward:risk:   {m['actual_rr']:.2f}x  (target: 3.0x)")
+        print(f"  Total closed trades:  {total}")
+        print(f"  Winners / Losers:     {m['winners']} / {m['losers']}  ({win_pct:.0f}% win rate per trade)")
+        print(f"    Avg winner:  +${m['avg_win']:,.2f}  |  Avg loser: ${m['avg_loss']:,.2f}")
+        print(f"  Actual reward:risk:   {m['actual_rr']:.2f}x  {_flag(m['actual_rr'], 3.0, 2.0)}"
+              f"  (target: 3.0x — avg win / avg loss; below 2.0x means stops too tight or targets too far)")
         if m["best_ticker"]:
             print(f"  Best trade:           {m['best_ticker']}  +${m['best_pnl']:,.2f}")
         if m["worst_ticker"]:
             print(f"  Worst trade:          {m['worst_ticker']}  ${m['worst_pnl']:,.2f}")
+
         if m["close_reasons"]:
-            print(f"\n  Close reasons:")
-            for reason, count in sorted(m["close_reasons"].items(), key=lambda x: -x[1]):
-                print(f"    {reason:12s}: {count}")
+            cr    = m["close_reasons"]
+            total_cr = sum(cr.values())
+            tgt_pct  = cr.get("TARGET", 0) / total_cr * 100 if total_cr else 0
+            stop_pct = cr.get("STOP",   0) / total_cr * 100 if total_cr else 0
+            eod_pct  = cr.get("EOD",    0) / total_cr * 100 if total_cr else 0
+            print(f"\n  Exit reasons:  (healthy mix: TARGET >50%, STOP <35%, EOD <20%)")
+            for reason, count in sorted(cr.items(), key=lambda x: -x[1]):
+                pct = count / total_cr * 100
+                print(f"    {reason:14s}: {count:3d}  ({pct:.0f}%)")
+            if tgt_pct >= 50:
+                print(f"  ✅ TARGET-led exits — momentum strategy executing as designed")
+            if stop_pct > 50:
+                print(f"  ⚠️  STOP-heavy — entries may be too late or targets too ambitious")
+            if eod_pct > 25:
+                print(f"  ⚠️  High EOD exits — positions not resolving intraday; consider tighter targets")
 
     native = m.get("native_trail")
     manual = m.get("manual_trail")
     if native or manual:
         print(f"\n[ TRAILING STOP VALIDATION ]")
+        print(f"  Comparing native Alpaca trail (real-time) vs manual high_watermark check (every 15 min).")
+        print(f"  Goal: confirm native trail fires correctly and improves or matches manual exit quality.\n")
         for label, cohort in [("Native trail (Alpaca)", native), ("Manual trail (high_watermark)", manual)]:
             if not cohort:
                 continue
             print(f"  {label}:")
             print(f"    Trades:    {cohort['count']}")
-            print(f"    Win rate:  {cohort['win_rate']:.1f}%")
-            print(f"    Avg P&L:   ${cohort['avg_pnl']:,.2f}")
+            print(f"    Win rate:  {cohort['win_rate']:.1f}%  {_flag(cohort['win_rate'], 60, 50)}")
+            print(f"    Avg P&L:   ${cohort['avg_pnl']:,.2f}  per trade")
             if cohort["exits"]:
                 exits_str = "  |  ".join(f"{k}: {v}" for k, v in sorted(cohort["exits"].items()))
                 print(f"    Exits:     {exits_str}")
         if native and manual:
             pnl_delta = native["avg_pnl"] - manual["avg_pnl"]
             wr_delta  = native["win_rate"] - manual["win_rate"]
-            print(f"  Native vs manual:  avg P&L {pnl_delta:+.2f}  |  win rate {wr_delta:+.1f}%")
+            print(f"\n  Native vs manual delta:")
+            print(f"    Avg P&L:   {pnl_delta:+.2f}  {'✅ native better' if pnl_delta > 0 else '⚠️  manual better'}")
+            print(f"    Win rate:  {wr_delta:+.1f}%  {'✅ native better' if wr_delta > 0 else '⚠️  manual better'}")
+        if native:
             if native.get("exits", {}).get("NATIVE_TRAIL", 0) > 0:
-                print(f"  ✅ Native trail exits confirmed — no double-sell issues detected")
+                print(f"  ✅ Native trail exits confirmed — Alpaca trailing stop leg firing correctly")
             else:
-                print(f"  ⏳ No native trail exits yet — waiting for stop to fire")
+                print(f"  ⏳ No NATIVE_TRAIL exits yet — stop hasn't fired; need a reversal day to validate")
 
     print(f"\n[ RECOMMENDATIONS ]")
     for rec in m["recommendations"]:
