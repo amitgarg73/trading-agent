@@ -89,6 +89,62 @@ def _tailwind_analysis(all_closed_in_window: list, eval_dates: set, perf_rows: l
     }
 
 
+def _vwap_signal_analysis(positions: list, eval_dates: set) -> dict | None:
+    """
+    Validate Thread 1: do above-VWAP + high-RS entries actually produce better outcomes?
+    Loads vwap_signals from each day's premarket scan_result and cross-references with
+    closed positions. Returns cohort stats for above/below VWAP and high/low RS.
+    Returns None if no VWAP data exists (simulation runs or pre-Thread-1 history).
+    """
+    all_scans    = db.select("scan_results", filters={"scan_type": "premarket"})
+    vwap_by_date = {
+        s["date"]: s["results"].get("vwap_signals", {})
+        for s in all_scans
+        if s["date"] in eval_dates and s.get("results", {}).get("vwap_signals")
+    }
+    if not vwap_by_date:
+        return None
+
+    above_pnls, below_pnls, high_rs_pnls, low_rs_pnls = [], [], [], []
+    matched = 0
+    for pos in positions:
+        day    = (pos.get("closed_at") or "")[:10]
+        ticker = pos["ticker"]
+        sig    = vwap_by_date.get(day, {}).get(ticker)
+        if not sig:
+            continue
+        matched += 1
+        pnl = float(pos.get("realized_pnl") or 0)
+        (above_pnls if sig.get("above_vwap") else below_pnls).append(pnl)
+        rs = sig.get("rs_vs_spy")
+        if rs is not None:
+            (high_rs_pnls if rs >= 1.5 else low_rs_pnls).append(pnl)
+
+    if matched == 0:
+        return None
+
+    def _cohort(pnl_list, label):
+        if not pnl_list:
+            return None
+        wins = [p for p in pnl_list if p > 0]
+        return {
+            "label":     label,
+            "count":     len(pnl_list),
+            "win_rate":  round(len(wins) / len(pnl_list) * 100, 1),
+            "avg_pnl":   round(sum(pnl_list) / len(pnl_list), 2),
+            "total_pnl": round(sum(pnl_list), 2),
+        }
+
+    return {
+        "matched":    matched,
+        "total":      len(positions),
+        "above_vwap": _cohort(above_pnls,   "Above VWAP"),
+        "below_vwap": _cohort(below_pnls,   "Below VWAP"),
+        "high_rs":    _cohort(high_rs_pnls, "RS ≥ 1.5×"),
+        "low_rs":     _cohort(low_rs_pnls,  "RS < 1.5×"),
+    }
+
+
 def _compute_metrics(days: int) -> dict | None:
     perf_rows = db.select("daily_performance", order="date", limit=days)
     if not perf_rows:
@@ -226,6 +282,9 @@ def _compute_metrics(days: int) -> dict | None:
     # Tailwind analysis — which positions rode past the $716 floor
     tailwind = _tailwind_analysis(all_closed_in_window, eval_dates, perf_rows)
 
+    # VWAP signal quality — validates Thread 1: do above-VWAP + high-RS entries outperform?
+    vwap_analysis = _vwap_signal_analysis(positions, eval_dates)
+
     # Native trail validation — compare native vs manual trail positions
     native  = [p for p in positions if p.get("native_trail_active")]
     manual  = [p for p in positions if not p.get("native_trail_active")]
@@ -291,6 +350,8 @@ def _compute_metrics(days: int) -> dict | None:
         "confidence_stats": confidence_stats,
         # Tailwind
         "tailwind":         tailwind,
+        # VWAP signal quality (Thread 1 validation)
+        "vwap_analysis":    vwap_analysis,
     }
 
 
@@ -377,6 +438,20 @@ def _print_summary(m: dict):
             wins.append(f"Native trailing stop confirmed — {nt_exits} clean exits, no double-sells")
         else:
             watchs.append("Native trailing stop enabled but no stop exits yet — need a reversal day to validate")
+
+    # VWAP signal quality verdict
+    vwap = m.get("vwap_analysis")
+    if vwap:
+        above = vwap.get("above_vwap")
+        below = vwap.get("below_vwap")
+        if above and below:
+            delta = above["avg_pnl"] - below["avg_pnl"]
+            if delta > 10:
+                wins.append(f"VWAP filter confirmed — above-VWAP entries +${delta:.0f} avg vs below ({vwap['matched']} trades matched)")
+            elif delta >= 0:
+                watchs.append(f"VWAP edge marginal (+${delta:.0f}) — more trades needed to confirm Thread 1 signal quality")
+            else:
+                watchs.append(f"No VWAP edge yet (${delta:+.0f} delta) — below-VWAP matching above; check if below-VWAP trades should be filtered")
 
     # Integrity flags
     orphaned = m.get("orphaned", [])
@@ -553,6 +628,48 @@ def _print_metrics(m: dict):
             print(f"  ✅ Tailwind mode captured ${total_ex:,.2f} extra vs. locking in at ${DAILY_LOCK_IN_TARGET:,} floor.")
         else:
             print(f"  ⚠️  No extra captured yet — riders may be closing at a loss after Tier 1.")
+
+    vwap = m.get("vwap_analysis")
+    print(f"\n[ VWAP SIGNAL QUALITY ]")
+    print(f"  Thread 1 validation: do above-VWAP + high-RS entries produce better outcomes?\n")
+    if not vwap:
+        print(f"  No VWAP data yet — available for Alpaca runs starting 2026-05-18.")
+        print(f"  Will appear once enough enriched trades have closed in the eval window.")
+    else:
+        total_matched = vwap["matched"]
+        total_pos     = vwap["total"]
+        print(f"  Matched {total_matched} / {total_pos} positions to VWAP entry signals.\n")
+        print(f"  {'Cohort':<18} {'Trades':>6} {'Win%':>6} {'Avg P&L':>9} {'Total P&L':>10}")
+        print(f"  {'-'*52}")
+        for key in ("above_vwap", "below_vwap", "high_rs", "low_rs"):
+            c = vwap.get(key)
+            if c:
+                flag = _flag(c["win_rate"], 60, 50)
+                print(f"  {c['label']:<18} {c['count']:>6} {c['win_rate']:>5.1f}% {flag}"
+                      f"  ${c['avg_pnl']:>7,.2f}   ${c['total_pnl']:>8,.2f}")
+        above = vwap.get("above_vwap")
+        below = vwap.get("below_vwap")
+        if above and below:
+            d_pnl = above["avg_pnl"] - below["avg_pnl"]
+            d_wr  = above["win_rate"] - below["win_rate"]
+            print(f"\n  Above vs Below VWAP:  avg P&L {d_pnl:+.2f}  |  win rate {d_wr:+.1f}%")
+            if d_pnl > 10:
+                print(f"  ✅ VWAP filter working — above-VWAP entries meaningfully outperform")
+            elif d_pnl >= 0:
+                print(f"  ⚠️  Slight VWAP edge — more data needed to confirm")
+            else:
+                print(f"  ❌ No VWAP edge yet — consider whether below-VWAP entries should be filtered")
+        high_rs = vwap.get("high_rs")
+        low_rs  = vwap.get("low_rs")
+        if high_rs and low_rs:
+            d_rs = high_rs["avg_pnl"] - low_rs["avg_pnl"]
+            print(f"\n  High RS vs Low RS:    avg P&L {d_rs:+.2f}")
+            if d_rs > 10:
+                print(f"  ✅ RS filter working — high relative strength entries outperform")
+            elif d_rs >= 0:
+                print(f"  ⚠️  Slight RS edge — more data needed")
+            else:
+                print(f"  ❌ No RS edge detected — low-RS entries matching or beating high-RS")
 
     total_attempted = m.get("total_attempted", 0)
     unfilled = m.get("unfilled_count", 0)

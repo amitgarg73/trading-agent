@@ -1050,6 +1050,61 @@ elif page == "Performance":
                 else:
                     st.warning("⚠️ No net extra captured yet — riders may be closing at a loss after Tier 1.")
 
+            st.markdown("---")
+
+            # ── VWAP Signal Quality (Thread 1 validation) ─────────────
+            st.markdown("#### VWAP Signal Quality")
+            st.caption("Thread 1 validation: do above-VWAP + high-RS entries at selection time actually produce better trade outcomes?")
+            vwap_ev = ev.get("vwap_analysis")
+
+            if not vwap_ev:
+                st.info("No VWAP data yet — available for Alpaca runs from 2026-05-18 onward. Will appear once enough enriched trades have closed.")
+            else:
+                vq1, vq2 = st.columns(2)
+                vq1.metric("Positions Matched", f"{vwap_ev['matched']} / {vwap_ev['total']}",
+                           help="Positions cross-referenced to a VWAP entry signal from the premarket scan.")
+
+                above = vwap_ev.get("above_vwap")
+                below = vwap_ev.get("below_vwap")
+                if above and below:
+                    delta = above["avg_pnl"] - below["avg_pnl"]
+                    vq2.metric("Above vs Below VWAP", f"{delta:+.2f} avg P&L",
+                               help="Positive = above-VWAP entries outperform. Target: > $10 edge to confirm Thread 1 is working.")
+
+                cohort_rows = []
+                for key, label in [("above_vwap", "▲ Above VWAP"), ("below_vwap", "▼ Below VWAP"),
+                                    ("high_rs",    "RS ≥ 1.5×"),    ("low_rs",     "RS < 1.5×")]:
+                    c = vwap_ev.get(key)
+                    if c:
+                        cohort_rows.append({
+                            "Cohort":    label,
+                            "Trades":    c["count"],
+                            "Win %":     f"{c['win_rate']:.1f}%",
+                            "Avg P&L":   f"${c['avg_pnl']:,.2f}",
+                            "Total P&L": f"${c['total_pnl']:,.0f}",
+                        })
+                if cohort_rows:
+                    st.dataframe(pd.DataFrame(cohort_rows), use_container_width=True, hide_index=True)
+
+                if above and below:
+                    if delta > 10:
+                        st.success(f"✅ VWAP filter confirmed — above-VWAP entries +${delta:.0f} avg vs below-VWAP.")
+                    elif delta >= 0:
+                        st.info(f"⚠️ Slight VWAP edge (+${delta:.0f}) — more data needed to confirm Thread 1 signal quality.")
+                    else:
+                        st.warning(f"❌ No VWAP edge yet (${delta:+.0f}) — below-VWAP matching or beating above-VWAP.")
+
+                high_rs = vwap_ev.get("high_rs")
+                low_rs  = vwap_ev.get("low_rs")
+                if high_rs and low_rs:
+                    rs_delta = high_rs["avg_pnl"] - low_rs["avg_pnl"]
+                    if rs_delta > 10:
+                        st.success(f"✅ RS filter confirmed — high relative strength entries +${rs_delta:.0f} avg vs low-RS.")
+                    elif rs_delta >= 0:
+                        st.info(f"⚠️ Slight RS edge (+${rs_delta:.0f}) — more data needed.")
+                    else:
+                        st.warning(f"❌ No RS edge detected (${rs_delta:+.0f}) — low-RS entries matching high-RS.")
+
         st.markdown("---")
 
     perf = db.select("daily_performance", order="date", limit=60)
