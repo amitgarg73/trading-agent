@@ -17,9 +17,9 @@ DAILY_PROFIT_TARGET  = 1_000
 MAX_POSITION_PCT     = 0.07       # max 7% of capital per position (fits 15 positions)
 MIN_POSITION_PCT     = 0.05       # min 5% of capital per position
 MAX_POSITIONS        = 15         # max concurrent positions
-MAX_LOSS_PER_TRADE   = 0.01       # stop loss: 1% of position size
-MIN_REWARD_RISK      = 3.0        # minimum reward:risk ratio (3% target / 1% stop)
-TARGET_PCT           = 0.03       # 3% profit target per trade
+MAX_LOSS_PER_TRADE   = 0.0067     # stop loss: 0.67% of position size (maintains 3:1 R:R with 2% target)
+MIN_REWARD_RISK      = 3.0        # minimum reward:risk ratio (2% target / 0.67% stop = 3:1)
+TARGET_PCT           = 0.02       # 2% profit target per trade (lowered from 3% — more achievable intraday move)
 MAX_PER_SECTOR       = 3          # V2d: max positions in any single sector
 DAILY_LOSS_LIMIT     = -300       # V5: stop trading if today's realized P&L drops below this
 PRICE_SANITY_PCT     = 0.05       # V5: reject if entry price is >5% from current market price
