@@ -63,7 +63,18 @@ jobs:
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           ALPACA_API_KEY:     ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY:  ${{ secrets.ALPACA_SECRET_KEY }}
-        run: python orchestrator.py --mode ${{ steps.mode.outputs.mode }} --broker ${{ steps.mode.outputs.broker }}
+        run: |
+          for attempt in 1 2 3; do
+            echo "▶ Attempt $attempt of 3"
+            python orchestrator.py --mode ${{ steps.mode.outputs.mode }} --broker ${{ steps.mode.outputs.broker }} && break
+            if [ $attempt -lt 3 ]; then
+              echo "  ⚠️ Attempt $attempt failed — retrying in 60s..."
+              sleep 60
+            else
+              echo "  ❌ All 3 attempts failed"
+              exit 1
+            fi
+          done
 
       - name: Run eval (EOD only)
         if: steps.mode.outputs.mode == 'eod'
