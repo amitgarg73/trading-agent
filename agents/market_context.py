@@ -90,7 +90,8 @@ def _fetch_futures() -> dict:
     results = {}
     for name, symbol in tickers.items():
         try:
-            df = yf.download(symbol, period="2d", interval="1d", progress=False)
+            # period="5d" ensures 2+ trading days even on Mondays or after holidays
+            df = yf.download(symbol, period="5d", interval="1d", progress=False)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             if len(df) >= 2:
@@ -98,8 +99,10 @@ def _fetch_futures() -> dict:
                 curr  = float(df["Close"].iloc[-1])
                 change_pct = round((curr - prev) / prev * 100, 2)
                 results[name] = {"price": round(curr, 2), "change_pct": change_pct}
-        except Exception:
-            pass
+            else:
+                print(f"        ⚠️  Futures {name} ({symbol}): insufficient data ({len(df)} rows)")
+        except Exception as e:
+            print(f"        ⚠️  Futures {name} ({symbol}): {e}")
     return results
 
 
