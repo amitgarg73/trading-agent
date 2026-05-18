@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 from datetime import date, datetime
 from core import db
-from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE
+from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT
 from config.company_names import COMPANY_NAMES
 
 _ETF_SET = set(ETF_UNIVERSE)
@@ -77,6 +77,14 @@ def fmt_pnl(val):
 
 def pnl_color(val):
     return "green" if val > 0 else "red" if val < 0 else "gray"
+
+def fmt_stop(pos):
+    """Show trailing stop level when it has ratcheted above the original stop; else show original."""
+    hw       = float(pos.get("high_watermark") or pos.get("entry_price", 0))
+    eff_stop = max(pos["stop_loss"], round(hw * (1 - TRAIL_PCT), 4))
+    if eff_stop > pos["stop_loss"]:
+        return f"Trail **${eff_stop:.2f}** ↑"
+    return f"Stop ${pos['stop_loss']:.2f}"
 
 
 # ── SUMMARY ───────────────────────────────────────────────────────
@@ -181,9 +189,10 @@ if page == "Summary":
             return "🟢 In Flight", pos.get("unrealized_pnl", 0) or 0
         reason = (pos.get("close_reason") or "Closed").upper()
         pnl = pos.get("realized_pnl", 0) or 0
+        if reason == "STOP":
+            return ("🔶 Trail Stop" if pnl > 0 else "🔴 Stop Hit"), pnl
         label_map = {
             "TARGET":  "✅ Target Hit",
-            "STOP":    "🔴 Stop Hit",
             "EOD":     "⏰ EOD Close",
             "LOCK_IN": "🎯 Day Locked",
         }
@@ -203,7 +212,7 @@ if page == "Summary":
             c1.markdown(f"**{icon} {label}**")
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Now: **${pos.get('current_price', 0):.2f}**")
-            c4.markdown(f"Target ${pos['target_price']:.2f}  ·  Stop ${pos['stop_loss']:.2f}")
+            c4.markdown(f"Target ${pos['target_price']:.2f}  ·  {fmt_stop(pos)}")
             c5.markdown(
                 f"<span style='color:{pnl_color(pnl)};font-weight:bold;font-size:16px'>{fmt_pnl(pnl)}</span>",
                 unsafe_allow_html=True
@@ -581,7 +590,7 @@ elif page == "Today":
             c1.markdown(f"**{icon} {label}** `{pos['action']}`")
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
-            c4.markdown(f"Target: ${pos['target_price']:.2f} | Stop: ${pos['stop_loss']:.2f}")
+            c4.markdown(f"Target: ${pos['target_price']:.2f} | {fmt_stop(pos)}")
             c5.markdown(
                 f"<span style='color:{pnl_color(pnl)};font-weight:bold'>{fmt_pnl(pnl)}</span>",
                 unsafe_allow_html=True
@@ -626,7 +635,7 @@ elif page == "Positions":
             c1.markdown(f"**{icon} {label}** `{pos['action']}`")
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
-            c4.markdown(f"Target: ${pos['target_price']:.2f} | Stop: ${pos['stop_loss']:.2f}")
+            c4.markdown(f"Target: ${pos['target_price']:.2f} | {fmt_stop(pos)}")
             c5.markdown(
                 f"<span style='color:{pnl_color(pnl)};font-weight:bold'>{fmt_pnl(pnl)}</span>",
                 unsafe_allow_html=True
