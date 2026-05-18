@@ -7,6 +7,7 @@ import json
 import argparse
 from datetime import date, datetime, timedelta
 from scanner.scanner import run_scan
+from scanner.ml_scorer import score_candidates as ml_score_candidates, is_available as ml_available
 from agents import strategy, risk, sector_guard, guardrails, performance, market_context, news_intel, universe_refresh
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
@@ -113,6 +114,17 @@ def premarket(broker: str = "simulation"):
     if not candidates:
         print("        No candidates above strategy threshold. No trades today.")
         return
+
+    # 1.76 ML scoring — add ml_score probability to each candidate and re-rank.
+    # Model predicts P(stock hits +2% intraday tomorrow). If model not found, skips gracefully.
+    if ml_available():
+        candidates = ml_score_candidates(candidates, vix=mkt.get("vix"))
+        candidates.sort(key=lambda x: x.get("ml_score") or 0, reverse=True)
+        top_score = candidates[0].get("ml_score", 0) if candidates else 0
+        print(f"[ 1.76/4 ] ML scoring: {len(candidates)} candidates ranked by P(hit +2%) "
+              f"— top score: {top_score:.2f}")
+    else:
+        print("[ 1.76/4 ] ML model not found — skipping (run train_model.py to enable)")
 
     # 1.8 Live price refresh (Alpaca only) — replace stale yfinance prices with
     # real-time ask prices so Claude sets entry prices on accurate data.

@@ -84,6 +84,11 @@ def _technical(ticker: str, df: pd.DataFrame) -> dict:
     low52  = close.rolling(252).min().iloc[-1] if len(df) >= 252 else close.min()
     range_pct = (price - low52) / (high52 - low52) if (high52 - low52) > 0 else 0.5
 
+    dist_sma20 = round((price - sma20) / sma20, 4) if sma20 else None
+    dist_sma50 = round((price - sma50) / sma50, 4) if sma50 and pd.notna(sma50) else None
+    mom1 = round(float(close.pct_change(1).iloc[-1]), 4) if len(close) >= 2 else None
+    mom5 = round(float(close.pct_change(5).iloc[-1]), 4) if len(close) >= 6 else None
+
     return {
         "technical_score": max(-10, min(10, score)),
         "signals": signals,
@@ -93,6 +98,10 @@ def _technical(ticker: str, df: pd.DataFrame) -> dict:
         "volume_ratio": round(vol_ratio, 2),
         "atr_pct": round(atr_pct, 2),
         "range_52w_pct": round(range_pct, 3),
+        "dist_sma20": dist_sma20,
+        "dist_sma50": dist_sma50,
+        "mom1": mom1,
+        "mom5": mom5,
         "sma20": round(sma20, 2),
         "price": round(price, 2),
     }
@@ -138,6 +147,11 @@ def run_scan(universe=None) -> list[dict]:
             "volume_ratio": tech["volume_ratio"],
             "atr_pct": tech["atr_pct"],
             "range_52w_pct": tech["range_52w_pct"],
+            "dist_sma20": tech["dist_sma20"],
+            "dist_sma50": tech["dist_sma50"],
+            "mom1": tech["mom1"],
+            "mom5": tech["mom5"],
+            "ml_score": None,
             "scanned_at": datetime.utcnow().isoformat(),
         })
 
