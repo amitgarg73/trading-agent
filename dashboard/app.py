@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 from datetime import date, datetime
 from core import db
-from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT
+from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT, MIN_REWARD_RISK
 from config.company_names import COMPANY_NAMES
 
 _ETF_SET = set(ETF_UNIVERSE)
@@ -671,34 +671,225 @@ elif page == "Performance":
     eval_rows = db.select("scan_results", filters={"scan_type": "eval"}, order="created_at", limit=1)
     if eval_rows:
         ev = eval_rows[0].get("results", {})
-        grade_color = {"A": "#1e8449", "B": "#27ae60", "C": "#f39c12", "D": "#e74c3c"}.get(ev.get("grade", ""), "#95a5a6")
         grade_label = {"A": "Excellent", "B": "Good", "C": "Mediocre", "D": "Poor"}.get(ev.get("grade", ""), "")
+        days = ev.get("days", 0)
 
-        with st.expander(f"Agent Scorecard — {eval_rows[0]['date']} · {ev.get('days', '?')} day window · Grade **{ev.get('grade','?')}** ({grade_label})", expanded=True):
-            sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+        with st.expander(f"Agent Scorecard — {eval_rows[0]['date']} · {days}-day window · Grade **{ev.get('grade','?')}** ({grade_label})", expanded=True):
+
+            # ── VERDICT ──────────────────────────────────────────────
+            st.markdown("#### Verdict")
+            wins, watchs, actions = [], [], []
+
+            pnl      = ev.get("avg_daily_pnl", 0)
+            pnl_pct  = pnl / DAILY_PROFIT_TARGET * 100 if DAILY_PROFIT_TARGET else 0
+            win_days = ev.get("win_days", 0)
+            wd_pct   = win_days / days * 100 if days else 0
+            wr       = ev.get("avg_win_rate", 0)
+            rr       = ev.get("actual_rr", 0)
+            cr       = ev.get("close_reasons", {})
+            total_cr = sum(cr.values()) or 1
+            tgt_pct  = cr.get("TARGET", 0) / total_cr * 100
+
+            if pnl >= DAILY_PROFIT_TARGET:
+                wins.append(f"Avg daily P&L ${pnl:,.0f} — on or above ${DAILY_PROFIT_TARGET:,} target")
+            elif pnl_pct >= 60:
+                watchs.append(f"Avg daily P&L ${pnl:,.0f} is {pnl_pct:.0f}% of ${DAILY_PROFIT_TARGET:,} target")
+            else:
+                actions.append(f"Avg daily P&L ${pnl:,.0f} well below ${DAILY_PROFIT_TARGET:,} target ({pnl_pct:.0f}%)")
+
+            if wd_pct >= 80:
+                wins.append(f"{win_days}/{days} profitable days ({wd_pct:.0f}%) — consistent execution")
+            elif wd_pct >= 60:
+                watchs.append(f"{win_days}/{days} profitable days ({wd_pct:.0f}%) — more losing days than ideal")
+            else:
+                actions.append(f"Only {win_days}/{days} profitable days — strategy inconsistency")
+
+            if wr >= 60:
+                wins.append(f"{wr:.0f}% trade win rate — well above 25% break-even for 3:1 R:R")
+            elif wr >= 50:
+                watchs.append(f"{wr:.0f}% trade win rate — above break-even but room to improve")
+            else:
+                watchs.append(f"{wr:.0f}% trade win rate — approaching break-even; tighten entry criteria")
+
+            if rr >= 3.0:
+                wins.append(f"Reward:risk {rr:.1f}x — meeting 3:1 target")
+            elif rr >= 2.0:
+                watchs.append(f"Reward:risk {rr:.1f}x — below 3.0x target; losers running slightly large")
+            else:
+                actions.append(f"Reward:risk {rr:.1f}x — well below target; review stops and targets")
+
+            if tgt_pct >= 50:
+                wins.append(f"{tgt_pct:.0f}% of exits hit target — momentum strategy executing as designed")
+            elif cr.get("STOP", 0) / total_cr > 0.5:
+                watchs.append(f"More stops than targets — entries may be too late in the move")
+
+            cs = ev.get("confidence_stats", {})
+            high, low = cs.get("HIGH"), cs.get("LOW")
+            if high and low:
+                if high["avg_pnl"] > low["avg_pnl"]:
+                    wins.append(f"HIGH confidence trades earning ${high['avg_pnl']:,.0f} avg vs ${low['avg_pnl']:,.0f} for LOW — sizing justified")
+                else:
+                    watchs.append(f"LOW outperforming HIGH (${low['avg_pnl']:,.0f} vs ${high['avg_pnl']:,.0f}) — confidence signal unreliable")
+
+            native = ev.get("native_trail")
+            if native:
+                nt_exits = native.get("exits", {}).get("NATIVE_TRAIL", 0)
+                if nt_exits > 0:
+                    wins.append(f"Native trailing stop confirmed — {nt_exits} clean exits, no double-sells")
+                else:
+                    watchs.append("Native trailing stop enabled but no stop exits yet — need a reversal day to validate")
+
+            orphaned = ev.get("orphaned", [])
+            if orphaned:
+                actions.append(f"{len(orphaned)} orphaned position(s) stuck OPEN from a prior day")
+            if ev.get("rr_violations"):
+                actions.append(f"{len(ev['rr_violations'])} trade(s) submitted below {MIN_REWARD_RISK}x R:R — Claude constraint drift")
+            if ev.get("duplicate_count", 0) > 0:
+                actions.append(f"{ev['duplicate_count']} duplicate ticker(s) same day — guardrail may have failed")
+            attempted = ev.get("total_attempted", 1) or 1
+            unfill_pct = ev.get("unfilled_count", 0) / attempted * 100
+            if unfill_pct >= 15:
+                actions.append(f"{unfill_pct:.0f}% unfilled rate — limit entry price too tight")
+            elif unfill_pct >= 5:
+                watchs.append(f"{unfill_pct:.0f}% unfilled rate — monitor; rising trend is a problem")
+
+            v1, v2, v3 = st.columns(3)
+            with v1:
+                st.markdown("**✅ What's working**")
+                for w in wins:
+                    st.markdown(f"<span style='color:#1e8449'>• {w}</span>", unsafe_allow_html=True)
+                if not wins:
+                    st.markdown("<span style='color:#95a5a6'>— none yet</span>", unsafe_allow_html=True)
+            with v2:
+                st.markdown("**⚠️ Watch**")
+                for w in watchs:
+                    st.markdown(f"<span style='color:#f39c12'>• {w}</span>", unsafe_allow_html=True)
+                if not watchs:
+                    st.markdown("<span style='color:#95a5a6'>— none</span>", unsafe_allow_html=True)
+            with v3:
+                st.markdown("**❌ Action required**")
+                for a in actions:
+                    st.markdown(f"<span style='color:#e74c3c'>• {a}</span>", unsafe_allow_html=True)
+                if not actions:
+                    st.markdown("<span style='color:#1e8449'>✅ No action required</span>", unsafe_allow_html=True)
+
+            st.markdown("---")
+
+            # ── Score metrics ─────────────────────────────────────────
+            st.markdown("#### Score Breakdown")
+            sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
             sc1.metric("Score",          f"{ev.get('score', 0):.0f} / 100")
             sc2.metric("Avg Daily P&L",  f"${ev.get('avg_daily_pnl', 0):,.0f}",
                        delta=f"target ${DAILY_PROFIT_TARGET:,}")
-            sc3.metric("Win Days",       f"{ev.get('win_days', 0)} / {ev.get('days', 0)}")
+            sc3.metric("Win Days",       f"{win_days} / {days}")
             sc4.metric("Trade Win Rate", f"{ev.get('avg_win_rate', 0):.1f}%")
             sc5.metric("Actual R:R",     f"{ev.get('actual_rr', 0):.2f}x")
+            sc6.metric("Ann. Return",    f"{ev.get('ann_return', 0):+.0f}%")
 
+            ps = ev.get("pnl_score", 0)
+            ws = ev.get("winday_score", 0)
+            rs = ev.get("winrate_score", 0)
+            st.caption(f"Score components: P&L {ps:.0f}/40 pts · Win days {ws:.0f}/30 pts · Win rate {rs:.0f}/30 pts")
+
+            st.markdown("---")
+
+            # ── Trade breakdown + Recommendations ─────────────────────
             col_a, col_b = st.columns(2)
             with col_a:
-                st.markdown("**Trade breakdown**")
-                cr = ev.get("close_reasons", {})
-                rows = [{"Outcome": k, "Count": v} for k, v in sorted(cr.items(), key=lambda x: -x[1])]
-                if rows:
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.markdown("**Exit reasons**  *(healthy: TARGET >50%, STOP <35%, EOD <20%)*")
+                cr_rows = [{"Exit": k, "Count": v, "%": f"{v/total_cr*100:.0f}%"}
+                           for k, v in sorted(cr.items(), key=lambda x: -x[1])]
+                if cr_rows:
+                    st.dataframe(pd.DataFrame(cr_rows), use_container_width=True, hide_index=True)
                 if ev.get("best_ticker"):
-                    st.success(f"Best: {ev['best_ticker']} +${ev['best_pnl']:,.2f}")
+                    st.success(f"Best: {ev['best_ticker']}  +${ev['best_pnl']:,.2f}")
                 if ev.get("worst_ticker"):
-                    st.error(f"Worst: {ev['worst_ticker']} ${ev['worst_pnl']:,.2f}")
-
+                    st.error(f"Worst: {ev['worst_ticker']}  ${ev['worst_pnl']:,.2f}")
             with col_b:
                 st.markdown("**Recommendations**")
                 for rec in ev.get("recommendations", []):
                     st.markdown(f"• {rec}")
+
+            st.markdown("---")
+
+            # ── Integrity + Claude quality ─────────────────────────────
+            st.markdown("#### Integrity & Claude Quality")
+            int_col, qual_col = st.columns(2)
+
+            with int_col:
+                st.markdown("**Integrity checks**")
+                unfill_n = ev.get("unfilled_count", 0)
+                unfill_flag = "✅" if unfill_pct < 10 else "⚠️"
+                st.markdown(f"{unfill_flag} UNFILLED rate: **{unfill_n}** ({unfill_pct:.0f}%)")
+                st.markdown(f"{'✅' if not orphaned else '❌'} Orphaned open positions: **{len(orphaned)}**")
+                dups = ev.get("duplicate_count", 0)
+                st.markdown(f"{'✅' if dups == 0 else '❌'} Duplicate tickers same day: **{dups}**")
+                missing = ev.get("missing_exit", 0)
+                st.markdown(f"{'✅' if missing == 0 else '⚠️'} Missing exit_mechanism: **{missing}**")
+                st.markdown(f"📉 Loss-limit days: **{ev.get('loss_limit_days', 0)}** / {days}")
+                st.markdown(f"🎯 Lock-in days: **{ev.get('lock_in_days', 0)}** / {days}")
+
+            with qual_col:
+                st.markdown("**Claude quality checks**")
+                rr_v = ev.get("rr_violations", [])
+                st.markdown(f"{'✅' if not rr_v else '❌'} R:R violations: **{len(rr_v)}** trades below {MIN_REWARD_RISK}x")
+                if rr_v:
+                    for v in rr_v:
+                        st.caption(f"  → {v['ticker']} R:R {v['rr']:.2f}x")
+                sz_v = ev.get("size_violations", [])
+                st.markdown(f"{'✅' if not sz_v else '⚠️'} Position size violations: **{len(sz_v)}**")
+
+                st.markdown("**Confidence cohort**  *(validates HIGH $7K / MEDIUM $6K / LOW $5K)*")
+                conf_rows = []
+                for level in ("HIGH", "MEDIUM", "LOW"):
+                    s = cs.get(level)
+                    if s:
+                        conf_rows.append({
+                            "Level":    level,
+                            "Trades":   s["count"],
+                            "Win %":    f"{s['win_rate']:.1f}%",
+                            "Avg P&L":  f"${s['avg_pnl']:,.2f}",
+                            "Total":    f"${s['total_pnl']:,.0f}",
+                        })
+                if conf_rows:
+                    st.dataframe(pd.DataFrame(conf_rows), use_container_width=True, hide_index=True)
+                if high and low:
+                    delta = high["avg_pnl"] - low["avg_pnl"]
+                    if delta > 0:
+                        st.success(f"HIGH outperforming LOW by ${delta:,.2f} avg — sizing justified")
+                    else:
+                        st.warning(f"LOW outperforming HIGH by ${abs(delta):,.2f} — confidence signal unreliable")
+
+            st.markdown("---")
+
+            # ── Trailing stop validation ───────────────────────────────
+            st.markdown("#### Trailing Stop Validation")
+            manual = ev.get("manual_trail")
+            ts1, ts2 = st.columns(2)
+
+            for col, label, cohort in [(ts1, "Native trail (Alpaca)", native), (ts2, "Manual trail (high_watermark)", manual)]:
+                with col:
+                    st.markdown(f"**{label}**")
+                    if cohort:
+                        st.metric("Trades",   cohort["count"])
+                        st.metric("Win rate", f"{cohort['win_rate']:.1f}%")
+                        st.metric("Avg P&L",  f"${cohort['avg_pnl']:,.2f}")
+                        exits = cohort.get("exits", {})
+                        if exits:
+                            st.caption("Exits: " + "  |  ".join(f"{k}: {v}" for k, v in sorted(exits.items())))
+                    else:
+                        st.caption("No data yet")
+
+            if native and manual:
+                pnl_d = native["avg_pnl"] - manual["avg_pnl"]
+                wr_d  = native["win_rate"] - manual["win_rate"]
+                st.markdown(f"**Native vs manual:** avg P&L {pnl_d:+.2f}  ·  win rate {wr_d:+.1f}%")
+            if native:
+                nt_exits = native.get("exits", {}).get("NATIVE_TRAIL", 0)
+                if nt_exits > 0:
+                    st.success(f"✅ {nt_exits} native trail exits confirmed — no double-sells detected")
+                else:
+                    st.info("⏳ No NATIVE_TRAIL exits yet — stop hasn't fired; need a reversal day to validate")
 
         st.markdown("---")
 
