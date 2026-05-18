@@ -353,6 +353,7 @@ add_table(
         ('python3 generate_prd.py',         'Trading_Agent_PRD.docx'),
         ('python3 generate_features.py',    'Trading_Agent_Features.docx'),
         ('python3 generate_architecture.py','architecture_high_level.png + architecture_low_level.png'),
+        ('python3 generate_assessment.py',  'Trading_Agent_Brutal_Assessment.docx'),
     ]
 )
 
