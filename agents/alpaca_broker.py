@@ -64,6 +64,54 @@ def get_live_prices(tickers: list[str]) -> dict[str, float]:
         return {}
 
 
+def get_intraday_signals(tickers: list[str]) -> dict[str, dict]:
+    """
+    Fetch intraday signals via Alpaca snapshot API: VWAP position, relative strength vs SPY.
+    Returns {ticker: {above_vwap, vwap, today_pct_change, rs_vs_spy}} for available tickers.
+    SPY is fetched as the RS baseline — stocks outperforming SPY are market leaders.
+    Falls back gracefully on failure: missing tickers absent from result dict.
+    """
+    if not tickers:
+        return {}
+    all_tickers = list(set(tickers + ["SPY"]))
+    try:
+        from alpaca.data.requests import StockSnapshotRequest
+        req       = StockSnapshotRequest(symbol_or_symbols=all_tickers)
+        snapshots = _dclient().get_stock_snapshot(req)
+
+        spy_snap = snapshots.get("SPY")
+        spy_pct  = None
+        if spy_snap and spy_snap.daily_bar:
+            spy_open  = getattr(spy_snap.daily_bar, "open", None)
+            spy_price = getattr(spy_snap.latest_trade, "price", None) or getattr(spy_snap.daily_bar, "close", None)
+            if spy_open and spy_price and float(spy_open) > 0:
+                spy_pct = (float(spy_price) - float(spy_open)) / float(spy_open)
+
+        signals = {}
+        for ticker in tickers:
+            snap = snapshots.get(ticker)
+            if not snap or not snap.daily_bar:
+                continue
+            vwap    = getattr(snap.daily_bar, "vwap",  None)
+            open_px = getattr(snap.daily_bar, "open",  None)
+            price   = getattr(snap.latest_trade, "price", None) or getattr(snap.daily_bar, "close", None)
+            if not (vwap and open_px and price):
+                continue
+            vwap, open_px, price = float(vwap), float(open_px), float(price)
+            today_pct  = (price - open_px) / open_px if open_px > 0 else 0.0
+            rs_vs_spy  = round(today_pct / spy_pct, 2) if spy_pct and spy_pct != 0 else None
+            signals[ticker] = {
+                "above_vwap":       price > vwap,
+                "vwap":             round(vwap, 2),
+                "today_pct_change": round(today_pct * 100, 2),
+                "rs_vs_spy":        rs_vs_spy,
+            }
+        return signals
+    except Exception as e:
+        print(f"        ⚠️  Intraday signals fetch failed: {e}")
+        return {}
+
+
 def submit_bracket_order(
     ticker: str,
     shares: int,

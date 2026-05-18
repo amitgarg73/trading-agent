@@ -140,6 +140,26 @@ def premarket(broker: str = "simulation"):
                 updated += 1
         print(f"[ 1.8/4 ] Live price refresh: {updated}/{len(candidates)} tickers updated from Alpaca")
 
+    # 1.85 Intraday signal enrichment (Alpaca only) — VWAP position, relative strength vs SPY.
+    # Enriches each candidate so Claude can prioritize stocks already trading above institutional
+    # benchmarks and outperforming the market — a quality filter the scanner can't compute.
+    if broker == "alpaca":
+        tickers       = [c["ticker"] for c in candidates]
+        intraday_sigs = alpaca_broker.get_intraday_signals(tickers)
+        enriched      = 0
+        for c in candidates:
+            sig = intraday_sigs.get(c["ticker"])
+            if sig:
+                c.update(sig)
+                enriched += 1
+        # Above-VWAP candidates first; ties broken by RS vs SPY descending
+        candidates.sort(
+            key=lambda x: (not x.get("above_vwap", False), -(x.get("rs_vs_spy") or 0))
+        )
+        above_vwap_count = sum(1 for c in candidates if c.get("above_vwap"))
+        print(f"[ 1.85/4 ] Intraday signals: {enriched}/{len(candidates)} enriched — "
+              f"{above_vwap_count} above VWAP")
+
     # 2. Strategy
     print("[ 2/4 ] Running strategy agent...")
     full_market_summary = mkt["summary"]

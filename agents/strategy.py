@@ -63,6 +63,17 @@ price_vs_sma50: distance from 50-day SMA. Above = uptrend intact. Crossovers sig
 momentum_5d: 5-day price change. Positive = uptrend. Negative + reversal signal = contrarian setup.
 avg_volume: average daily shares. Higher = more liquid, tighter spreads, easier fills.
 current_price: last known price. Set entry_price at or very near this value.
+above_vwap: True = price is above today's Volume-Weighted Average Price — the key institutional
+            benchmark. Above VWAP = sustained buying pressure since open. STRONG preference for
+            above-VWAP setups in momentum trades. Below VWAP = selling pressure, avoid.
+            (Field absent on simulation runs — treat as neutral when missing.)
+vwap: The actual VWAP price level. Price well above VWAP = momentum; price just reclaiming VWAP
+      from below = potential reversal entry with tight risk.
+today_pct_change: Stock's % move from today's open to now. Positive = intraday uptrend established.
+rs_vs_spy: Relative strength vs SPY since the open. > 1.0 = stock outperforming the market.
+           > 2.0 = strong market leadership — high-quality momentum setup. < 0 = stock declining
+           while SPY rises (distribution) — avoid. None means SPY was flat (ignore).
+           Combine with above_vwap: above VWAP + RS > 1.5 is the ideal momentum setup.
 
 ## CONFIDENCE ASSIGNMENT GUIDE
 HIGH:   technical_score ≥ 7 AND volume_ratio > 1.8 AND at least 3 confirming signals
