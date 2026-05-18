@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 from datetime import date, datetime
 from core import db
-from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT, LOCK_IN_TRAIL_PCT, MIN_REWARD_RISK, DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET
+from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT, LOCK_IN_TRAIL_PCT, MIN_REWARD_RISK, DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET, STRATEGY_MIN_SCORE
 from config.company_names import COMPANY_NAMES
 
 _ETF_SET = set(ETF_UNIVERSE)
@@ -554,31 +554,104 @@ elif page == "Today":
     # ── STEP 1: Scanner ─────────────────────────────────────────────
     st.subheader("1️⃣  Market Scanner")
 
-    total_scanned = len(candidates) + len(blackout)
+    pipeline      = results.get("pipeline_counts", {})
+    post_blackout = pipeline.get("post_blackout", len(candidates) + len(blackout))
+    final_count   = pipeline.get("final_count",   len(candidates))
+
     s1, s2, s3 = st.columns(3)
-    s1.metric("Candidates Found", total_scanned,
-              help=f"Stocks from the 430+ universe that passed minimum filters: price ≥$5, avg volume ≥500K, technical score ≥3/10.")
+    s1.metric("Passed Scan",
+              post_blackout + len(blackout),
+              help="Stocks from the 430+ universe that passed minimum filters: price ≥$5, avg volume ≥500K, technical score ≥3/10.")
     s2.metric("Earnings Blocked", len(blackout),
               delta=f"-{len(blackout)}" if blackout else None, delta_color="inverse",
               help="Tickers removed because they report earnings today or tomorrow. Earnings = binary event with gap risk — not suitable for day trading.")
-    s3.metric("Passed to Strategy", len(candidates),
-              help="Remaining candidates sent to Claude's strategy agent after earnings blackout filter.")
+    s3.metric("Sent to Claude", final_count,
+              help=f"Candidates after ALL filters (score pre-filter ≥{STRATEGY_MIN_SCORE}, ML ranking, live prices, VWAP enrichment). This is exactly what Claude sees.")
 
     if blackout:
         with st.expander(f"⛔ Earnings Blackout — {len(blackout)} ticker(s)"):
             for b in blackout:
                 st.markdown(f"- **{b['ticker']}**: {b['reason']}")
 
+    # ── Pipeline funnel ───────────────────────────────────────────
+    if pipeline:
+        with st.expander("🔬 Pipeline detail — how the candidate list was built before Claude saw it"):
+            st.caption(
+                "Four filters run between the raw scan and Claude's call. "
+                "Each one narrows the list and enriches what remains."
+            )
+            pf1, pf2, pf3, pf4, pf5 = st.columns(5)
+            pf1.metric(
+                "After Earnings Filter", pipeline.get("post_blackout", "?"),
+                help="Survived the earnings blackout check — no reports today or tomorrow."
+            )
+            dropped = pipeline.get("prefilter_dropped", 0)
+            pf2.metric(
+                f"After Score Filter ≥{STRATEGY_MIN_SCORE}", pipeline.get("post_prefilter", "?"),
+                delta=f"-{dropped} dropped" if dropped else "none dropped",
+                delta_color="off",
+                help=(
+                    f"Step 1.75: kept only candidates with technical_score ≥ {STRATEGY_MIN_SCORE}. "
+                    "Reduces Claude's input tokens by ~60-70% without losing trade quality."
+                )
+            )
+            ml_n = pipeline.get("ml_scored", 0)
+            pf3.metric(
+                "ML Scored", ml_n if ml_n else "—",
+                help=(
+                    "Step 1.76: ML model assigns each candidate a probability of hitting +2% intraday. "
+                    "Candidates re-ranked highest → lowest before Claude sees them. "
+                    "0 means model not trained yet — run train_model.py."
+                )
+            )
+            vwap_n = pipeline.get("vwap_enriched", 0)
+            pf4.metric(
+                "VWAP Enriched", vwap_n if vwap_n else "—",
+                help=(
+                    "Step 1.85 (Alpaca only): VWAP position and RS vs SPY fetched for each candidate. "
+                    "Candidates sorted above-VWAP first, then by RS descending. "
+                    "Absent in simulation mode."
+                )
+            )
+            above_n = pipeline.get("above_vwap", 0)
+            pf5.metric(
+                "▲ Above VWAP", above_n if vwap_n else "—",
+                help=(
+                    "Of the VWAP-enriched candidates, how many were trading above the institutional VWAP benchmark. "
+                    "These appear first in Claude's candidate list — the preferred momentum setup."
+                )
+            )
+
+            st.markdown("**Selection funnel:**")
+            funnel_steps = [
+                ("Universe",           f"{len(candidates) + len(blackout) + pipeline.get('prefilter_dropped', 0):,} stocks",  "Full watchlist scanned"),
+                ("Passed scanner",     f"{post_blackout + len(blackout)}",      "Price ≥$5, volume ≥500K, technical score ≥3"),
+                ("Earnings clear",     f"{pipeline.get('post_blackout', '?')}",  "No earnings today/tomorrow"),
+                (f"Score ≥{STRATEGY_MIN_SCORE}",     f"{pipeline.get('post_prefilter', '?')}",  "Technical pre-filter — bullish setups only"),
+                ("ML ranked",          f"{pipeline.get('post_prefilter', '?')}",  f"Re-ranked by P(hit +2%) — {ml_n} with score" if ml_n else "ML model not available"),
+                ("VWAP enriched",      f"{vwap_n if vwap_n else '—'}",           f"{above_n} above VWAP, sorted first" if vwap_n else "Simulation mode — no VWAP"),
+                ("Sent to Claude",     f"{final_count}",                          "This is the exact list Claude's strategy agent saw"),
+            ]
+            for step, count, note in funnel_steps:
+                st.markdown(
+                    f"<span style='color:#f47b20;font-weight:bold'>{step}</span> → "
+                    f"<span style='font-weight:bold'>{count}</span>  "
+                    f"<span style='color:#888;font-size:12px'>{note}</span>",
+                    unsafe_allow_html=True
+                )
+
     if candidates:
-        with st.expander(f"📋 Screened Candidates — {len(candidates)} stocks", expanded=True):
+        with st.expander(f"📋 Screened Candidates — {len(candidates)} stocks (as Claude saw them)", expanded=True):
             df_scan = pd.DataFrame(candidates)
-            show_cols = ["ticker", "price", "technical_score", "rsi", "volume_ratio",
-                         "above_vwap", "rs_vs_spy", "atr_pct", "signals"]
+            show_cols = ["ticker", "technical_score", "ml_score", "rsi", "volume_ratio",
+                         "above_vwap", "rs_vs_spy", "price", "atr_pct", "signals"]
             df_scan = df_scan[[c for c in show_cols if c in df_scan.columns]]
-            if "technical_score" in df_scan.columns:
-                df_scan = df_scan.sort_values("technical_score", ascending=False)
             df_scan = add_company_col(df_scan)
             st.dataframe(df_scan, use_container_width=True, height=320)
+            st.caption(
+                f"Sorted by order Claude saw them: above VWAP first, then RS vs SPY descending. "
+                f"ml_score = P(hit +2% intraday). technical_score = scanner score ({STRATEGY_MIN_SCORE}–10 after pre-filter)."
+            )
 
     st.divider()
 

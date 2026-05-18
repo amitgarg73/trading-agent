@@ -107,8 +107,9 @@ def premarket(broker: str = "simulation"):
     # See config/settings.py STRATEGY_MIN_SCORE for full tradeoff documentation.
     pre_filter_count = len(candidates)
     candidates = [c for c in candidates if c.get("technical_score", 0) >= STRATEGY_MIN_SCORE]
-    if len(candidates) < pre_filter_count:
-        print(f"[ 1.75/4 ] Strategy pre-filter: {pre_filter_count} → {len(candidates)} candidates "
+    post_prefilter_count = len(candidates)
+    if post_prefilter_count < pre_filter_count:
+        print(f"[ 1.75/4 ] Strategy pre-filter: {pre_filter_count} → {post_prefilter_count} candidates "
               f"(score ≥ {STRATEGY_MIN_SCORE})")
 
     if not candidates:
@@ -125,6 +126,12 @@ def premarket(broker: str = "simulation"):
               f"— top score: {top_score:.2f}")
     else:
         print("[ 1.76/4 ] ML model not found — skipping (run train_model.py to enable)")
+    ml_scored_count = sum(1 for c in candidates if c.get("ml_score") is not None)
+
+    # Pipeline tracking — captured after each filter step for dashboard display
+    live_price_updated = 0
+    vwap_enriched_count = 0
+    above_vwap_count = 0
 
     # 1.8 Live price refresh (Alpaca only) — replace stale yfinance prices with
     # real-time ask prices so Claude sets entry prices on accurate data.
@@ -138,6 +145,7 @@ def premarket(broker: str = "simulation"):
                 # Only update if within 10% of yfinance price — guards against bad data
                 c["current_price"] = ask
                 updated += 1
+        live_price_updated = updated
         print(f"[ 1.8/4 ] Live price refresh: {updated}/{len(candidates)} tickers updated from Alpaca")
 
     # 1.85 Intraday signal enrichment (Alpaca only) — VWAP position, relative strength vs SPY.
@@ -157,6 +165,7 @@ def premarket(broker: str = "simulation"):
             key=lambda x: (not x.get("above_vwap", False), -(x.get("rs_vs_spy") or 0))
         )
         above_vwap_count = sum(1 for c in candidates if c.get("above_vwap"))
+        vwap_enriched_count = enriched
         print(f"[ 1.85/4 ] Intraday signals: {enriched}/{len(candidates)} enriched — "
               f"{above_vwap_count} above VWAP")
 
@@ -218,6 +227,16 @@ def premarket(broker: str = "simulation"):
             "sector_blocked":    sector_blocked,
             "guardrail_blocked": guardrail_blocked,
             "vwap_signals":      vwap_signals,
+            "pipeline_counts": {
+                "post_blackout":      pre_filter_count,
+                "post_prefilter":     post_prefilter_count,
+                "prefilter_dropped":  pre_filter_count - post_prefilter_count,
+                "ml_scored":          ml_scored_count,
+                "live_price_updated": live_price_updated,
+                "vwap_enriched":      vwap_enriched_count,
+                "above_vwap":         above_vwap_count,
+                "final_count":        len(candidates),
+            },
         }
     })
 
