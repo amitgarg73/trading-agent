@@ -1,0 +1,37 @@
+name: Stop Trading Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for stopping (logged in Supabase and shown in dashboard)'
+        required: false
+        default: 'Manual stop'
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set halt flag
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python control.py --action stop --reason "${{ github.event.inputs.reason }}"
+
+      - name: Confirm
+        run: |
+          echo "✅ Halt flag set. All scheduled premarket / intraday / EOD runs will skip until restarted."
+          echo "   Trigger 'Restart Trading Agent' to resume."

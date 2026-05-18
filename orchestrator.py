@@ -16,6 +16,18 @@ from config.settings import UNIVERSE, STRATEGY_MIN_SCORE
 from agents import alpaca_broker
 
 
+def _is_halted() -> bool:
+    """Return True if a manual halt flag is active in Supabase."""
+    rows = db.select("scan_results", filters={"scan_type": "halt_flag"})
+    if rows:
+        r = rows[0].get("results", {})
+        print(f"\n🛑  SYSTEM HALTED — {r.get('reason', 'manual override')}")
+        print(f"    Halted at: {r.get('halted_at', 'unknown')}")
+        print(f"    Trigger the 'Restart Trading Agent' GitHub Actions workflow to resume.\n")
+        return True
+    return False
+
+
 def load_universe() -> list:
     """Return dynamic universe from Supabase if refreshed within 7 days, else static fallback."""
     rows = db.select("scan_results", filters={"scan_type": "universe_refresh"},
@@ -36,6 +48,9 @@ def premarket(broker: str = "simulation"):
     print(f"\n{'='*60}")
     print(f"  PREMARKET RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')} [{broker}]")
     print(f"{'='*60}\n")
+
+    if _is_halted():
+        return
 
     # Concurrent run lock — bail out if premarket already completed today
     today_iso = date.today().isoformat()
@@ -274,6 +289,8 @@ def premarket(broker: str = "simulation"):
 
 def intraday(broker: str = "simulation"):
     print(f"\n[ INTRADAY ] {datetime.now().strftime('%H:%M ET')} [{broker}]")
+    if _is_halted():
+        return
     result = run_intraday(broker=broker)
     print(f"  Open: {result['open_positions']} | "
           f"Unrealized P&L: ${result['unrealized_pnl']:,.2f} | "
@@ -287,6 +304,8 @@ def eod(broker: str = "simulation"):
     print(f"\n{'='*60}")
     print(f"  EOD RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')} [{broker}]")
     print(f"{'='*60}\n")
+    if _is_halted():
+        return
     record = performance.run(broker=broker)
     if not record:
         print("  No trades today.")

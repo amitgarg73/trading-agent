@@ -28,6 +28,13 @@ def update(table: str, match: dict, data: dict) -> list:
     return q.execute().data
 
 
+def delete(table: str, match: dict) -> list:
+    q = get_client().table(table).delete()
+    for col, val in match.items():
+        q = q.eq(col, val)
+    return q.execute().data
+
+
 def select(table: str, filters: Optional[dict] = None, order: Optional[str] = None, limit: Optional[int] = None) -> list:
     q = get_client().table(table).select("*")
     if filters:
