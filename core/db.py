@@ -17,8 +17,8 @@ def insert(table: str, data: dict) -> dict:
     return get_client().table(table).insert(data).execute().data[0]
 
 
-def upsert(table: str, data: dict) -> dict:
-    return get_client().table(table).upsert(data).execute().data[0]
+def upsert(table: str, data: dict, on_conflict: str = "id") -> dict:
+    return get_client().table(table).upsert(data, on_conflict=on_conflict).execute().data[0]
 
 
 def update(table: str, match: dict, data: dict) -> list:

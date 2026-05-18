@@ -53,7 +53,7 @@ def run(broker: str = "simulation") -> dict:
         "notes":               f"Target: $1,000 | Actual: ${total_pnl:,.2f} | {'✅ HIT' if total_pnl >= 1000 else '⚠️ MISSED'}",
     }
 
-    db.upsert("daily_performance", record)
+    db.upsert("daily_performance", record, on_conflict="date")
     return record
 
 
