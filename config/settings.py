@@ -59,7 +59,7 @@ SCORE_THRESHOLD      = 3          # minimum score to be a scanner candidate (abs
 #
 # NOTE: This filters to score >= STRATEGY_MIN_SCORE (positive), not abs(score).
 #   Bearish candidates (negative scores) are always excluded — correct for a BUY-only system.
-STRATEGY_MIN_SCORE   = 5          # pre-filter before Claude call: only bullish candidates with score ≥ this
+STRATEGY_MIN_SCORE   = 4          # pre-filter before Claude call: only bullish candidates with score ≥ this
 
 # Stock + ETF universe
 # Removed drags: PYPL, META, ARKK, IWM, JPM, IBM, MA, ROOT, PSA, TWLO
