@@ -236,25 +236,28 @@ body('These features improve how orders are entered and filled in Alpaca.')
 add_table(
     ['Feature', 'What', 'Why', 'Effort', 'Priority', 'Status'],
     [
-        ('Time-of-day entry filter',
+        ('Time-of-day entry filter (skip first 15 min)',
          'Skip entries in first 15 min (9:30–9:45 AM ET); wide spreads and false signals in open auction',
          'Most false signals and stop-outs happen in the opening 15 min; waiting improves entry quality',
-         'S', 'P1', 'IDEA'),
+         'S', 'P1', 'SHIPPED'),
 
         ('Limit order entries',
-         'Submit limit buy slightly below current price instead of market order',
+         'Submit limit buy at entry_price × 1.001 instead of market order',
          'Market orders on small/mid caps can have 0.2–0.5% slippage; limits improve average entry price',
-         'M', 'P2', 'IDEA'),
+         'M', 'P1', 'SHIPPED'),
 
         ('Pre-market paper simulation',
          'Run a dry simulation at 8:50 AM before 9:00 AM premarket to validate pipeline without opening positions',
          'Useful during testing phases; verifies Claude picks and risk validation before live submission',
          'S', 'P3', 'BACKLOG'),
 
-        ('Trailing stop Alpaca native order',
-         'Replace manual close_position() trail check with Alpaca\'s native trailing stop order',
-         'Native trailing stop fires immediately on price move; our 30-min check can miss a fast reversal',
-         'M', 'P2', 'IDEA'),
+        ('Native Alpaca trailing stop (OTO-OCO) — REQUIRED BEFORE REAL MONEY',
+         'Replace bracket order with OTO-OCO: limit entry → OCO (take-profit + trail_percent=1.0). '
+         'Current 15-min polling can miss fast reversals; native stop fires in real-time. '
+         'Risks: gap window (unprotected between fill and OCO submit), double-sell, OCO failure. '
+         'Mitigation: USE_NATIVE_TRAILING_STOP feature flag, entry_filled_at DB column, '
+         'idempotent OCO guard, unit tests with mocked Alpaca client, 2-week paper A/B before enabling.',
+         'L', 'P0', 'BACKLOG'),
     ]
 )
 

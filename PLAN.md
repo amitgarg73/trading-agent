@@ -142,11 +142,28 @@ Mitigation plan when building:
 
 ## After All Fixes — Rerun Backtest
 
-Once all 5 fixes are live, run a fresh backtest to see impact on simulated performance:
+Once all fixes are validated over 1 week of live paper trading, run a fresh backtest:
 ```bash
 python3 backtest.py --days 30 --top 15
 ```
-Then compare to current baseline ($716/day, 90% win days).
+Compare to current baseline ($716/day, 90% win days).
+
+---
+
+## ⚠️ Pre-Real-Money Checklist — DO NOT SKIP
+
+Before deploying any real capital, complete ALL of the following:
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | Native Alpaca trailing stop (OTO-OCO) | ⬜ TODO — P0 |
+| 2 | 2-week paper trading validation (all friction fixes live) | ⬜ TODO |
+| 3 | Backtest rerun post-fixes | ⬜ TODO |
+| 4 | Real money confidence assessment (target: 7/10 minimum) | ⬜ TODO |
+| 5 | DAILY_LOCK_IN_TARGET review for real capital | ⬜ TODO |
+
+**Native trailing stop is P0 for real money** — 15-min polling is acceptable on paper,
+unacceptable on real capital where a fast reversal can cost hundreds of dollars.
 
 ---
 
