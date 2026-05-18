@@ -130,6 +130,7 @@ def refresh_positions(broker: str = "simulation") -> list:
                                 "realized_pnl":   pnl,
                                 "close_price":    fill,
                                 "close_reason":   "STOP",
+                                "exit_mechanism": "MANUAL_TRAIL",
                                 "closed_at":      datetime.utcnow().isoformat(),
                                 "status":         "CLOSED",
                                 "high_watermark": new_high_wm,
@@ -149,12 +150,13 @@ def refresh_positions(broker: str = "simulation") -> list:
             else:
                 # Gone from Alpaca — bracket order exited the position
                 order_id = pos.get("alpaca_order_id")
-                close_price, close_reason = None, "CLOSED"
+                close_price, exit_mechanism = None, "CLOSED"
                 if order_id:
-                    close_price, close_reason = alpaca_broker.get_order_fill(order_id)
+                    close_price, exit_mechanism = alpaca_broker.get_order_fill(order_id)
 
-                close_price = close_price or pos.get("current_price") or pos["entry_price"]
-                close_reason = close_reason or "CLOSED"
+                close_price    = close_price    or pos.get("current_price") or pos["entry_price"]
+                exit_mechanism = exit_mechanism or "CLOSED"
+                close_reason   = "TARGET" if exit_mechanism == "TARGET" else "STOP"
 
                 shares = pos["shares"]
                 entry  = pos["entry_price"]
@@ -168,6 +170,7 @@ def refresh_positions(broker: str = "simulation") -> list:
                     "realized_pnl":   pnl,
                     "close_price":    close_price,
                     "close_reason":   close_reason,
+                    "exit_mechanism": exit_mechanism,
                     "closed_at":      datetime.utcnow().isoformat(),
                     "status":         "CLOSED",
                 })
@@ -212,12 +215,14 @@ def refresh_positions(broker: str = "simulation") -> list:
                 close_reason = "TARGET"
 
         if close_reason:
+            sim_mechanism = "MANUAL_TRAIL" if close_reason == "STOP" and eff_stop > stop else close_reason
             db.update("positions", {"id": pos["id"]}, {
                 "current_price":  price,
                 "unrealized_pnl": 0,
                 "realized_pnl":   pnl,
                 "close_price":    price,
                 "close_reason":   close_reason,
+                "exit_mechanism": sim_mechanism,
                 "closed_at":      datetime.utcnow().isoformat(),
                 "status":         "CLOSED",
                 "high_watermark": new_high_wm,
@@ -267,12 +272,13 @@ def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list
               else round(shares * (entry - price), 2)
 
         db.update("positions", {"id": pos["id"]}, {
-            "current_price": price,
-            "realized_pnl":  pnl,
-            "close_price":   price,
-            "close_reason":  reason,
-            "closed_at":     datetime.utcnow().isoformat(),
-            "status":        "CLOSED",
+            "current_price":  price,
+            "realized_pnl":   pnl,
+            "close_price":    price,
+            "close_reason":   reason,
+            "exit_mechanism": reason,
+            "closed_at":      datetime.utcnow().isoformat(),
+            "status":         "CLOSED",
         })
         db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
         closed.append({**pos, "realized_pnl": pnl})

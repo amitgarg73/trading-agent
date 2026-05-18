@@ -131,8 +131,8 @@ def get_position_data(ticker: str) -> Optional[dict]:
 
 def get_order_fill(order_id: str) -> tuple:
     """
-    For a completed bracket order, return (close_price, close_reason).
-    close_reason: TARGET (limit leg filled) or STOP (stop leg filled).
+    For a completed bracket order, return (close_price, exit_mechanism).
+    exit_mechanism: TARGET, NATIVE_TRAIL, or STOP.
     Returns (None, None) if fill data isn't available.
     """
     try:
@@ -141,8 +141,13 @@ def get_order_fill(order_id: str) -> tuple:
             status_str = str(leg.status).lower()
             type_str   = str(leg.order_type).lower()
             if "filled" in status_str and leg.filled_avg_price:
-                reason = "TARGET" if "limit" in type_str else "STOP"
-                return float(leg.filled_avg_price), reason
+                if "limit" in type_str:
+                    mechanism = "TARGET"
+                elif "trailing" in type_str:
+                    mechanism = "NATIVE_TRAIL"
+                else:
+                    mechanism = "STOP"
+                return float(leg.filled_avg_price), mechanism
     except Exception:
         pass
     return None, None

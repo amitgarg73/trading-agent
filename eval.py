@@ -75,6 +75,25 @@ def _compute_metrics(days: int) -> dict | None:
     if not recs:
         recs.append("Keep monitoring.")
 
+    # Native trail validation — compare native vs manual trail positions
+    native  = [p for p in positions if p.get("native_trail_active")]
+    manual  = [p for p in positions if not p.get("native_trail_active")]
+
+    def _cohort_stats(cohort):
+        if not cohort:
+            return None
+        w = [p for p in cohort if (p.get("realized_pnl") or 0) > 0]
+        exits = {}
+        for p in cohort:
+            m = p.get("exit_mechanism") or "UNKNOWN"
+            exits[m] = exits.get(m, 0) + 1
+        return {
+            "count":     len(cohort),
+            "win_rate":  round(len(w) / len(cohort) * 100, 1),
+            "avg_pnl":   round(sum(p.get("realized_pnl") or 0 for p in cohort) / len(cohort), 2),
+            "exits":     exits,
+        }
+
     return {
         "days":           len(perf_rows),
         "score":          round(total_score, 1),
@@ -100,6 +119,8 @@ def _compute_metrics(days: int) -> dict | None:
         "worst_pnl":      round(worst["realized_pnl"] or 0, 2) if worst else 0,
         "close_reasons":  close_reasons,
         "recommendations": recs,
+        "native_trail":   _cohort_stats(native),
+        "manual_trail":   _cohort_stats(manual),
     }
 
 
@@ -144,6 +165,29 @@ def _print_metrics(m: dict):
             print(f"\n  Close reasons:")
             for reason, count in sorted(m["close_reasons"].items(), key=lambda x: -x[1]):
                 print(f"    {reason:12s}: {count}")
+
+    native = m.get("native_trail")
+    manual = m.get("manual_trail")
+    if native or manual:
+        print(f"\n[ TRAILING STOP VALIDATION ]")
+        for label, cohort in [("Native trail (Alpaca)", native), ("Manual trail (high_watermark)", manual)]:
+            if not cohort:
+                continue
+            print(f"  {label}:")
+            print(f"    Trades:    {cohort['count']}")
+            print(f"    Win rate:  {cohort['win_rate']:.1f}%")
+            print(f"    Avg P&L:   ${cohort['avg_pnl']:,.2f}")
+            if cohort["exits"]:
+                exits_str = "  |  ".join(f"{k}: {v}" for k, v in sorted(cohort["exits"].items()))
+                print(f"    Exits:     {exits_str}")
+        if native and manual:
+            pnl_delta = native["avg_pnl"] - manual["avg_pnl"]
+            wr_delta  = native["win_rate"] - manual["win_rate"]
+            print(f"  Native vs manual:  avg P&L {pnl_delta:+.2f}  |  win rate {wr_delta:+.1f}%")
+            if native.get("exits", {}).get("NATIVE_TRAIL", 0) > 0:
+                print(f"  ✅ Native trail exits confirmed — no double-sell issues detected")
+            else:
+                print(f"  ⏳ No native trail exits yet — waiting for stop to fire")
 
     print(f"\n[ RECOMMENDATIONS ]")
     for rec in m["recommendations"]:
