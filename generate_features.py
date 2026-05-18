@@ -431,9 +431,117 @@ add_table(
     ]
 )
 
-# ── 9. Priority Summary ───────────────────────────────────────────────────────
+# ── 9. Real Edge Strategy ────────────────────────────────────────────────────
 doc.add_page_break()
-heading('9. Priority Summary — What to Build Next')
+heading('9. Real Edge — Building Durable Competitive Advantage')
+body(
+    'Honest assessment of where the current system has edge — and where it does not — '
+    'and what to build to create genuine, durable advantage over commodity signals.'
+)
+
+heading('Why Current Signals Have No Edge', level=2)
+body(
+    'RSI, MACD, and Bollinger Bands are in every trading textbook and every retail platform. '
+    'Quant funds run the same signals at microsecond speed with better fills. '
+    'By the time yfinance shows a signal (15-min delayed), it is already partially priced in. '
+    'Commodity signals + delayed data = no structural advantage. '
+    'The current system\'s real value is in its risk management discipline (3:1 R:R, stop-loss, '
+    'sector caps, position sizing) — not its signal intelligence.'
+)
+
+heading('Where Retail Can Actually Win', level=2)
+body(
+    'Large hedge funds cannot exploit small-cap opportunities — $10M minimum position sizes '
+    'make many universe tickers untradeable for institutional money. '
+    'A focused system exploiting stock-specific catalysts and alternative data can find edge '
+    'that institutional capital ignores by design. '
+    'The goal is information asymmetry at the stock level, not speed.'
+)
+
+heading('Honest Confidence Assessment', level=2)
+add_table(
+    ['Scenario', 'Expected Daily P&L', 'Notes'],
+    [
+        ('Paper trading, bull market',    '$500–750',          'Close to 30-day backtest — favorable conditions'),
+        ('Paper trading, choppy market',  '$0–200, some losses', 'Momentum signals fail in sideways/mean-reverting markets'),
+        ('Real money, bull market',       '$200–400',          '~40% haircut from slippage, spreads, partial fills'),
+        ('Real money, choppy market',     'Breakeven to -loss', 'No edge on non-trending days with current signals'),
+        ('Real money, volatility spike',  'Reduced but protected', 'VIX gates reduce position count — good design'),
+    ]
+)
+body('Overall confidence: 6/10 paper, 4/10 real money with current signals only.')
+
+heading('Features That Create Real Edge', level=2)
+body('Ranked by signal quality and buildability. Each addresses a specific gap in the current system.')
+
+add_table(
+    ['Priority', 'Feature', 'Edge Type', 'What', 'Why It Works', 'Effort', 'Status'],
+    [
+        ('1',
+         'Real-time data (Alpaca streams)',
+         'Execution',
+         'Replace yfinance 15-min delay with Alpaca real-time WebSocket feed for price + volume',
+         'Foundational fix — stale prices cause entry slippage on every trade; free for Alpaca paper accounts',
+         'M', 'IDEA'),
+
+        ('2',
+         'Post-earnings momentum agent',
+         'Information',
+         'Hunt stocks that beat estimates + raised guidance in last 48h; enter 1-2 days after report',
+         'Post-earnings announcement drift (PEAD) is one of the most persistent anomalies in academic finance; '
+         'current blackout throws this edge away',
+         'M', 'IDEA'),
+
+        ('3',
+         'Market regime classifier',
+         'Analytical',
+         'Classify each day as Trending / Choppy / Volatile using VIX, market breadth, sector dispersion; '
+         'switch strategy or skip accordingly',
+         'Momentum signals work in trending markets and generate false signals in choppy ones; '
+         'knowing the regime dramatically improves when to trade',
+         'M', 'IDEA'),
+
+        ('4',
+         'Options flow signal',
+         'Information',
+         'Pull unusual options activity (large call buying relative to open interest) for candidates; '
+         'boost score for tickers with informed positioning',
+         'Unusual options activity consistently precedes price moves; represents informed institutional '
+         'money moving before a catalyst — genuinely non-commodity information',
+         'L', 'BACKLOG'),
+
+        ('5',
+         'Insider buying scan (Form 4)',
+         'Information',
+         'Weekly scan of SEC EDGAR Form 4 filings; flag tickers with cluster buys '
+         '(3+ insiders buying in same week)',
+         'Executive buying of own stock is historically one of the strongest retail-accessible signals; '
+         'free public data that most retail systems never use',
+         'M', 'IDEA'),
+
+        ('6',
+         'Claude on earnings transcripts',
+         'Analytical',
+         'Feed Claude actual earnings call text; extract tone, guidance language, management confidence '
+         'beyond what the headline EPS number shows',
+         'True LLM value-add — qualitative signals that quant models cannot capture; '
+         'analyst surprise is often in the language, not just the numbers',
+         'L', 'BACKLOG'),
+    ]
+)
+
+heading('Realistic Ceiling With Real Edge Added', level=2)
+body(
+    'Even with all of the above, this remains a retail system. '
+    'Realistic ceiling with full edge stack in a favorable market: $500–800/day real money. '
+    'The regime classifier (item 3) is the highest-leverage single feature — it prevents '
+    'trading on days where the signals do not work, which is where most losses come from. '
+    'Validate paper trading for 30 days before deploying any real capital.'
+)
+
+# ── 10. Priority Summary ──────────────────────────────────────────────────────
+doc.add_page_break()
+heading('10. Priority Summary — What to Build Next')
 body('Ranked by impact × effort. Focus on P1 ideas first, validate via backtest before deploying.')
 
 add_table(
