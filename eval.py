@@ -25,8 +25,13 @@ def _compute_metrics(days: int) -> dict | None:
     ann_return    = total_return / len(perf_rows) * 250
     target_days   = sum(1 for r in perf_rows if (r["total_pnl"] or 0) >= DAILY_PROFIT_TARGET)
 
+    eval_dates = {r["date"] for r in perf_rows}
     positions = db.select("positions", filters={"status": "CLOSED"})
-    positions = [p for p in positions if p.get("close_reason") not in ("CLEANUP", "UNFILLED")]
+    positions = [
+        p for p in positions
+        if p.get("close_reason") not in ("CLEANUP", "UNFILLED")
+        and (p.get("closed_at") or "")[:10] in eval_dates
+    ]
 
     wins   = [p for p in positions if (p.get("realized_pnl") or 0) > 0]
     losses = [p for p in positions if (p.get("realized_pnl") or 0) <= 0]
