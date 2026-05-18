@@ -93,6 +93,37 @@ def fmt_stop(pos, tight=False):
     return f"Stop ${pos['stop_loss']:.2f}"
 
 
+def fmt_vwap_badge(ticker: str, vwap_sigs: dict) -> str:
+    """Inline HTML badge: VWAP position + relative strength at entry time. Empty string if no data."""
+    sig = vwap_sigs.get(ticker)
+    if not sig or sig.get("above_vwap") is None:
+        return ""
+    above  = sig["above_vwap"]
+    rs     = sig.get("rs_vs_spy")
+    color  = "#1a5276" if above else "#7f8c8d"
+    label  = "▲ VWAP" if above else "▼ VWAP"
+    rs_str = f" · RS {rs:.1f}×" if rs is not None else ""
+    return (
+        f"<span style='background:{color};color:white;padding:2px 7px;"
+        f"border-radius:4px;font-size:11px;margin-left:6px'>{label}{rs_str}</span>"
+    )
+
+
+def _vwap_legend():
+    with st.expander("ℹ️ VWAP & RS signals explained"):
+        st.markdown(
+            "**▲ VWAP** — Entry price was *above* today's Volume-Weighted Average Price — "
+            "the institutional benchmark. Above VWAP = sustained buying pressure since open, "
+            "confirming momentum direction. This is the preferred setup.\n\n"
+            "**▼ VWAP** — Price was below VWAP at entry. Indicates selling pressure; a weaker setup "
+            "that Claude selected only when other signals were strong enough to override.\n\n"
+            "**RS ×** (Relative Strength vs SPY since open) — how much the stock's move outpaced "
+            "the market. RS 2.0× = stock moved twice as far as SPY. "
+            "Target threshold: > 1.5× for strong momentum. < 0 = stock fell while market rose — avoid.\n\n"
+            "*Captured at premarket entry time. Only available on Alpaca paper runs; absent in simulation mode.*"
+        )
+
+
 # ── SUMMARY ───────────────────────────────────────────────────────
 if page == "Summary":
     today = date.today().isoformat()
@@ -104,6 +135,9 @@ if page == "Summary":
         scans = db.select("scan_results", filters={"scan_type": "premarket"}, order="created_at", limit=1)
     scan     = scans[0] if scans else None
     run_date = scan["date"] if scan else today
+
+    scan_raw     = scan["results"] if scan else {}
+    vwap_signals = scan_raw.get("vwap_signals", {})
 
     plans  = db.select("trade_plans", filters={"date": run_date})
     plan   = plans[0] if plans else None
@@ -235,6 +269,8 @@ if page == "Summary":
     section_header = "🚀 Riding Tailwind" if in_tailwind else ("🏆 Exceptional Day" if exceptional_day else "🟢 In Flight")
     st.subheader(f"{section_header} — {len(open_pos)} position{'s' if len(open_pos) != 1 else ''}")
     if open_pos:
+        if vwap_signals:
+            _vwap_legend()
         tail_badge = (
             "<span style='background:#1e8449;color:white;padding:2px 8px;"
             "border-radius:4px;font-size:11px;margin-left:6px'>🚀 tailwind</span>"
@@ -245,8 +281,9 @@ if page == "Summary":
             icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
             name = COMPANY_NAMES.get(pos["ticker"], "")
             label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
+            vwap_badge = fmt_vwap_badge(pos["ticker"], vwap_signals)
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 2])
-            c1.markdown(f"**{icon} {label}**{tail_badge}", unsafe_allow_html=True)
+            c1.markdown(f"**{icon} {label}**{tail_badge}{vwap_badge}", unsafe_allow_html=True)
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Now: **${pos.get('current_price', 0):.2f}**")
             c4.markdown(f"Target ${pos['target_price']:.2f}  ·  {fmt_stop(pos, tight=in_tailwind)}")
@@ -392,6 +429,8 @@ elif page == "Today":
     executed_trade_ids = {p["planned_trade_id"] for p in open_pos + run_closed}
     trades = [t for t in trades if t["id"] in executed_trade_ids]
 
+    vwap_signals_today = results.get("vwap_signals", {})
+
     # Unpack scan results
     skipped       = results.get("skipped", False)
     vix           = results.get("vix")
@@ -533,7 +572,8 @@ elif page == "Today":
     if candidates:
         with st.expander(f"📋 Screened Candidates — {len(candidates)} stocks", expanded=True):
             df_scan = pd.DataFrame(candidates)
-            show_cols = ["ticker", "price", "technical_score", "rsi", "volume_ratio", "atr_pct", "signals"]
+            show_cols = ["ticker", "price", "technical_score", "rsi", "volume_ratio",
+                         "above_vwap", "rs_vs_spy", "atr_pct", "signals"]
             df_scan = df_scan[[c for c in show_cols if c in df_scan.columns]]
             if "technical_score" in df_scan.columns:
                 df_scan = df_scan.sort_values("technical_score", ascending=False)
@@ -638,6 +678,8 @@ elif page == "Today":
     if open_pos:
         open_header = "**🚀 Riding Tailwind**" if _in_tailwind else "**Open**"
         st.markdown(open_header)
+        if vwap_signals_today:
+            _vwap_legend()
         _tail_badge = (
             "<span style='background:#1e8449;color:white;padding:2px 8px;"
             "border-radius:4px;font-size:11px;margin-left:6px'>🚀 tailwind</span>"
@@ -649,7 +691,8 @@ elif page == "Today":
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 2])
             name = COMPANY_NAMES.get(pos["ticker"], "")
             label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
-            c1.markdown(f"**{icon} {label}** `{pos['action']}`{_tail_badge}", unsafe_allow_html=True)
+            _vwap_badge = fmt_vwap_badge(pos["ticker"], vwap_signals_today)
+            c1.markdown(f"**{icon} {label}** `{pos['action']}`{_tail_badge}{_vwap_badge}", unsafe_allow_html=True)
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
             c4.markdown(f"Target: ${pos['target_price']:.2f} | {fmt_stop(pos, tight=_in_tailwind)}")
@@ -676,6 +719,11 @@ elif page == "Today":
 elif page == "Positions":
     st.title("Open Positions")
 
+    # Load VWAP signals from today's premarket scan (available in Alpaca mode)
+    _pos_today = date.today().isoformat()
+    _pos_scans = db.select("scan_results", filters={"date": _pos_today, "scan_type": "premarket"})
+    _pos_vwap  = (_pos_scans[0]["results"] if _pos_scans else {}).get("vwap_signals", {})
+
     open_pos = db.select("positions", filters={"status": "OPEN"})
 
     if not open_pos:
@@ -687,6 +735,8 @@ elif page == "Positions":
             f"<span style='color:{pnl_color(total_unrealized)}'>{fmt_pnl(total_unrealized)}</span>",
             unsafe_allow_html=True
         )
+        if _pos_vwap:
+            _vwap_legend()
         st.markdown("---")
         for pos in open_pos:
             pnl  = pos.get("unrealized_pnl", 0)
@@ -694,7 +744,8 @@ elif page == "Positions":
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 2])
             name = COMPANY_NAMES.get(pos["ticker"], "")
             label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
-            c1.markdown(f"**{icon} {label}** `{pos['action']}`")
+            _pb   = fmt_vwap_badge(pos["ticker"], _pos_vwap)
+            c1.markdown(f"**{icon} {label}** `{pos['action']}`{_pb}", unsafe_allow_html=True)
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
             c4.markdown(f"Target: ${pos['target_price']:.2f} | {fmt_stop(pos)}")
