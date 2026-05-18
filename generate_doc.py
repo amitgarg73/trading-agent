@@ -62,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.2  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.3  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -243,7 +243,7 @@ body('Stage 3 — Risk Agent (Claude AI)')
 bullet('Reviews every proposed trade against hard-coded risk rules')
 bullet('Rejects if: stop loss > 1% of entry, target < 3% of entry, reward:risk < 3:1')
 bullet('Rejects if: target below entry (BUY) or stop above entry (BUY)')
-bullet('Position sizing: $5K–$7K per trade (5–7% of $100K capital)')
+bullet('Position sizing: confidence-weighted — HIGH=$7,000, MEDIUM=$6,000, LOW=$5,000; risk agent _apply_confidence_sizing() overrides whatever Claude sets before running validation — ensures correct sizing even if Claude hallucinates a different value')
 bullet('Returns approved and rejected trades with specific rejection reasons in plain English')
 
 body('Stage 3.5 — Sector Correlation Guard (V2d)')
@@ -279,7 +279,8 @@ body('Position monitoring:')
 bullet('simulation mode: fetches current prices via yfinance, calculates unrealized P&L')
 bullet('alpaca mode: calls Alpaca API (get_position_data) to sync live price and unrealized P&L for each open position')
 bullet('alpaca mode: when a position disappears from Alpaca (bracket fill triggered), fetches actual fill price from bracket order leg to compute realized P&L')
-bullet('Closes positions that hit +3% target (take profit) or -1% stop loss (cut loss)')
+bullet('Trailing stop: effective_stop = max(original_stop_loss, high_watermark × 0.99); high_watermark updated every 30-min cycle to track the highest price seen since entry; fires if price pulls back 1% from its peak while still in profit — locks in gains on strong movers before reversal; Alpaca mode calls close_position() directly (bracket auto-cancels)')
+bullet('Closes positions that hit +3% target (take profit) or effective stop (cut loss or protect gain); close_reason=TARGET or STOP')
 bullet('Records close reason: TARGET, STOP, EOD, or LOCK_IN')
 bullet('No overnight holds — all positions closed by end of day')
 doc.add_paragraph()
@@ -472,6 +473,8 @@ add_table(
         ('DAILY_LOSS_LIMIT', '-$300', 'V5: stop opening new trades if today\'s realized P&L drops below this'),
         ('PRICE_SANITY_PCT', '5%', 'V5: reject trade if entry price is more than 5% from current market price'),
         ('DAILY_LOCK_IN_TARGET', '$716', 'V5: close all open positions and lock in gains once today\'s realized P&L hits this threshold — set to 30-day backtest average daily P&L; raise as capital compounds'),
+        ('TRAIL_PCT', '1%', 'V5.3: trailing stop — close if price drops 1% from highest point seen since entry; effective_stop = max(original_stop, high_watermark × 0.99); ratchets up as stock rises in profit'),
+        ('POSITION_SIZE_BY_CONFIDENCE', 'HIGH=$7K / MED=$6K / LOW=$5K', 'V5.3: risk agent maps Claude confidence level to position size before validation; auto-corrects regardless of what Claude sets in the trade JSON'),
     ]
 )
 
@@ -686,6 +689,9 @@ add_table(
         ('45', 'Added Alpaca position reconciliation', 'intraday.py _reconcile_with_alpaca() runs first on every 30-min cycle; any Supabase OPEN position not in Alpaca is marked UNFILLED (P&L=0) — catches the rare case where a bracket order was submitted but the entry leg never filled; dashboard and eval exclude UNFILLED alongside CLEANUP'),
         ('46', 'Updated docs to v5.1', 'Trading_Agent_Documentation.docx and Trading_Agent_PRD.docx regenerated with Summary redesign, eval automation, Agent Scorecard, and Alpaca reconciliation'),
         ('47', 'Added no-margin cumulative capital check and daily profit lock-in', 'guardrails.py: committed_capital tracked across full approved batch for both Alpaca and simulation — rejects any trade that would push total deployed capital past buying_power (no margin); intraday.py: LOCK_IN trigger closes all open positions when realized P&L ≥ $716; dashboard shows LOCK_IN as "🎯 Day Locked"; settings.py: DAILY_LOCK_IN_TARGET = 716; docs updated to v5.2'),
+        ('48', 'Added GitHub Actions retry logic', 'trading.yml: Run agent step retries up to 3 times with 60s backoff before failing — handles transient yfinance/Alpaca/API failures without manual rerun; concurrent run lock ensures retries after partial success exit cleanly'),
+        ('49', 'Trailing stops + confidence-weighted position sizing', 'portfolio.py: high_watermark per position updated each intraday cycle; eff_stop = max(original_stop, peak × 0.99) ratchets as stock rises; Alpaca mode: close_position() fires when trail triggers (bracket auto-cancels); risk.py: _apply_confidence_sizing() maps HIGH→$7K, MEDIUM→$6K, LOW→$5K before validation; strategy.py prompt updated; settings.py: TRAIL_PCT=0.01, POSITION_SIZE_BY_CONFIDENCE; schema.sql: high_watermark column (ALTER TABLE run in Supabase)'),
+        ('50', 'Dashboard trailing stop annotations + docs v5.3', 'fmt_stop() helper shows "Trail $X.XX ↑" on In Flight cards (Summary, Today, Positions tabs) when stop has ratcheted; trade_status() shows "🔶 Trail Stop" for STOP closes with positive P&L vs "🔴 Stop Hit" for losses; docs updated to v5.3'),
     ]
 )
 
