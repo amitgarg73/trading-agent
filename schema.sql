@@ -48,8 +48,10 @@ create table positions (
     close_price         numeric,
     realized_pnl        numeric,
     close_reason        text,  -- TARGET, STOP, EOD, MANUAL
-    alpaca_order_id     text   -- Alpaca parent bracket order ID (null in simulation mode)
+    alpaca_order_id     text,  -- Alpaca parent bracket order ID (null in simulation mode)
+    high_watermark      numeric  -- Trailing stop: highest price seen since entry (updated each intraday cycle)
 );
+-- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS high_watermark NUMERIC;
 
 -- Daily P&L performance
 create table daily_performance (

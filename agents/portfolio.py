@@ -7,6 +7,7 @@ from __future__ import annotations
 import yfinance as yf
 from datetime import date, datetime
 from core import db
+from config.settings import TRAIL_PCT
 
 
 def _current_price(ticker: str) -> float | None:
@@ -70,6 +71,7 @@ def open_positions(plan_id: str, approved_trades: list, broker: str = "simulatio
             "unrealized_pnl":   0,
             "status":           "OPEN",
             "alpaca_order_id":  alpaca_order_id,
+            "high_watermark":   price,
         })
 
         opened.append(position)
@@ -90,14 +92,43 @@ def refresh_positions(broker: str = "simulation") -> list:
             ticker = pos["ticker"]
 
             if ticker in alpaca_open:
-                # Still open in Alpaca — sync price and unrealized P&L
+                # Still open in Alpaca — sync price, update watermark, check trailing stop
                 data = alpaca_broker.get_position_data(ticker)
                 if data:
-                    db.update("positions", {"id": pos["id"]}, {
-                        "current_price":  data["current_price"],
-                        "unrealized_pnl": data["unrealized_pnl"],
-                    })
-                updated.append({**pos, **( data or {}), "close_reason": None})
+                    current     = data["current_price"]
+                    entry       = pos["entry_price"]
+                    high_wm     = float(pos.get("high_watermark") or entry)
+                    new_high_wm = max(high_wm, current)
+                    eff_stop    = max(pos["stop_loss"], round(new_high_wm * (1 - TRAIL_PCT), 4))
+                    trail_hit   = current <= eff_stop and current > pos["stop_loss"]
+
+                    if trail_hit:
+                        print(f"  🔔 TRAIL STOP: {ticker} peak ${new_high_wm:.2f} → ${current:.2f} (stop ${eff_stop:.2f})")
+                        success, fill = alpaca_broker.close_position(ticker)
+                        fill = fill or current
+                        pnl  = round(pos["shares"] * (fill - entry), 2)
+                        db.update("positions", {"id": pos["id"]}, {
+                            "current_price":  fill,
+                            "unrealized_pnl": 0,
+                            "realized_pnl":   pnl,
+                            "close_price":    fill,
+                            "close_reason":   "STOP",
+                            "closed_at":      datetime.utcnow().isoformat(),
+                            "status":         "CLOSED",
+                            "high_watermark": new_high_wm,
+                        })
+                        db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
+                        updated.append({**pos, "current_price": fill,
+                                        "unrealized_pnl": 0, "close_reason": "STOP"})
+                    else:
+                        db.update("positions", {"id": pos["id"]}, {
+                            "current_price":  current,
+                            "unrealized_pnl": data["unrealized_pnl"],
+                            "high_watermark": new_high_wm,
+                        })
+                        updated.append({**pos, **data, "close_reason": None})
+                else:
+                    updated.append({**pos, "close_reason": None})
             else:
                 # Gone from Alpaca — bracket order exited the position
                 order_id = pos.get("alpaca_order_id")
@@ -141,6 +172,11 @@ def refresh_positions(broker: str = "simulation") -> list:
         stop   = pos["stop_loss"]
         target = pos["target_price"]
 
+        # Trailing stop: ratchet stop up from peak; falls back to hard stop when at a loss
+        high_wm     = float(pos.get("high_watermark") or entry)
+        new_high_wm = max(high_wm, price)
+        eff_stop    = max(stop, round(new_high_wm * (1 - TRAIL_PCT), 4))
+
         if action == "BUY":
             pnl = round(shares * (price - entry), 2)
         else:
@@ -148,12 +184,12 @@ def refresh_positions(broker: str = "simulation") -> list:
 
         close_reason = None
         if action == "BUY":
-            if price <= stop:
+            if price <= eff_stop:
                 close_reason = "STOP"
             elif price >= target:
                 close_reason = "TARGET"
         else:
-            if price >= stop:
+            if price >= eff_stop:
                 close_reason = "STOP"
             elif price <= target:
                 close_reason = "TARGET"
@@ -167,12 +203,14 @@ def refresh_positions(broker: str = "simulation") -> list:
                 "close_reason":   close_reason,
                 "closed_at":      datetime.utcnow().isoformat(),
                 "status":         "CLOSED",
+                "high_watermark": new_high_wm,
             })
             db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
         else:
             db.update("positions", {"id": pos["id"]}, {
                 "current_price":  price,
                 "unrealized_pnl": pnl,
+                "high_watermark": new_high_wm,
             })
 
         updated.append({**pos, "current_price": price, "unrealized_pnl": pnl,

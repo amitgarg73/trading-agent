@@ -5,7 +5,8 @@ Enforces hard rules before anything touches the portfolio.
 from __future__ import annotations
 from config.settings import (
     TOTAL_CAPITAL, MAX_POSITION_PCT, MIN_POSITION_PCT,
-    MAX_LOSS_PER_TRADE, MIN_REWARD_RISK, MAX_POSITIONS
+    MAX_LOSS_PER_TRADE, MIN_REWARD_RISK, MAX_POSITIONS,
+    POSITION_SIZE_BY_CONFIDENCE,
 )
 
 
@@ -60,6 +61,16 @@ def _validate_trade(trade: dict) -> tuple[bool, str]:
     return True, "OK"
 
 
+def _apply_confidence_sizing(trade: dict) -> dict:
+    """Override position_size based on confidence level before validation."""
+    confidence = (trade.get("confidence") or "MEDIUM").upper()
+    correct_size = POSITION_SIZE_BY_CONFIDENCE.get(confidence, POSITION_SIZE_BY_CONFIDENCE["MEDIUM"])
+    if trade.get("position_size") != correct_size:
+        print(f"        📐 {trade.get('ticker')}: size ${trade.get('position_size', '?'):,} → ${correct_size:,} ({confidence})")
+    trade["position_size"] = correct_size
+    return trade
+
+
 def _compute_shares(trade: dict) -> int:
     size  = trade.get("position_size", 0)
     entry = trade.get("entry_price", 1)
@@ -72,6 +83,7 @@ def run(strategy_output: dict) -> dict:
     rejected   = []
 
     for trade in raw_trades[:MAX_POSITIONS]:
+        trade = _apply_confidence_sizing(trade)
         ok, reason = _validate_trade(trade)
         if ok:
             trade["shares"]  = _compute_shares(trade)
