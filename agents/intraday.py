@@ -65,3 +65,21 @@ def run(broker: str = "simulation") -> dict:
     })
 
     return summary
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Sync open positions from Alpaca and check target/stop hits.")
+    parser.add_argument("--broker", default="alpaca", choices=["alpaca", "simulation"],
+                        help="Broker to sync from (default: alpaca)")
+    args = parser.parse_args()
+
+    result = run(broker=args.broker)
+    print(f"\n  Open positions:  {result['open_positions']}")
+    print(f"  Just closed:     {result['just_closed']}")
+    print(f"  Unrealized P&L:  ${result['unrealized_pnl']:,.2f}")
+    print(f"  Realized P&L:    ${result['realized_pnl']:,.2f}")
+    if result["closed_details"]:
+        print(f"\n  Closed this run:")
+        for c in result["closed_details"]:
+            print(f"    {c['ticker']:6s}  {c['reason']:8s}  ${c['realized_pnl']:,.2f}")

@@ -201,3 +201,9 @@ def run() -> list[str]:
 
     print(f"        Saved {len(tickers)} tickers to Supabase\n")
     return tickers
+
+
+if __name__ == "__main__":
+    tickers = run()
+    print(f"Universe refresh complete — {len(tickers)} tickers saved to Supabase.")
+    print(f"Top 20 by ATR%: {', '.join(tickers[:20])}")

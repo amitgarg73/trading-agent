@@ -143,3 +143,29 @@ def run_scan(universe=None) -> list[dict]:
 
     candidates.sort(key=lambda x: abs(x["technical_score"]), reverse=True)
     return candidates
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Run the market scanner on the current universe.")
+    parser.add_argument("--limit", type=int, default=20, help="Max candidates to display (default: 20)")
+    args = parser.parse_args()
+
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from orchestrator import load_universe
+
+    print(f"\nLoading universe...")
+    universe = load_universe()
+    print(f"Scanning {len(universe)} tickers...\n")
+
+    results = run_scan(universe=universe)
+    display = results[:args.limit]
+
+    print(f"{'Ticker':<8} {'Score':>6} {'Price':>8} {'RSI':>6} {'Vol Ratio':>10} {'ATR%':>6}  Signals")
+    print("-" * 70)
+    for c in display:
+        print(f"{c['ticker']:<8} {c['technical_score']:>6.1f} ${c['price']:>7.2f}"
+              f" {(c['rsi'] or 0):>6.1f} {(c['volume_ratio'] or 0):>10.2f}x"
+              f" {(c['atr_pct'] or 0):>5.1f}%  {c['signals']}")
+    print(f"\n{len(results)} candidates found (showing top {len(display)})")

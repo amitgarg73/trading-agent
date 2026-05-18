@@ -55,3 +55,21 @@ def run(broker: str = "simulation") -> dict:
 
     db.upsert("daily_performance", record)
     return record
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Run EOD close and calculate today's P&L.")
+    parser.add_argument("--broker", default="alpaca", choices=["alpaca", "simulation"],
+                        help="Broker to close positions through (default: alpaca)")
+    args = parser.parse_args()
+
+    result = run(broker=args.broker)
+    if result:
+        print(f"\n  Date:            {result['date']}")
+        print(f"  Total P&L:       ${result['total_pnl']:,.2f}")
+        print(f"  Trades:          {result['total_trades']}  ({result['win_count']}W / {result['loss_count']}L)")
+        print(f"  Win rate:        {result['win_rate']:.1f}%")
+        print(f"  Best trade:      {result['best_trade_ticker']}  +${result['best_trade_pnl']:,.2f}")
+        print(f"  Worst trade:     {result['worst_trade_ticker']}  ${result['worst_trade_pnl']:,.2f}")
+        print(f"  Ending capital:  ${result['ending_capital']:,.0f}")

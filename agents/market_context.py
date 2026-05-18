@@ -296,3 +296,8 @@ def run() -> dict:
         "summary":         summary,
         "skip_reason":     skip_reason,
     }
+
+
+if __name__ == "__main__":
+    result = run()
+    print(f"\n  Summary: {result['summary']}")
