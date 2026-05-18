@@ -80,6 +80,8 @@ def pnl_color(val):
 
 def fmt_stop(pos):
     """Show trailing stop level when it has ratcheted above the original stop; else show original."""
+    if pos.get("native_trail_active"):
+        return f"Trail **{TRAIL_PCT*100:.0f}%** ↑ (native)"
     hw       = float(pos.get("high_watermark") or pos.get("entry_price", 0))
     eff_stop = max(pos["stop_loss"], round(hw * (1 - TRAIL_PCT), 4))
     if eff_stop > pos["stop_loss"]:

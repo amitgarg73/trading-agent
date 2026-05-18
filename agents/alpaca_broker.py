@@ -71,19 +71,32 @@ def submit_bracket_order(
     target_price: float,
     stop_price: float,
     action: str = "BUY",
+    use_native_trail: bool = False,
+    trail_pct: float = 0.01,
 ) -> str:
     """
     Submit a bracket order: limit entry + limit take-profit + stop-loss.
-    Uses limit order (not market) to avoid paying the spread on entry.
-    Limit set at entry_price + 0.1% buffer to ensure fill on liquid stocks
-    while avoiding chasing stocks that gap far above our signal price.
+
+    use_native_trail=False (default): fixed stop at stop_price; manual 15-min trail check.
+    use_native_trail=True: trailing stop leg at trail_pct% — Alpaca tracks peak in real-time,
+                           fires immediately on reversal (no 15-min polling gap).
+                           Only enable after 2-week paper A/B validation.
+
+    Entry is a limit order at entry_price + 0.1% buffer for fill probability on liquid stocks.
     Returns the Alpaca parent order ID.
     """
     from alpaca.trading.requests import LimitOrderRequest, TakeProfitRequest, StopLossRequest
     from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
     side        = OrderSide.BUY if action == "BUY" else OrderSide.SELL
-    limit_price = round(entry_price * 1.001, 2)  # 0.1% buffer for fill probability
+    limit_price = round(entry_price * 1.001, 2)
+
+    if use_native_trail:
+        stop_loss_req = StopLossRequest(trail_percent=round(trail_pct * 100, 4))
+        print(f"        📍 Native trail: {ticker} @ {trail_pct*100:.1f}% real-time Alpaca trail")
+    else:
+        stop_loss_req = StopLossRequest(stop_price=round(stop_price, 2))
+
     req = LimitOrderRequest(
         symbol=ticker,
         qty=shares,
@@ -92,7 +105,7 @@ def submit_bracket_order(
         limit_price=limit_price,
         order_class=OrderClass.BRACKET,
         take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
-        stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
+        stop_loss=stop_loss_req,
     )
     order = _client().submit_order(req)
     return str(order.id)
