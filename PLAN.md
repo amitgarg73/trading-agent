@@ -28,10 +28,11 @@
 | # | Fix | Status | Est. |
 |---|-----|--------|------|
 | 1 | Raise liquidity floor (500K → 1M avg volume) | ✅ DONE | — |
-| 2 | Real-time Alpaca price refresh before Claude call | ⬜ TODO | 3–4 hrs |
-| 3 | Limit order entries instead of market orders | ⬜ TODO | 3–4 hrs |
-| 4 | Skip first 15 min (no entries before 9:45 AM ET) | ⬜ TODO | 2–3 hrs |
-| 5 | Native Alpaca trailing stop order (replace 30-min poll) | ⬜ TODO | 4–6 hrs |
+| 2 | Real-time Alpaca price refresh before Claude call | ✅ DONE | — |
+| 3 | Limit order entries instead of market orders | ✅ DONE | — |
+| 4 | Skip first 15 min (no entries before 9:45 AM ET) | ✅ DONE | — |
+| 5 | Native Alpaca trailing stop (OTO-OCO) | ⏸ DEFERRED — real money only | 6–8 hrs |
+| 5b | 15-min intraday checks (pragmatic fix for fix 5) | ✅ DONE | — |
 | 6 | Reliable cron triggering (cron-job.org) | ✅ DONE | — |
 
 **Total remaining: ~12–17 hrs across 2 sessions**
@@ -119,6 +120,23 @@ you don't catch it until next cycle. Native trailing stop fires in real-time.
 
 **Note:** Keep `high_watermark` column and simulation trail logic intact —
 simulation mode still needs the manual approach.
+
+---
+
+## Fix 5 — Native Trailing Stop (Deferred)
+
+Native Alpaca trailing stop requires moving from bracket orders to OTO-OCO structure.
+Build this before deploying real money. Key risks to mitigate:
+- Gap window: position unprotected between entry fill and OCO submission (up to 15 min now)
+- Double-sell: if take-profit and trailing stop both fire, accidental short position
+- OCO failure: no exit orders if API call fails
+
+Mitigation plan when building:
+- `USE_NATIVE_TRAILING_STOP = False` feature flag in settings.py
+- Track `entry_filled_at` in positions table
+- Idempotent OCO submission guard
+- Unit tests: mock Alpaca client, test all state transitions
+- A/B test on paper for 2 weeks before enabling on real money
 
 ---
 
