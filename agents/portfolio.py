@@ -7,7 +7,7 @@ from __future__ import annotations
 import yfinance as yf
 from datetime import date, datetime
 from core import db
-from config.settings import TRAIL_PCT, USE_NATIVE_TRAILING_STOP
+from config.settings import TRAIL_PCT, LOCK_IN_TRAIL_PCT, DAILY_LOCK_IN_TARGET, USE_NATIVE_TRAILING_STOP
 
 
 def _current_price(ticker: str) -> float | None:
@@ -180,6 +180,17 @@ def refresh_positions(broker: str = "simulation") -> list:
         return updated
 
     # Simulation mode — yfinance price checks
+    # Determine effective trail: tighter after Tier 1 lock-in to protect gains while letting winners run
+    today = date.today().isoformat()
+    _today_closed = db.select("positions", filters={"status": "CLOSED"})
+    _today_realized = sum(
+        p.get("realized_pnl", 0) or 0
+        for p in _today_closed
+        if (p.get("closed_at") or "").startswith(today)
+        and p.get("close_reason") not in ("CLEANUP", "UNFILLED", "LOCK_IN")
+    )
+    effective_trail = LOCK_IN_TRAIL_PCT if _today_realized >= DAILY_LOCK_IN_TARGET else TRAIL_PCT
+
     for pos in open_pos:
         ticker = pos["ticker"]
         price  = _current_price(ticker)
@@ -193,9 +204,10 @@ def refresh_positions(broker: str = "simulation") -> list:
         target = pos["target_price"]
 
         # Trailing stop: ratchet stop up from peak; falls back to hard stop when at a loss
+        # After Tier 1 lock-in, effective_trail tightens to LOCK_IN_TRAIL_PCT (0.5%) to protect gains
         high_wm     = float(pos.get("high_watermark") or entry)
         new_high_wm = max(high_wm, price)
-        eff_stop    = max(stop, round(new_high_wm * (1 - TRAIL_PCT), 4))
+        eff_stop    = max(stop, round(new_high_wm * (1 - effective_trail), 4))
 
         if action == "BUY":
             pnl = round(shares * (price - entry), 2)

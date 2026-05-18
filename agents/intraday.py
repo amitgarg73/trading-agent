@@ -5,7 +5,7 @@ Runs via GitHub Actions schedule during market hours.
 from datetime import date, datetime
 from agents.portfolio import refresh_positions, close_all_positions
 from core import db
-from config.settings import DAILY_LOCK_IN_TARGET
+from config.settings import DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET
 
 
 def _reconcile_with_alpaca():
@@ -50,14 +50,23 @@ def run(broker: str = "simulation") -> dict:
 
     updated = refresh_positions(broker=broker)
 
-    # Check lock-in: if realized P&L already hit the daily target, close everything
-    realized = _today_realized_pnl()
-    if realized >= DAILY_LOCK_IN_TARGET:
-        open_pos = db.select("positions", filters={"status": "OPEN"})
-        if open_pos:
-            print(f"\n  🎯 LOCK-IN: Realized P&L ${realized:,.2f} ≥ ${DAILY_LOCK_IN_TARGET:,.0f} target")
-            print(f"     Closing {len(open_pos)} remaining position(s) and locking in gains.\n")
-            close_all_positions(reason="LOCK_IN", broker=broker)
+    # Tiered lock-in logic
+    # Tier 1 ($716 realized): stop closing everything — let open positions ride with tighter trail
+    # Tier 2 ($1,000 realized+unrealized): close everything — protect the exceptional day
+    realized   = _today_realized_pnl()
+    still_open = [p for p in updated if not p.get("close_reason")]
+    unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in still_open)
+    total      = realized + unrealized
+
+    if total >= DAILY_BONUS_TARGET and still_open:
+        print(f"\n  🏆 BONUS TARGET: Total P&L ${total:,.2f} ≥ ${DAILY_BONUS_TARGET:,.0f} — locking in exceptional day")
+        print(f"     Closing {len(still_open)} position(s).\n")
+        close_all_positions(reason="LOCK_IN", broker=broker)
+    elif realized >= DAILY_LOCK_IN_TARGET:
+        if still_open:
+            print(f"\n  🎯 LOCK-IN Tier 1: Realized ${realized:,.2f} ≥ ${DAILY_LOCK_IN_TARGET:,.0f}")
+            print(f"     Letting {len(still_open)} position(s) ride to ${DAILY_BONUS_TARGET:,.0f} target (total ${total:,.2f}).")
+            print(f"     Tighter trail active on open positions (simulation) — Alpaca native trail continues.\n")
         else:
             print(f"  🎯 Daily target locked in (${realized:,.2f}) — no open positions remaining.")
 

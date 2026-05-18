@@ -23,7 +23,9 @@ TARGET_PCT           = 0.02       # 2% profit target per trade (lowered from 3% 
 MAX_PER_SECTOR       = 3          # V2d: max positions in any single sector
 DAILY_LOSS_LIMIT     = -300       # V5: stop trading if today's realized P&L drops below this
 PRICE_SANITY_PCT     = 0.05       # V5: reject if entry price is >5% from current market price
-DAILY_LOCK_IN_TARGET = 716        # Close all positions and stop trading once realized P&L hits this
+DAILY_LOCK_IN_TARGET = 716        # Tier 1: realized P&L floor — stop closing positions, let winners ride
+DAILY_BONUS_TARGET   = 1_000     # Tier 2: realized+unrealized total — close everything, protect exceptional day
+LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions after Tier 1 (simulation only)
 TRAIL_PCT                   = 0.01        # Trailing stop: close if price drops 1% from highest seen since entry
 USE_NATIVE_TRAILING_STOP    = True        # When True: Alpaca native trail_percent bracket leg (real-time, no polling gap)
                                           # When False: manual high_watermark check every 15 min (safe default, paper OK)
