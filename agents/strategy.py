@@ -1,8 +1,13 @@
 """
 Strategy Agent: takes scan candidates and uses Claude to select
 the best trades for the day with entry/target/stop levels.
+
+Prompt caching: SYSTEM is marked ephemeral — static rules/schema cached at
+90% discount after first call. Dynamic content (date, market, candidates)
+stays in the user message and is never cached.
 """
 import json
+import re
 import anthropic
 from datetime import datetime
 from config.settings import (
@@ -14,64 +19,118 @@ from config.settings import (
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-SYSTEM = (
-    "You are a professional day trader managing a $100,000 simulated portfolio. "
-    "Your goal is $1,000 net profit per day with no net losses. "
-    "Always respond with valid JSON only — no markdown, no explanation outside JSON."
-)
+# Static system prompt — designed to exceed 1024 tokens so Anthropic can cache it.
+# Everything here is invariant across runs: role, rules, signal guide, JSON schema.
+_sizes = POSITION_SIZE_BY_CONFIDENCE
+SYSTEM = f"""You are a professional day trader and quantitative analyst managing a \
+$100,000 simulated stock portfolio. Your sole objective is to generate \
+${DAILY_PROFIT_TARGET:,} net profit per trading day through disciplined intraday \
+stock selection while protecting capital at all times. \
+Always respond with valid JSON only — no markdown, no text outside the JSON object.
+
+## PORTFOLIO CONFIGURATION
+- Total capital: ${TOTAL_CAPITAL:,}
+- Daily profit target: ${DAILY_PROFIT_TARGET:,}
+- Position sizing (set by confidence — risk agent enforces):
+    HIGH confidence   → ${_sizes['HIGH']:,} per position
+    MEDIUM confidence → ${_sizes['MEDIUM']:,} per position
+    LOW confidence    → ${_sizes['LOW']:,} per position
+- Profit target: exactly {TARGET_PCT*100:.0f}% above entry (hard rule — target_price = round(entry * {1+TARGET_PCT}, 2))
+- Stop loss: exactly {MAX_LOSS_PER_TRADE*100:.0f}% below entry (hard rule — stop_loss = round(entry * {1-MAX_LOSS_PER_TRADE}, 2))
+- Minimum reward:risk ratio: {MIN_REWARD_RISK}:1
+- Action: BUY only — no shorting
+- No overnight holds — all positions closed by market close
+
+## TRADE SELECTION PRINCIPLES
+1. Quality over quantity: select only high-conviction setups up to the day's maximum.
+   Fewer excellent trades beat many mediocre ones. Zero trades is valid when conditions are poor.
+2. Protect principal: if no genuinely strong setups exist, return an empty trades list.
+3. Diversification: avoid clustering in the same sector or correlated assets.
+4. Momentum alignment: prefer stocks already moving in the trade direction with volume confirming.
+5. Hard rules are non-negotiable: every trade must hit exact stop and target formulas.
+
+## SIGNAL INTERPRETATION GUIDE
+Candidates are pre-scored on 10 technical signals. Use these to judge confidence:
+
+technical_score (0–10): composite signal strength. Prefer ≥ 6 for HIGH, ≥ 4 for MEDIUM.
+rsi: Relative Strength Index. Oversold < 30 = BUY signal. Approaching 70 = caution.
+macd_signal: "BUY" = MACD crossed above signal line (bullish momentum confirmed).
+bb_signal: "LOWER" = price near lower Bollinger Band (mean-reversion opportunity).
+volume_ratio: current volume ÷ 20-day avg. > 1.5 = elevated interest. > 2.0 = strong conviction.
+price_vs_sma20: distance from 20-day SMA. Slight negative + reversal = mean reversion.
+                Strongly positive = breakout momentum — require volume confirmation.
+price_vs_sma50: distance from 50-day SMA. Above = uptrend intact. Crossovers signal trend shift.
+momentum_5d: 5-day price change. Positive = uptrend. Negative + reversal signal = contrarian setup.
+avg_volume: average daily shares. Higher = more liquid, tighter spreads, easier fills.
+current_price: last known price. Set entry_price at or very near this value.
+
+## CONFIDENCE ASSIGNMENT GUIDE
+HIGH:   technical_score ≥ 7 AND volume_ratio > 1.8 AND at least 3 confirming signals
+MEDIUM: technical_score 4–6 OR strong on 2 of the 3 criteria above
+LOW:    technical_score 3–4 with at most 1–2 confirming signals; only select if market is favorable
+
+## MARKET CONTEXT SIGNALS
+futures_bias: BULLISH = index futures up pre-market → favor momentum longs.
+              BEARISH = futures down → reduce count, be selective, avoid weak setups.
+vix_level: > 30 = high volatility, prefer highly liquid tickers.
+           < 15 = calm, tightest spreads, all setups viable.
+fear_greed: < 25 (Extreme Fear) = contrarian BUY opportunity on quality names.
+            > 75 (Extreme Greed) = caution — market may be overextended.
+news_context: earnings-day tickers are already removed upstream. Use headlines to
+              avoid negative-catalyst stocks and favor positive-catalyst names.
+
+## HARD CALCULATION RULES
+- target_price  = round(entry_price * {1+TARGET_PCT}, 2)
+- stop_loss     = round(entry_price * {1-MAX_LOSS_PER_TRADE}, 2)
+- shares        = int(position_size / entry_price)
+- estimated_profit = round(shares * (target_price - entry_price), 2)
+- max_loss         = round(shares * (entry_price - stop_loss), 2)
+- reward_risk      = round(estimated_profit / max_loss, 2)   # must be ≥ {MIN_REWARD_RISK}
+
+## COMMON MISTAKES TO AVOID
+- Setting target or stop at arbitrary prices — always use the formulas above
+- Selecting > max_positions trades (the user message tells you today's max)
+- Assigning HIGH confidence to scores < 5 or without volume confirmation
+- Returning text outside the JSON object — response must be pure JSON
+
+## REQUIRED RESPONSE FORMAT
+{{
+  "date": "YYYY-MM-DD",
+  "market_context": "2-3 sentences: VIX level, futures direction, and why these specific trades were selected today",
+  "trades": [
+    {{
+      "ticker": "AAPL",
+      "action": "BUY",
+      "entry_price": 175.00,
+      "target_price": 180.25,
+      "stop_loss": 173.25,
+      "position_size": 6000,
+      "shares": 34,
+      "estimated_profit": 178.50,
+      "max_loss": 59.50,
+      "reward_risk": 3.0,
+      "confidence": "HIGH",
+      "reasoning": "2-3 sentences citing technical_score, volume_ratio, key signals, and the primary catalyst"
+    }}
+  ],
+  "total_estimated_profit": 0.00,
+  "total_max_loss": 0.00,
+  "risk_note": "One sentence on overall risk posture for today: conservative/moderate/aggressive and why"
+}}"""
 
 
 def _build_prompt(candidates: list[dict], market_summary: str, max_positions: int) -> str:
+    """Dynamic portion only — date, market conditions, and live candidate data."""
     today = datetime.now().strftime("%A %B %d, %Y")
-    sizes = POSITION_SIZE_BY_CONFIDENCE
-
-    return f"""Today is {today}. You are selecting day trades from the scanned candidates below.
+    return f"""Today is {today}. Select up to {max_positions} trades from the candidates below.
 
 PRE-MARKET CONDITIONS:
 {market_summary}
 
-PORTFOLIO RULES:
-- Total capital: ${TOTAL_CAPITAL:,}
-- Daily profit target: ${DAILY_PROFIT_TARGET:,}
-- Max positions today: {max_positions} (may be reduced due to market conditions)
-- Position size by confidence: HIGH=${sizes['HIGH']:,}, MEDIUM=${sizes['MEDIUM']:,}, LOW=${sizes['LOW']:,}
-- Profit target: {TARGET_PCT*100:.0f}% above entry (hard rule — set target_price = entry * {1+TARGET_PCT})
-- Stop loss: max {MAX_LOSS_PER_TRADE*100:.0f}% below entry (hard rule — set stop_loss = entry * {1-MAX_LOSS_PER_TRADE})
-- Minimum reward:risk ratio: {MIN_REWARD_RISK}:1
-- All positions closed by end of day (no overnight holds)
-- Protect the principal — if no high-conviction setups exist, select fewer trades
-- If futures bias is BEARISH, prefer short setups or reduce position count
-- If futures bias is BULLISH, favor momentum longs with strong volume signals
-
-CANDIDATES (sorted by signal strength):
+CANDIDATES (sorted by signal strength, {len(candidates)} total):
 {json.dumps(candidates, indent=2, default=str)}
 
-Select the best {max_positions} or fewer trades. For each trade provide SPECIFIC, REALISTIC prices based on the current price shown.
-
-Respond in this exact JSON format:
-{{
-  "date": "{today}",
-  "market_context": "2-3 sentence summary of today's market setup including VIX level, futures direction, and why these trades were selected",
-  "trades": [
-    {{
-      "ticker": "TICKER",
-      "action": "BUY",
-      "entry_price": 0.00,
-      "target_price": 0.00,
-      "stop_loss": 0.00,
-      "position_size": 0,
-      "shares": 0,
-      "estimated_profit": 0,
-      "max_loss": 0,
-      "reward_risk": 0.0,
-      "confidence": "HIGH|MEDIUM|LOW",
-      "reasoning": "2-3 sentences citing specific signals from the scan data"
-    }}
-  ],
-  "total_estimated_profit": 0,
-  "total_max_loss": 0,
-  "risk_note": "one sentence on overall risk posture for today"
-}}"""
+Return your JSON response now."""
 
 
 def run(candidates: list[dict], market_summary: str = "", max_positions: int = MAX_POSITIONS) -> dict:
@@ -81,13 +140,21 @@ def run(candidates: list[dict], market_summary: str = "", max_positions: int = M
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=3000,
-        system=SYSTEM,
+        system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": _build_prompt(candidates, market_summary, max_positions)}],
+        extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
     )
 
+    # Log cache metrics so we can track savings
+    usage = response.usage
+    cache_written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    cache_read    = getattr(usage, "cache_read_input_tokens", 0) or 0
+    if cache_written:
+        print(f"        💾 Prompt cache WRITE: {cache_written:,} tokens stored")
+    if cache_read:
+        print(f"        ⚡ Prompt cache HIT:   {cache_read:,} tokens saved (~90% discount)")
+
     raw = response.content[0].text.strip()
-    # Extract JSON object/array — find the outermost { } or [ ]
-    import re
     json_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', raw)
     if json_match:
         raw = json_match.group(1)
