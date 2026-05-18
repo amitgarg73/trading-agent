@@ -4,15 +4,35 @@
 
 ---
 
+## Known Issues — Resolved
+
+| Issue | Observed | Resolution |
+|-------|----------|------------|
+| GitHub Actions scheduled run delay | 2026-05-18 | ✅ Fixed — cron-job.org external triggers replacing GitHub scheduler |
+| Mode detection mis-classified late runs as intraday | 2026-05-18 | ✅ Fixed — time windows in trading.yml instead of exact minute match |
+| STRATEGY_MIN_SCORE=5 too aggressive (93→4 candidates) | 2026-05-18 | ✅ Fixed — lowered to 4 |
+| Futures unavailable on Mondays | 2026-05-18 | ✅ Fixed — period="5d" in market_context.py |
+| Streamlit ImportError on TRAIL_PCT | 2026-05-18 | ✅ Fixed — stale Streamlit Cloud deployment, rebooted |
+
+**cron-job.org setup:**
+- Premarket: `0 13 * * 1-5` UTC → `{"ref": "main", "inputs": {"mode": "premarket", "broker": "alpaca"}}`
+- Intraday: `0,30 14-19 * * 1-5` UTC → `{"ref": "main", "inputs": {"mode": "intraday", "broker": "alpaca"}}`
+- EOD: `30 20 * * 1-5` UTC → `{"ref": "main", "inputs": {"mode": "eod", "broker": "alpaca"}}`
+- Auth: classic GitHub PAT with `repo` + `workflow` scopes in Authorization header
+- GitHub schedule kept as backup; concurrent run lock handles duplicates
+
+---
+
 ## Status
 
 | # | Fix | Status | Est. |
 |---|-----|--------|------|
-| 1 | Raise liquidity floor (500K → 1M avg volume) | ✅ DONE (v5.4 Step 53) | — |
+| 1 | Raise liquidity floor (500K → 1M avg volume) | ✅ DONE | — |
 | 2 | Real-time Alpaca price refresh before Claude call | ⬜ TODO | 3–4 hrs |
 | 3 | Limit order entries instead of market orders | ⬜ TODO | 3–4 hrs |
 | 4 | Skip first 15 min (no entries before 9:45 AM ET) | ⬜ TODO | 2–3 hrs |
 | 5 | Native Alpaca trailing stop order (replace 30-min poll) | ⬜ TODO | 4–6 hrs |
+| 6 | Reliable cron triggering (cron-job.org) | ✅ DONE | — |
 
 **Total remaining: ~12–17 hrs across 2 sessions**
 
