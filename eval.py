@@ -6,9 +6,14 @@ Usage:
 """
 from __future__ import annotations
 import argparse
+from collections import defaultdict
 from datetime import date
 from core import db
-from config.settings import DAILY_PROFIT_TARGET, TOTAL_CAPITAL
+from config.settings import (
+    DAILY_PROFIT_TARGET, TOTAL_CAPITAL,
+    MIN_REWARD_RISK, MAX_POSITION_PCT, MIN_POSITION_PCT,
+    DAILY_LOSS_LIMIT, DAILY_LOCK_IN_TARGET,
+)
 
 
 def _compute_metrics(days: int) -> dict | None:
@@ -26,12 +31,82 @@ def _compute_metrics(days: int) -> dict | None:
     target_days   = sum(1 for r in perf_rows if (r["total_pnl"] or 0) >= DAILY_PROFIT_TARGET)
 
     eval_dates = {r["date"] for r in perf_rows}
-    positions = db.select("positions", filters={"status": "CLOSED"})
-    positions = [
-        p for p in positions
-        if p.get("close_reason") not in ("CLEANUP", "UNFILLED")
-        and (p.get("closed_at") or "")[:10] in eval_dates
+
+    # All closed positions in window — used for both perf and integrity metrics
+    all_closed = db.select("positions", filters={"status": "CLOSED"})
+    all_closed_in_window = [p for p in all_closed
+                            if (p.get("closed_at") or "")[:10] in eval_dates]
+    positions = [p for p in all_closed_in_window
+                 if p.get("close_reason") not in ("CLEANUP", "UNFILLED")]
+
+    # --- Integrity metrics ---
+    unfilled_count  = sum(1 for p in all_closed_in_window if p.get("close_reason") == "UNFILLED")
+    cleanup_count   = sum(1 for p in all_closed_in_window if p.get("close_reason") == "CLEANUP")
+    lock_in_count   = sum(1 for p in all_closed_in_window if p.get("close_reason") == "LOCK_IN")
+    loss_limit_days = sum(1 for r in perf_rows if (r["total_pnl"] or 0) < DAILY_LOSS_LIMIT)
+    lock_in_days    = sum(1 for r in perf_rows if (r["total_pnl"] or 0) >= DAILY_LOCK_IN_TARGET)
+    missing_exit    = sum(1 for p in positions if not p.get("exit_mechanism"))
+
+    # Orphaned open positions (opened before today, still OPEN)
+    today_str   = date.today().isoformat()
+    all_open    = db.select("positions", filters={"status": "OPEN"})
+    orphaned    = [p for p in all_open if (p.get("opened_at") or "")[:10] < today_str]
+
+    # Duplicate ticker same day (guardrail should block, but eval confirms)
+    ticker_day = defaultdict(int)
+    for p in all_closed_in_window:
+        ticker_day[(p["ticker"], (p.get("closed_at") or "")[:10])] += 1
+    duplicate_count = sum(1 for v in ticker_day.values() if v > 1)
+
+    # --- Planned trades for Claude quality checks ---
+    all_planned      = db.select("planned_trades")
+    pt_ids_in_window = {p["planned_trade_id"] for p in positions if p.get("planned_trade_id")}
+    planned_in_window = [pt for pt in all_planned if pt["id"] in pt_ids_in_window]
+    pt_lookup        = {pt["id"]: pt for pt in planned_in_window}
+
+    # R:R integrity — guardrails don't check this; Claude could slip a bad trade through
+    rr_violations = []
+    for pt in planned_in_window:
+        entry  = float(pt.get("entry_price") or 0)
+        target = float(pt.get("target_price") or 0)
+        stop   = float(pt.get("stop_loss") or 0)
+        if entry and target and stop and (entry - stop) != 0:
+            rr = (target - entry) / (entry - stop) if pt.get("action") == "BUY" \
+                 else (entry - target) / (stop - entry)
+            if rr < MIN_REWARD_RISK:
+                rr_violations.append({"ticker": pt["ticker"], "rr": round(rr, 2)})
+
+    # Position size violations
+    min_size = MIN_POSITION_PCT * TOTAL_CAPITAL
+    max_size = MAX_POSITION_PCT * TOTAL_CAPITAL
+    size_violations = [
+        {"ticker": pt["ticker"], "size": pt.get("position_size")}
+        for pt in planned_in_window
+        if pt.get("position_size") and
+        not (min_size <= float(pt["position_size"]) <= max_size)
     ]
+
+    # Confidence cohort — validates HIGH/MEDIUM/LOW sizing delivers ROI
+    conf_buckets: dict = {"HIGH": [], "MEDIUM": [], "LOW": []}
+    for pos in positions:
+        pt = pt_lookup.get(pos.get("planned_trade_id") or "")
+        if pt:
+            conf = (pt.get("confidence") or "").upper()
+            if conf in conf_buckets:
+                conf_buckets[conf].append(pos.get("realized_pnl") or 0)
+
+    def _conf_stats(pnl_list: list) -> dict | None:
+        if not pnl_list:
+            return None
+        wins = [p for p in pnl_list if p > 0]
+        return {
+            "count":    len(pnl_list),
+            "win_rate": round(len(wins) / len(pnl_list) * 100, 1),
+            "avg_pnl":  round(sum(pnl_list) / len(pnl_list), 2),
+            "total_pnl": round(sum(pnl_list), 2),
+        }
+
+    confidence_stats = {k: _conf_stats(v) for k, v in conf_buckets.items()}
 
     wins   = [p for p in positions if (p.get("realized_pnl") or 0) > 0]
     losses = [p for p in positions if (p.get("realized_pnl") or 0) <= 0]
@@ -117,13 +192,27 @@ def _compute_metrics(days: int) -> dict | None:
         "best_pnl":       round(best["realized_pnl"]  or 0, 2) if best  else 0,
         "worst_ticker":   worst["ticker"] if worst else None,
         "worst_pnl":      round(worst["realized_pnl"] or 0, 2) if worst else 0,
-        "close_reasons":   close_reasons,
-        "recommendations": recs,
-        "native_trail":    _cohort_stats(native),
-        "manual_trail":    _cohort_stats(manual),
-        "pnl_score":       round(pnl_score, 1),
-        "winday_score":    round(winday_score, 1),
-        "winrate_score":   round(winrate_score, 1),
+        "close_reasons":    close_reasons,
+        "recommendations":  recs,
+        "native_trail":     _cohort_stats(native),
+        "manual_trail":     _cohort_stats(manual),
+        "pnl_score":        round(pnl_score, 1),
+        "winday_score":     round(winday_score, 1),
+        "winrate_score":    round(winrate_score, 1),
+        # Integrity
+        "unfilled_count":   unfilled_count,
+        "cleanup_count":    cleanup_count,
+        "lock_in_count":    lock_in_count,
+        "loss_limit_days":  loss_limit_days,
+        "lock_in_days":     lock_in_days,
+        "missing_exit":     missing_exit,
+        "orphaned":         orphaned,
+        "duplicate_count":  duplicate_count,
+        "total_attempted":  len(all_closed_in_window),
+        # Claude quality
+        "rr_violations":    rr_violations,
+        "size_violations":  size_violations,
+        "confidence_stats": confidence_stats,
     }
 
 
@@ -231,6 +320,71 @@ def _print_metrics(m: dict):
                 print(f"  ✅ Native trail exits confirmed — Alpaca trailing stop leg firing correctly")
             else:
                 print(f"  ⏳ No NATIVE_TRAIL exits yet — stop hasn't fired; need a reversal day to validate")
+
+    total_attempted = m.get("total_attempted", 0)
+    unfilled = m.get("unfilled_count", 0)
+    print(f"\n[ INTEGRITY CHECKS ]")
+    print(f"  Orders attempted:     {total_attempted}")
+    unfill_pct = unfilled / total_attempted * 100 if total_attempted else 0
+    print(f"  UNFILLED (no fill):   {unfilled}  ({unfill_pct:.0f}%)  "
+          f"{'✅ low' if unfill_pct < 10 else '⚠️  high — limit price may be too tight'}")
+    print(f"  CLEANUP removed:      {m.get('cleanup_count', 0)}  (bad data, excluded from metrics)")
+    lock_in = m.get("lock_in_count", 0)
+    print(f"  LOCK_IN closes:       {lock_in}  "
+          f"({'daily profit target hit early — good' if lock_in > 0 else 'none fired'})")
+    print(f"  Loss-limit days:      {m.get('loss_limit_days', 0)} / {m['days']}  "
+          f"({'⚠️  frequent — review entry quality' if m.get('loss_limit_days', 0) > 2 else '✅'})")
+    print(f"  Lock-in days:         {m.get('lock_in_days', 0)} / {m['days']}  "
+          f"(days where realized P&L hit ${DAILY_LOCK_IN_TARGET:,} target early)")
+    missing = m.get("missing_exit", 0)
+    print(f"  Missing exit_mech:    {missing}  "
+          f"{'✅ all exits tracked' if missing == 0 else f'⚠️  {missing} positions have no exit_mechanism — code path gap'}")
+    dups = m.get("duplicate_count", 0)
+    print(f"  Duplicate tickers:    {dups}  "
+          f"{'✅ none' if dups == 0 else f'❌ {dups} ticker(s) opened twice same day — guardrail missed'}")
+    orphaned = m.get("orphaned", [])
+    if orphaned:
+        print(f"  Orphaned open pos:    ❌ {len(orphaned)} position(s) stuck OPEN from a prior day:")
+        for p in orphaned:
+            print(f"    {p['ticker']}  opened {(p.get('opened_at') or '')[:10]}  entry ${p['entry_price']:.2f}")
+    else:
+        print(f"  Orphaned open pos:    ✅ none")
+
+    print(f"\n[ CLAUDE QUALITY CHECKS ]")
+    rr_v = m.get("rr_violations", [])
+    if rr_v:
+        print(f"  R:R violations:  ❌ {len(rr_v)} trade(s) submitted with R:R below {MIN_REWARD_RISK}x minimum:")
+        for v in rr_v:
+            print(f"    {v['ticker']}  R:R {v['rr']:.2f}x  (should be ≥{MIN_REWARD_RISK}x)")
+    else:
+        print(f"  R:R violations:  ✅ none — all trades met ≥{MIN_REWARD_RISK}x reward:risk minimum")
+    sz_v = m.get("size_violations", [])
+    min_s = MIN_POSITION_PCT * TOTAL_CAPITAL
+    max_s = MAX_POSITION_PCT * TOTAL_CAPITAL
+    if sz_v:
+        print(f"  Size violations: ⚠️  {len(sz_v)} trade(s) outside ${min_s:,.0f}–${max_s:,.0f} range:")
+        for v in sz_v:
+            print(f"    {v['ticker']}  ${v['size']:,.0f}")
+    else:
+        print(f"  Size violations: ✅ none — all positions within ${min_s:,.0f}–${max_s:,.0f} bounds")
+
+    cs = m.get("confidence_stats", {})
+    if any(cs.get(k) for k in ("HIGH", "MEDIUM", "LOW")):
+        print(f"\n  Confidence cohort performance:  (validates HIGH→$7K / MEDIUM→$6K / LOW→$5K sizing)")
+        print(f"  {'Level':<8} {'Trades':>6} {'Win%':>6} {'Avg P&L':>9} {'Total P&L':>10}")
+        print(f"  {'-'*44}")
+        for level in ("HIGH", "MEDIUM", "LOW"):
+            s = cs.get(level)
+            if s:
+                flag = _flag(s["win_rate"], 65, 50)
+                print(f"  {level:<8} {s['count']:>6} {s['win_rate']:>5.1f}% {flag} "
+                      f"  ${s['avg_pnl']:>7,.2f}   ${s['total_pnl']:>8,.2f}")
+        high = cs.get("HIGH")
+        low  = cs.get("LOW")
+        if high and low:
+            delta = high["avg_pnl"] - low["avg_pnl"]
+            print(f"\n  HIGH vs LOW avg P&L: {delta:+.2f}  "
+                  f"{'✅ HIGH outperforming — sizing justified' if delta > 0 else '⚠️  LOW outperforming HIGH — confidence signal unreliable'}")
 
     print(f"\n[ RECOMMENDATIONS ]")
     for rec in m["recommendations"]:
