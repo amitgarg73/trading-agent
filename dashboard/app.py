@@ -1350,7 +1350,7 @@ elif page == "Performance":
     c4.metric("Avg Trade Win %", f"{avg_win_rate:.1f}%",
               help="Average % of individual trades (not days) that closed in profit. At 3:1 reward:risk, you only need 25% to break even.")
 
-    c5, c6, c7 = st.columns(3)
+    c5, c6, _, c7 = st.columns(4)
     c5.metric("Portfolio Value", f"${latest_cap:,.0f}",
               help=f"Current account value = starting capital ${TOTAL_CAPITAL:,} + all realized gains to date. Updates each EOD run.")
     c6.metric("Total Return", f"{total_return:+.2f}%",
