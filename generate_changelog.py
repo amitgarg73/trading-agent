@@ -74,7 +74,7 @@ title = doc.add_heading('AI Trading Agent — Session Changelog', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = NAVY
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.8  ·  Living document — update each sprint')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.9  ·  Living document — update each sprint')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(11)
 meta.runs[0].font.color.rgb = GRAY
@@ -85,6 +85,97 @@ body(
     'why it was built, the impact on the trading agent, and the real-money confidence score '
     'at each point. Update this file every time a new version ships. '
     'Run python3 generate_changelog.py to regenerate Trading_Agent_Changelog.docx.'
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v5.9 — 2026-05-18
+# ══════════════════════════════════════════════════════════════════════════════
+doc.add_page_break()
+heading('v5.9 — 2026-05-18')
+body('Confidence score: 6.5/10 (unchanged)')
+body('Theme: Data quality + dashboard polish — chart y-axis fix, exit reasons clarity, exit_mechanism integrity.')
+
+divider()
+subheading('1. Chart Y-Axis Fix — Portfolio Value & Cumulative P&L')
+body(
+    'What: Both side-by-side charts now zoom the y-axis to the actual data range instead of starting at $0. '
+    'Portfolio Value: y-axis range computed as [min(ending_capital, TOTAL_CAPITAL) − pad, max(ending_capital, TOTAL_CAPITAL) + pad] '
+    'where pad = max(data_range × 0.5, TOTAL_CAPITAL × 0.5%). '
+    'Cumulative P&L: y-axis range computed as [min(cum_pnl, 0) − pad, max(cum_pnl, 0) + pad] where pad = max(data_range × 0.5, $200). '
+    'Both charts use mode="lines+markers" so a single data point renders as a visible dot. '
+    'Portfolio Value shows the starting principal ($100K) as a dashed gray baseline trace with shading between baseline and current value. '
+    'Cumulative P&L tick format changed to $+,.0f to show sign explicitly. '
+    'fill="tozeroy" removed from Portfolio Value (was anchoring fill to $0, making tiny gains invisible).'
+)
+body(
+    'Why: With portfolio value at $100,128 and a 0-based y-axis scaled to $100K+, the $128 gain '
+    'rendered as a perfectly flat line — indistinguishable from no movement. '
+    'The starting principal dotted hline and the portfolio value line overlapped completely. '
+    'On Day 1 with a single data point, no line was rendered at all (a line needs ≥2 points).'
+)
+body('Impact: Daily P&L changes are immediately visible even when small relative to total capital.')
+
+divider()
+subheading('2. Exit Reasons Table — Plain-English Annotations, Worst Trade Color Fix')
+body(
+    'What: Three changes to the Exit Reasons section in Agent Scorecard. '
+    '(a) "What it means" column added to the exit reasons table — every exit type has a plain-English '
+    'one-line explanation: TARGET = "Hit +2% profit goal — ideal exit", '
+    'STOP = "Stop-loss fired at -0.67% — cut loss", '
+    'EOD = "Market closed, position still open — sold at whatever price", '
+    'LOCK_IN = "Daily profit target hit — all positions closed to protect the day", '
+    'MANUAL_TRAIL = "Trailing stop fired (simulation) — stock reversed from its peak", '
+    'NATIVE_TRAIL = "Trailing stop fired (Alpaca) — stock reversed from its peak", '
+    'CLEANUP = "Stale open position closed during reconciliation", '
+    'UNFILLED = "Limit order never filled — entry price was missed". '
+    '(b) Benchmark label removed — "healthy: TARGET >50%, STOP <35%, EOD <20%" was confusing '
+    'with only 1 day of data where 100% EOD is completely expected. '
+    '(c) Worst trade color fixed — previously always red (st.error). '
+    'Now green with "(all trades profitable)" label when worst_pnl ≥ 0; red only when worst_pnl < 0. '
+    '(d) Recommendations column removed — auto-generated text was redundant with manual tuning already in place.'
+)
+body(
+    'Why: On Day 1, AEP (+$40.89) showed as red "Worst" despite being profitable — '
+    'only "worst" relative to CBRE (+$87.40). The benchmark thresholds were meaningless '
+    'with 1–2 days of data and the recommendations were auto-generated noise.'
+)
+body('Impact: Exit reasons section is now self-explanatory without external context.')
+
+divider()
+subheading('3. exit_mechanism Integrity Fix — Code + Supabase Backfill')
+body(
+    'What: Two gaps in exit_mechanism tracking found and fixed. '
+    '(a) intraday.py _reconcile_with_alpaca(): when a position is OPEN in DB but missing from Alpaca '
+    '(unfilled entry), the code marked close_reason=UNFILLED but never wrote exit_mechanism. '
+    'Fixed: exit_mechanism="UNFILLED" now written alongside close_reason in the same update. '
+    '(b) Historical backfill: CBRE and AEP (Day 1, May 18) had exit_mechanism=None because '
+    'exit_mechanism was not yet in the close_all_positions() DB update at the time they were closed '
+    '(added in the tiered lock-in commit after those positions were already written). '
+    'Fixed directly in Supabase: both records updated to exit_mechanism="EOD" via one-off script. '
+    'Verified: zero positions with exit_mechanism=None remain outside of CLEANUP records.'
+)
+body(
+    'Why: eval.py integrity checks flag any closed position missing exit_mechanism. '
+    'The 2 Day 1 records would have permanently tripped that check on every future eval run, '
+    'making the integrity section look broken even on clean days.'
+)
+body('Impact: eval.py INTEGRITY CHECKS section will show zero missing exit_mechanism on all future runs.')
+
+add_table(
+    ['Item', 'Status'],
+    [
+        ('Chart y-axis zoom — Portfolio Value and Cumulative P&L', '✅ Done'),
+        ('Single data point visibility (lines+markers mode)', '✅ Done'),
+        ('Exit reasons table — "What it means" annotation column', '✅ Done'),
+        ('Exit reasons benchmark label removed', '✅ Done'),
+        ('Worst trade color — green when all trades profitable', '✅ Done'),
+        ('Recommendations column removed', '✅ Done'),
+        ('intraday.py — exit_mechanism=UNFILLED on reconciliation', '✅ Done'),
+        ('Supabase backfill — CBRE/AEP exit_mechanism=EOD', '✅ Done'),
+        ('VWAP signal quality validation (June 1 gate)', '⏳ ~8 trading days of data accumulating'),
+        ('June 1 gate: python3 eval.py --days 14', '⏳ Gate date: 2026-06-01'),
+    ]
 )
 
 
