@@ -64,7 +64,9 @@ Exits: {exit_str}
 Portfolio value: ${ending_cap:,.2f}
 {recent_ctx}
 
-Write a 3-4 sentence plain-English summary of today's session. Cover: what happened overall, what worked, what didn't, and one specific actionable observation for tomorrow. Be direct and specific — no filler, no padding. Do not repeat the raw numbers verbatim; interpret them."""
+Write a 3-4 sentence plain-English summary of today's session. Cover: what happened overall, what worked, what didn't, and one specific actionable observation for tomorrow. Be direct and specific — no filler, no padding. Do not repeat the raw numbers verbatim; interpret them.
+
+Output plain text only. No markdown, no headings, no bullet points, no backticks, no bold or italic formatting."""
 
 
 def generate(record: dict, broker: str = "simulation") -> Optional[str]:
