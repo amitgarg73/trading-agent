@@ -331,6 +331,16 @@ body('These features make the system more robust and self-correcting.')
 add_table(
     ['Feature', 'What', 'Why', 'Effort', 'Priority', 'Status'],
     [
+        ('P&L reconciliation against Alpaca equity — PRE GO-LIVE',
+         'At EOD, pull Alpaca account equity directly (get_account().equity) instead of computing '
+         'P&L from fill prices. Use Alpaca equity as the source of truth for ending_capital and realized_pnl. '
+         'Current approach: shares × (close_price − entry_price) + starting_capital. '
+         'Known gap: paper account showed $100,064.67 (Alpaca) vs $100,128.29 (our calc) on Day 1 — '
+         '$63.62 discrepancy from commissions, slippage, and limit order fill differences.',
+         'On real capital, a $63 discrepancy per day compounds. Books must match the broker exactly. '
+         'Alpaca equity is always ground truth — our P&L calc is an approximation.',
+         'S', 'P0', 'PLANNED — must fix before real money'),
+
         ('GitHub Actions retry (3x, 60s backoff)',
          'trading.yml retries up to 3 times before marking a run failed',
          'Handles transient yfinance/API failures; shipped in v5.3',
@@ -656,6 +666,7 @@ add_table(
         ('—', 'Daily EOD summary (Claude Haiku)', 'Dashboard', 'S', 'SHIPPED v5.8 — plain-English session narrative in Performance tab after every EOD'),
         ('—', 'Live scorecard + dynamic date range', 'Dashboard', 'XS', 'SHIPPED v5.8 — scorecard computes from selected date range; options hidden until data threshold met'),
         ('—', 'Performance tab UX (Total Return, tooltips, charts)', 'Dashboard', 'S', 'SHIPPED v5.8 — side-by-side charts, help= tooltips, plain-text Verdict, Total Return metric'),
+        ('P0', 'P&L reconciliation vs Alpaca equity', 'Infrastructure', 'S', 'MUST FIX before real money — $63 gap on Day 1; pull Alpaca equity at EOD as source of truth'),
         ('1', 'VWAP signal quality validation (June 1)', 'Validation', 'M', '~8 trading days accumulating; eval.py reports cohort deltas on June 1'),
         ('2', 'June 1 gate: python3 eval.py --days 14', 'Validation', 'S', 'Pass criteria: win rate ≥80%, avg P&L ≥$500/day, NATIVE_TRAIL confirmed'),
         ('3', 'Momentum confirmation — 15-min rule (V2f)', 'Signal Quality', 'M', 'Reduces false entries; should improve win rate by 3–5%'),
