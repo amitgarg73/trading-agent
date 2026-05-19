@@ -409,6 +409,32 @@ add_table(
          'eval.py integrity section flags any active halt that was missed.',
          'S', 'P1', 'SHIPPED v5.7'),
 
+        ('Performance tab — Total Return, tooltips, side-by-side charts, date range selector',
+         'Total Return metric card: (portfolio_value − starting_capital) / starting_capital %. '
+         'All Agent Scorecard metric cards have help= tooltip text explaining formula + targets. '
+         'Portfolio Value and Cumulative P&L split into two side-by-side charts. '
+         'Dynamic date range selector (Last 7D / 30D / 90D / All time) — options hidden until enough data exists. '
+         'Plain-text Verdict narrative replaces three-column layout. Grade formula caption added.',
+         'Portfolio value and P&L were on the same scale making daily P&L look flat. '
+         'Every metric was opaque without hover context. Date ranges were confusing when only 1–5 days of data existed.',
+         'S', 'P1', 'SHIPPED v5.8'),
+
+        ('Daily EOD Summary — Claude Haiku narrative card',
+         'agents/daily_summary.py: Claude Haiku generates a 3–4 sentence plain-English session narrative '
+         'after every EOD run (exit breakdown, recent context, one actionable observation for tomorrow). '
+         'Stored in scan_results (scan_type=daily_summary, upserted by date). '
+         'Dashboard Performance tab shows latest summary at the top of the tab.',
+         'The Agent Scorecard is comprehensive but dense. A 3-sentence narrative gives an immediate '
+         'qualitative take without scrolling through numbers.',
+         'S', 'P2', 'SHIPPED v5.8'),
+
+        ('Live scorecard — eval.py perf_rows parameter',
+         '_compute_metrics() accepts optional perf_rows; dashboard passes df filtered by date range. '
+         'Scorecard updates dynamically when user switches date ranges. Eval snapshot dependency removed.',
+         'Old scorecard was fixed to the last 30-day eval snapshot regardless of selected date range. '
+         'Live computation ensures grade and metrics always match the displayed date range.',
+         'XS', 'P1', 'SHIPPED v5.8'),
+
         ('Intraday price chart with entry/exit markers',
          'Show a 1-day candlestick chart per position with entry price, target, stop, and trail stop marked',
          'Visual context for each trade; immediately shows whether price is trending toward target or stalling',
@@ -627,6 +653,9 @@ add_table(
         ('—', 'VWAP + RS vs SPY enrichment — Thread 1', 'Signal Quality', 'S', 'SHIPPED v5.7 — step 1.85 enriches candidates with live institutional signals before Claude'),
         ('—', 'Manual override stop/restart', 'Operational', 'S', 'SHIPPED v5.7 — control.py + stop.yml + restart.yml; halt banner on every dashboard page'),
         ('—', 'Halt history + eval markers', 'Operational', 'S', 'SHIPPED v5.7 — halt_flag_cleared + resumed_at; vline chart markers; INTEGRITY CHECKS in eval'),
+        ('—', 'Daily EOD summary (Claude Haiku)', 'Dashboard', 'S', 'SHIPPED v5.8 — plain-English session narrative in Performance tab after every EOD'),
+        ('—', 'Live scorecard + dynamic date range', 'Dashboard', 'XS', 'SHIPPED v5.8 — scorecard computes from selected date range; options hidden until data threshold met'),
+        ('—', 'Performance tab UX (Total Return, tooltips, charts)', 'Dashboard', 'S', 'SHIPPED v5.8 — side-by-side charts, help= tooltips, plain-text Verdict, Total Return metric'),
         ('1', 'VWAP signal quality validation (June 1)', 'Validation', 'M', '~8 trading days accumulating; eval.py reports cohort deltas on June 1'),
         ('2', 'June 1 gate: python3 eval.py --days 14', 'Validation', 'S', 'Pass criteria: win rate ≥80%, avg P&L ≥$500/day, NATIVE_TRAIL confirmed'),
         ('3', 'Momentum confirmation — 15-min rule (V2f)', 'Signal Quality', 'M', 'Reduces false entries; should improve win rate by 3–5%'),

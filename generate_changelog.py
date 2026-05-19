@@ -74,7 +74,7 @@ title = doc.add_heading('AI Trading Agent — Session Changelog', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = NAVY
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.7  ·  Living document — update each sprint')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.8  ·  Living document — update each sprint')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(11)
 meta.runs[0].font.color.rgb = GRAY
@@ -85,6 +85,143 @@ body(
     'why it was built, the impact on the trading agent, and the real-money confidence score '
     'at each point. Update this file every time a new version ships. '
     'Run python3 generate_changelog.py to regenerate Trading_Agent_Changelog.docx.'
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v5.8 — 2026-05-18
+# ══════════════════════════════════════════════════════════════════════════════
+doc.add_page_break()
+heading('v5.8 — 2026-05-18')
+body('Confidence score: 6.5/10 (unchanged)')
+body(
+    'Theme: Dashboard transparency + observability — Performance tab rebuild, '
+    'live scorecard, daily AI summary, and EOD double-run bug fix.'
+)
+
+divider()
+subheading('1. Daily EOD Summary — Claude Haiku Narrative')
+body(
+    'What: New agents/daily_summary.py generates a plain-English 3–4 sentence narrative after '
+    'every EOD run. Claude Haiku (claude-haiku-4-5-20251001) receives today\'s performance record, '
+    'exit reason breakdown, and 5-day rolling context. Prompt explicitly requests: direct interpretation '
+    '(not raw number repetition), one actionable observation for tomorrow, plain text only — '
+    'no markdown, no headings, no backticks. Stored in scan_results with scan_type=daily_summary '
+    '(upserted by date — re-runs overwrite cleanly). Orchestrator EOD function calls generate() '
+    'after performance.run(). Dashboard Performance tab shows the latest summary in a light card '
+    'at the top of the tab.'
+)
+body(
+    'Why: The Agent Scorecard is comprehensive but requires scrolling through a dense expander. '
+    'A 3-sentence plain-English narrative gives an immediate qualitative take — '
+    '"momentum worked today, stop-outs on two names dragged the win rate, consider tighter '
+    'pre-filter score threshold tomorrow" — without needing to interpret numbers first. '
+    'Haiku is used (not Sonnet) because summarization is a lightweight task with a fixed output cap.'
+)
+body('Impact: Every EOD close now produces a human-readable session brief. Zero additional latency cost.')
+
+divider()
+subheading('2. Live Scorecard — eval.py perf_rows Parameter')
+body(
+    'What: _compute_metrics() in eval.py now accepts an optional perf_rows parameter. '
+    'When provided, it skips the Supabase query and computes all metrics from the passed list. '
+    'latest_cap uses max(perf_rows, key=lambda r: r["date"]) instead of index 0 to handle any ordering. '
+    'Dashboard imports _compute_metrics from eval.py, loads all performance data, applies the '
+    'selected date range filter, then passes df.to_dict("records") to compute a live scorecard '
+    '— no eval snapshot in Supabase required.'
+)
+body(
+    'Why: The old Scorecard read a pre-computed snapshot saved by eval.py --write. '
+    'This meant the scorecard was always fixed to the most recent EOD eval window (30 days) '
+    'regardless of what date range the user selected. '
+    'With live computation, the scorecard updates dynamically when the user switches date ranges: '
+    '"Last 7 days" grade and metrics are computed from the last 7 days of data only.'
+)
+body('Impact: Scorecard is always consistent with the selected date range. Eval snapshot dependency removed.')
+
+divider()
+subheading('3. Dynamic Date Range Selector — Performance Tab')
+body(
+    'What: Performance tab now has a horizontal radio selector: Last 7 days / Last 30 days / '
+    'Last 90 days / All time. Options are shown only when enough data exists: '
+    '"Last 30 days" is hidden until total_days >= 30, "Last 90 days" hidden until total_days >= 90. '
+    'Filters all three charts (Daily P&L bar, Portfolio Value line, Cumulative P&L line), '
+    'the Agent Scorecard, and the daily log table to the selected range.'
+)
+body(
+    'Why: With only 1–5 days of data, showing "Last 30 days" as an option is confusing — '
+    'it implies there is 30-day history when there isn\'t. '
+    'Hiding options until the data threshold is reached avoids misleading date range labels.'
+)
+body('Impact: Clean progressive disclosure — date ranges appear as they become meaningful.')
+
+divider()
+subheading('4. Dashboard UX — Total Return, Tooltips, Side-by-Side Charts')
+body(
+    'What: Multiple Performance tab quality-of-life improvements shipped together. '
+    '(a) Total Return metric card added (alongside Portfolio Value and Cumulative P&L) — '
+    'shows (portfolio_value − starting_capital) / starting_capital as a percentage with help '
+    'text showing the absolute dollar gain on $100K since Day 1. '
+    '(b) All Agent Scorecard metric cards now have help= tooltip text explaining the formula, '
+    'targets, and interpretation: Score (P&L 40pts + win-day 30pts + win-rate 30pts), '
+    'Actual R:R, Annualized Return formula, integrity check meaning, VWAP/RS interpretation. '
+    '(c) Portfolio Value and Cumulative P&L split from one chart into two side-by-side charts '
+    'to avoid scale conflicts. '
+    '(d) Verdict section replaced from three-column layout (Action, Watch, Wins) to a single '
+    'plain-text narrative paragraph combining all three signals in readable prose. '
+    '(e) Grade formula caption added under the Verdict heading: '
+    '"Score = P&L vs target (up to 40 pts) + Win day rate (30 pts) + Trade win rate (30 pts)." '
+    '(f) VWAP section renamed to "VWAP & Relative Strength Signal Quality", '
+    'Thread 1 validation language removed, RS explainer added in collapsible section with '
+    'plain-English definition and interpretation thresholds.'
+)
+body(
+    'Why: Multiple independent transparency requests addressed in one pass. '
+    'The Total Return metric answered Amit\'s question "how much has the portfolio grown from $100K?" '
+    'The tooltips expose the math behind every number. '
+    'Side-by-side charts prevent the large portfolio value (e.g. $100,128) from making the daily '
+    'P&L ($128) look flat on the same scale. '
+    'The Verdict narrative is easier to read than three columns of action items.'
+)
+body('Impact: Performance tab is now self-explanatory — every metric has context and the chart layout is clear.')
+
+divider()
+subheading('5. EOD Double-Run Bug Fix — Starting Capital Calculation')
+body(
+    'What: performance.py was fetching prev = db.select("daily_performance", order="date", limit=1). '
+    'On an EOD re-run, this returned today\'s own record (most recent by date) and used its '
+    'ending_capital as starting_capital — inflating the starting capital and producing a wrong portfolio value. '
+    'Fix: fetch 2 rows, filter to r["date"] < today, so today\'s own record is excluded on any re-run. '
+    'Bad record in Supabase also corrected manually: starting_capital=$100,000, ending_capital=$100,128.29.'
+)
+body(
+    'Why: The bug was invisible until Day 1 was re-run for testing. '
+    'The ending_capital shown on the dashboard was $100,385 instead of $100,128.29 — '
+    'a $257 discrepancy from the actual $128.29 P&L. '
+    'The root cause was the ascending/descending ordering ambiguity: with only one row, '
+    'the most recent record and today\'s record are the same object.'
+)
+body('Impact: Portfolio value now accurate on both first-run and re-run of EOD. Capital carries forward correctly.')
+
+add_table(
+    ['Item', 'Status'],
+    [
+        ('agents/daily_summary.py — Claude Haiku EOD narrative', '✅ Done'),
+        ('orchestrator.py — daily_summary.generate() called from EOD', '✅ Done'),
+        ('eval.py — perf_rows parameter for live computation', '✅ Done'),
+        ('Dashboard — live scorecard from selected date range', '✅ Done'),
+        ('Dashboard — dynamic date range selector (hides until data exists)', '✅ Done'),
+        ('Dashboard — Total Return metric card', '✅ Done'),
+        ('Dashboard — metric help= tooltips on all Scorecard cards', '✅ Done'),
+        ('Dashboard — plain-text Verdict narrative paragraph', '✅ Done'),
+        ('Dashboard — grade formula caption under Verdict', '✅ Done'),
+        ('Dashboard — side-by-side Portfolio Value / Cumulative P&L charts', '✅ Done'),
+        ('Dashboard — VWAP section cleanup + RS plain-English explainer', '✅ Done'),
+        ('Dashboard — daily EOD summary card at top of Performance tab', '✅ Done'),
+        ('agents/performance.py — EOD double-run starting_capital bug fix', '✅ Done'),
+        ('VWAP signal quality validation (June 1 gate)', '⏳ ~8 trading days of data accumulating'),
+        ('June 1 gate: python3 eval.py --days 14', '⏳ Gate date: 2026-06-01'),
+    ]
 )
 
 
