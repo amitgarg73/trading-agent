@@ -872,6 +872,21 @@ elif page == "Performance":
     _selected   = st.radio("Date range", list(_range_opts.keys()), horizontal=True, index=1)
     _n_days     = _range_opts[_selected]
 
+    # ── Today's summary ──────────────────────────────────────────
+    _today_summary_rows = db.select("scan_results", filters={"scan_type": "daily_summary"}, order="date", limit=1)
+    if _today_summary_rows:
+        _ts = _today_summary_rows[0]
+        _tr = _ts.get("results", {})
+        _pnl_val = _tr.get("total_pnl", 0) or 0
+        _pnl_color = "#1e8449" if _pnl_val >= 0 else "#e74c3c"
+        st.markdown(
+            f"**Today's Summary** — {_ts['date']}  "
+            f"<span style='color:{_pnl_color}'>**${_pnl_val:+,.2f}**</span>",
+            unsafe_allow_html=True,
+        )
+        st.info(_tr.get("summary", "Summary not available."))
+        st.caption(f"Generated at {(_tr.get('generated_at') or '')[:16].replace('T', ' ')} UTC")
+
     st.markdown("---")
 
     # ── Load & filter perf data ───────────────────────────────────

@@ -8,7 +8,7 @@ import argparse
 from datetime import date, datetime, timedelta
 from scanner.scanner import run_scan
 from scanner.ml_scorer import score_candidates as ml_score_candidates, is_available as ml_available
-from agents import strategy, risk, sector_guard, guardrails, performance, market_context, news_intel, universe_refresh
+from agents import strategy, risk, sector_guard, guardrails, performance, market_context, news_intel, universe_refresh, daily_summary
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
@@ -316,6 +316,8 @@ def eod(broker: str = "simulation"):
     print(f"  Trades: {record['total_trades']} | Win rate: {record['win_rate']}%")
     print(f"  Best:  {record['best_trade_ticker']} +${record['best_trade_pnl']:,.2f}")
     print(f"  Worst: {record['worst_trade_ticker']} ${record['worst_trade_pnl']:,.2f}\n")
+
+    daily_summary.generate(record, broker=broker)
 
 
 def main():
