@@ -867,9 +867,14 @@ elif page == "Positions":
 elif page == "Performance":
     st.title("Performance History")
 
-    # ── Date range selector ───────────────────────────────────────
-    _range_opts = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90, "All time": None}
-    _selected   = st.radio("Date range", list(_range_opts.keys()), horizontal=True, index=1)
+    # ── Date range selector — only show ranges with enough data ──
+    _all_perf      = db.select("daily_performance", order="date")
+    _total_days    = len(_all_perf)
+    _all_range_opts = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90, "All time": None}
+    _range_opts    = {k: v for k, v in _all_range_opts.items() if v is None or _total_days >= v}
+    if not _range_opts:
+        _range_opts = {"Last 7 days": 7}
+    _selected   = st.radio("Date range", list(_range_opts.keys()), horizontal=True, index=0)
     _n_days     = _range_opts[_selected]
 
     # ── Today's summary ──────────────────────────────────────────
@@ -890,12 +895,11 @@ elif page == "Performance":
     st.markdown("---")
 
     # ── Load & filter perf data ───────────────────────────────────
-    perf = db.select("daily_performance", order="date")
-    if not perf:
+    if not _all_perf:
         st.info("No performance data yet.")
         st.stop()
 
-    df = pd.DataFrame(perf).sort_values("date")
+    df = pd.DataFrame(_all_perf).sort_values("date")
     if _n_days:
         _cutoff = (pd.Timestamp.today() - pd.Timedelta(days=_n_days)).strftime("%Y-%m-%d")
         df = df[df["date"] >= _cutoff]
