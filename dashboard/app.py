@@ -1382,15 +1382,28 @@ elif page == "Performance":
     with ch_left:
         st.subheader("Portfolio Value")
         fig_pv = go.Figure()
+        _pv_vals = df["ending_capital"].tolist()
+        # y-axis zoomed to data: pad 2% above/below the range, always include starting capital
+        _pv_min = min(_pv_vals + [TOTAL_CAPITAL])
+        _pv_max = max(_pv_vals + [TOTAL_CAPITAL])
+        _pv_pad = max((_pv_max - _pv_min) * 0.5, TOTAL_CAPITAL * 0.005)
         fig_pv.add_trace(go.Scatter(
-            x=df["date"], y=df["ending_capital"],
+            x=df["date"], y=_pv_vals,
+            mode="lines+markers",
             name="Portfolio Value",
-            line=dict(color="#1A3A6A", width=2),
-            hovertemplate="<b>%{x}</b><br>Portfolio: $%{y:,.0f}<extra></extra>",
-            fill="tozeroy", fillcolor="rgba(26,58,106,0.08)",
+            line=dict(color="#1A3A6A", width=2.5),
+            marker=dict(size=7, color="#1A3A6A"),
+            hovertemplate="<b>%{x}</b><br>Portfolio: $%{y:,.2f}<extra></extra>",
+            fill="tonexty", fillcolor="rgba(26,58,106,0.07)",
         ))
-        fig_pv.add_hline(y=TOTAL_CAPITAL, line_dash="dash", line_color="rgba(128,128,128,0.5)",
-                         annotation_text=f"Starting ${TOTAL_CAPITAL:,}", annotation_position="bottom right")
+        # invisible baseline trace so fill shades between principal and portfolio line
+        fig_pv.add_trace(go.Scatter(
+            x=df["date"], y=[TOTAL_CAPITAL] * len(df),
+            mode="lines",
+            line=dict(color="rgba(128,128,128,0.4)", width=1.5, dash="dash"),
+            name=f"Starting ${TOTAL_CAPITAL:,}",
+            hoverinfo="skip",
+        ))
         for _hd in sorted(_chart_halt_dates):
             if _hd in _chart_date_strs:
                 fig_pv.add_vline(x=_hd, line_dash="dash", line_color="rgba(231,76,60,0.7)",
@@ -1402,21 +1415,35 @@ elif page == "Performance":
             margin=dict(l=20, r=20, t=20, b=20),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
-            yaxis=dict(gridcolor="rgba(128,128,128,0.2)"),
-            showlegend=False,
+            yaxis=dict(
+                gridcolor="rgba(128,128,128,0.2)",
+                range=[_pv_min - _pv_pad, _pv_max + _pv_pad],
+                tickformat="$,.0f",
+            ),
+            legend=dict(orientation="h", y=-0.2, x=0),
         )
         st.plotly_chart(fig_pv, use_container_width=True)
 
     with ch_right:
         st.subheader("Cumulative P&L")
-        cum_colors = ["#27ae60" if v >= 0 else "#e74c3c" for v in df["cumulative_pnl"]]
+        _cum_vals = df["cumulative_pnl"].tolist()
+        _cum_min = min(_cum_vals + [0])
+        _cum_max = max(_cum_vals + [0])
+        _cum_pad = max((_cum_max - _cum_min) * 0.5, 200)
         fig_cum = go.Figure()
+        # shaded area above/below zero
         fig_cum.add_trace(go.Scatter(
-            x=df["date"], y=df["cumulative_pnl"],
+            x=df["date"], y=_cum_vals,
+            mode="lines+markers",
             name="Cumulative P&L",
-            line=dict(color="#27ae60", width=2),
-            hovertemplate="<b>%{x}</b><br>Cum. P&L: $%{y:,.0f}<extra></extra>",
-            fill="tozeroy", fillcolor="rgba(39,174,96,0.08)",
+            line=dict(color="#27ae60", width=2.5),
+            marker=dict(
+                size=7,
+                color=["#27ae60" if v >= 0 else "#e74c3c" for v in _cum_vals],
+            ),
+            hovertemplate="<b>%{x}</b><br>Cum. P&L: $%{y:+,.2f}<extra></extra>",
+            fill="tozeroy",
+            fillcolor="rgba(39,174,96,0.10)",
         ))
         fig_cum.add_hline(y=0, line_dash="dash", line_color="rgba(128,128,128,0.5)",
                           annotation_text="Break even", annotation_position="bottom right")
@@ -1431,7 +1458,11 @@ elif page == "Performance":
             margin=dict(l=20, r=20, t=20, b=20),
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
-            yaxis=dict(gridcolor="rgba(128,128,128,0.2)"),
+            yaxis=dict(
+                gridcolor="rgba(128,128,128,0.2)",
+                range=[_cum_min - _cum_pad, _cum_max + _cum_pad],
+                tickformat="$+,.0f",
+            ),
             showlegend=False,
         )
         st.plotly_chart(fig_cum, use_container_width=True)
