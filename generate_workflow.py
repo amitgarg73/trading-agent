@@ -1,340 +1,355 @@
-"""Generates a full-day agent workflow diagram as a PNG."""
+"""Generates a clean full-day agent workflow diagram as SVG + PNG."""
+import os, math
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from matplotlib.patches import FancyBboxPatch
 
-FIG_W, FIG_H = 22, 30
-fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
-ax.set_xlim(0, FIG_W)
-ax.set_ylim(0, FIG_H)
+# ── Canvas ────────────────────────────────────────────────────────────────────
+W, H = 32, 52          # figure inches
+DPI  = 120
+fig, ax = plt.subplots(figsize=(W, H))
+ax.set_xlim(0, W)
+ax.set_ylim(0, H)
 ax.axis("off")
-fig.patch.set_facecolor("#F7F8FA")
+fig.patch.set_facecolor("#F4F6F8")
+ax.set_facecolor("#F4F6F8")
 
-# ── Palette ───────────────────────────────────────────────────────────────────
-C_PRE_BG   = "#1A3A6A"   # navy
-C_PRE_BOX  = "#2C5F9E"
-C_PRE_ACC  = "#4A90D9"
-C_INT_BG   = "#145A32"   # dark green
-C_INT_BOX  = "#1E8449"
-C_INT_ACC  = "#27AE60"
-C_EOD_BG   = "#784212"   # dark orange
-C_EOD_BOX  = "#B7550A"
-C_EOD_ACC  = "#F39C12"
-C_DB_BG    = "#2C3E50"
-C_DB_BOX   = "#4A5568"
-C_SKIP     = "#C0392B"
-C_WHITE    = "#FFFFFF"
-C_LIGHT    = "#ECF0F1"
-C_ARROW    = "#555555"
-C_SECTION  = "#FAFAFA"
+# ── Colors ────────────────────────────────────────────────────────────────────
+PRE   = "#1A3A6A"   # navy   – premarket
+INT   = "#155724"   # green  – intraday
+EOD   = "#7B3100"   # brown  – eod
+DB    = "#2D3748"   # slate  – infra / supabase
+SKIP  = "#C0392B"   # red    – gate / decision
+WHITE = "#FFFFFF"
+LIGHT = "#F0F4FF"
 
-FONT = "DejaVu Sans"
+PRE_L = "#2E5FA3"
+INT_L = "#1E7A3E"
+EOD_L = "#C96A1A"
+DB_L  = "#4A5568"
 
+FONT  = "DejaVu Sans"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def section_bg(x, y, w, h, color, alpha=0.12, radius=0.4):
-    box = FancyBboxPatch((x, y), w, h,
-                         boxstyle=f"round,pad=0,rounding_size={radius}",
-                         linewidth=2, edgecolor=color,
-                         facecolor=color, alpha=alpha, zorder=1)
-    ax.add_patch(box)
+BW, BH = 5.8, 1.05    # default box width / height
+GAP_X  = 1.0          # horizontal gap between boxes
+ROW_H  = 2.1          # row-to-row vertical spacing
 
-
-def section_label(x, y, text, color):
-    ax.text(x, y, text, fontsize=13, fontweight="bold", color=color,
-            fontfamily=FONT, va="center", ha="left", zorder=5,
-            bbox=dict(boxstyle="round,pad=0.3", facecolor=color, alpha=0.15, edgecolor="none"))
-
-
-def box(cx, cy, w, h, label, sublabel="", bg="#2C5F9E", fg="#FFFFFF", fontsize=9.5):
-    bx = FancyBboxPatch((cx - w/2, cy - h/2), w, h,
-                         boxstyle="round,pad=0.08,rounding_size=0.15",
-                         linewidth=1.5, edgecolor=bg,
-                         facecolor=bg, alpha=0.92, zorder=3)
-    ax.add_patch(bx)
-    if sublabel:
-        ax.text(cx, cy + 0.13, label, fontsize=fontsize, fontweight="bold",
-                color=fg, fontfamily=FONT, va="center", ha="center", zorder=4)
-        ax.text(cx, cy - 0.18, sublabel, fontsize=7.5, color=fg,
-                fontfamily=FONT, va="center", ha="center", zorder=4, alpha=0.85)
+def rbox(cx, cy, w, h, title, sub="", fill=PRE_L, title_sz=10.5, sub_sz=8.5):
+    """Rounded rectangle box."""
+    pad = 0.12
+    rect = FancyBboxPatch((cx - w/2, cy - h/2), w, h,
+                           boxstyle=f"round,pad={pad},rounding_size=0.25",
+                           linewidth=0, facecolor=fill, zorder=4)
+    ax.add_patch(rect)
+    # subtle inner border
+    rect2 = FancyBboxPatch((cx - w/2, cy - h/2), w, h,
+                            boxstyle=f"round,pad={pad},rounding_size=0.25",
+                            linewidth=1.2, edgecolor="white", facecolor="none",
+                            alpha=0.25, zorder=5)
+    ax.add_patch(rect2)
+    if sub:
+        ax.text(cx, cy + 0.2, title, fontsize=title_sz, fontweight="bold",
+                color=WHITE, fontfamily=FONT, va="center", ha="center", zorder=6)
+        ax.text(cx, cy - 0.26, sub, fontsize=sub_sz, color=WHITE,
+                fontfamily=FONT, va="center", ha="center", zorder=6, alpha=0.85)
     else:
-        ax.text(cx, cy, label, fontsize=fontsize, fontweight="bold",
-                color=fg, fontfamily=FONT, va="center", ha="center", zorder=4)
-    return (cx, cy)
+        ax.text(cx, cy, title, fontsize=title_sz, fontweight="bold",
+                color=WHITE, fontfamily=FONT, va="center", ha="center", zorder=6)
 
-
-def diamond(cx, cy, w, h, label, color=C_SKIP):
+def diamond(cx, cy, w, h, label, fill=SKIP):
+    """Decision diamond."""
     pts = [(cx, cy+h/2), (cx+w/2, cy), (cx, cy-h/2), (cx-w/2, cy)]
-    poly = plt.Polygon(pts, closed=True, facecolor=color, edgecolor=color,
-                       alpha=0.85, linewidth=1.5, zorder=3)
+    poly = plt.Polygon(pts, closed=True, facecolor=fill, edgecolor="white",
+                       linewidth=1, zorder=4, alpha=0.9)
     ax.add_patch(poly)
-    ax.text(cx, cy, label, fontsize=8, fontweight="bold", color=C_WHITE,
-            fontfamily=FONT, va="center", ha="center", zorder=4)
+    ax.text(cx, cy, label, fontsize=9.5, fontweight="bold", color=WHITE,
+            fontfamily=FONT, va="center", ha="center", zorder=6)
 
+def section_bg(y_bot, y_top, fill, alpha=0.06):
+    rect = FancyBboxPatch((0.6, y_bot), W - 1.2, y_top - y_bot,
+                           boxstyle="round,pad=0,rounding_size=0.5",
+                           linewidth=1.5, edgecolor=fill,
+                           facecolor=fill, alpha=alpha, zorder=1)
+    ax.add_patch(rect)
 
-def arrow(x1, y1, x2, y2, color=C_ARROW, label="", lw=1.8):
+def section_hdr(y, label, fill, right_note=""):
+    # colored pill header
+    pill = FancyBboxPatch((0.9, y - 0.42), 9.5, 0.84,
+                           boxstyle="round,pad=0,rounding_size=0.42",
+                           linewidth=0, facecolor=fill, alpha=0.15, zorder=3)
+    ax.add_patch(pill)
+    ax.text(1.5, y, label, fontsize=13, fontweight="bold", color=fill,
+            fontfamily=FONT, va="center", ha="left", zorder=4)
+    if right_note:
+        ax.text(W - 1.0, y, right_note, fontsize=9, color="#888888",
+                fontfamily=FONT, va="center", ha="right", zorder=4,
+                fontstyle="italic")
+
+def arr(x1, y1, x2, y2, color="#888888", lw=1.8, label="", label_side="right"):
     ax.annotate("", xy=(x2, y2), xytext=(x1, y1),
-                arrowprops=dict(arrowstyle="-|>", color=color,
-                                lw=lw, mutation_scale=14),
-                zorder=2)
+                arrowprops=dict(arrowstyle="-|>", color=color, lw=lw,
+                                mutation_scale=16), zorder=3)
     if label:
         mx, my = (x1+x2)/2, (y1+y2)/2
-        ax.text(mx + 0.12, my, label, fontsize=7.5, color=color,
-                fontfamily=FONT, va="center", ha="left", zorder=5, fontstyle="italic")
+        dx = 0.2 if label_side == "right" else -0.2
+        ha = "left" if label_side == "right" else "right"
+        ax.text(mx + dx, my, label, fontsize=8, color=color, fontstyle="italic",
+                fontfamily=FONT, va="center", ha=ha, zorder=4)
+
+def v_arr(cx, y1, y2, color="#888888", lw=1.8, label=""):
+    arr(cx, y1, cx, y2, color=color, lw=lw, label=label)
+
+def h_arr(x1, x2, cy, color="#888888", lw=1.8, label=""):
+    arr(x1, cy, x2, cy, color=color, lw=lw, label=label)
+
+def elbow(x1, y1, x2, y2, color="#888888", lw=1.8):
+    """L-shaped connector: go vertical first, then horizontal."""
+    ax.plot([x1, x1, x2], [y1, y2, y2], color=color, lw=lw, zorder=3,
+            solid_capstyle="round")
+    ax.annotate("", xy=(x2, y2), xytext=(x2 - 0.01 * (1 if x2 > x1 else -1), y2),
+                arrowprops=dict(arrowstyle="-|>", color=color, lw=lw,
+                                mutation_scale=16), zorder=3)
 
 
-def horiz_arrow(x1, x2, y, color=C_ARROW, label=""):
-    arrow(x1, y, x2, y, color=color, label=label)
-
-
-def vert_arrow(x, y1, y2, color=C_ARROW, label=""):
-    arrow(x, y1, x, y2, color=color, label=label)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 # TITLE
-# ═══════════════════════════════════════════════════════════════════════════════
-ax.text(FIG_W/2, 29.3, "AI Trading Agent — Full Day Workflow",
-        fontsize=18, fontweight="bold", color="#1A3A6A",
-        fontfamily=FONT, va="center", ha="center", zorder=5)
-ax.text(FIG_W/2, 28.85, "Premarket  ·  Intraday  ·  EOD  ·  Supabase",
-        fontsize=11, color="#666666",
-        fontfamily=FONT, va="center", ha="center", zorder=5)
-
-# thin divider
-ax.plot([1, FIG_W-1], [28.6, 28.6], color="#CCCCCC", lw=1, zorder=2)
+# ══════════════════════════════════════════════════════════════════════════════
+ax.text(W/2, 51.1, "AI Trading Agent — Full Day Workflow",
+        fontsize=22, fontweight="bold", color="#1A3A6A",
+        fontfamily=FONT, va="center", ha="center", zorder=6)
+ax.text(W/2, 50.35, "Premarket  ·  Intraday (every 15 min)  ·  EOD  ·  Supabase",
+        fontsize=12, color="#666666",
+        fontfamily=FONT, va="center", ha="center", zorder=6)
+ax.plot([1.5, W-1.5], [49.9, 49.9], color="#CCCCCC", lw=1.2, zorder=3)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PREMARKET SECTION  y: 19.5 → 28.2
-# ═══════════════════════════════════════════════════════════════════════════════
-section_bg(0.5, 19.5, FIG_W - 1, 8.9, C_PRE_BG, alpha=0.07)
-section_label(1.1, 28.05, "① PREMARKET  —  9:45 AM ET", C_PRE_BG)
-ax.text(FIG_W - 1.1, 28.05, "orchestrator.py  →  premarket()", fontsize=8.5,
-        color="#888888", fontfamily=FONT, va="center", ha="right", zorder=5)
+# ══════════════════════════════════════════════════════════════════════════════
+# ① PREMARKET   y: 33.0 → 49.5
+# ══════════════════════════════════════════════════════════════════════════════
+section_bg(33.0, 49.5, PRE)
+section_hdr(49.0, "①  PREMARKET  —  9:45 AM ET", PRE,
+            right_note="orchestrator.py → premarket()")
 
-# Row 1: Universe + Scanner
-box(4.5,  27.1, 3.2, 0.7, "Universe", "450+ tickers  (S&P 500 + Nasdaq 100)", C_PRE_BOX)
-box(10.0, 27.1, 3.5, 0.7, "Technical Scanner", "RSI · MACD · Bollinger · Volume", C_PRE_BOX)
-box(16.5, 27.1, 3.2, 0.7, "Market Context", "VIX · Futures · Fear&Greed · Calendar", C_PRE_BOX)
-horiz_arrow(6.1, 8.25, 27.1, C_PRE_ACC)
-horiz_arrow(11.75, 14.85, 27.1, C_PRE_ACC)
+# --- Row A: Universe → Scanner -----------------------------------------------
+rbox(8.0,  47.8, BW, BH, "Universe", "450+ tickers  (S&P 500 + Nasdaq 100)", PRE_L)
+rbox(16.0, 47.8, BW, BH, "Technical Scanner", "RSI · MACD · Bollinger Bands · Volume ratio", PRE_L)
+h_arr(10.9, 13.1, 47.8, PRE_L, lw=2)
 
-# Market context skip diamond
-diamond(16.5, 26.1, 2.0, 0.65, "SKIP?", C_SKIP)
-vert_arrow(16.5, 26.75, 26.42, C_PRE_ACC)
-ax.text(17.7, 26.1, "YES → No trades today", fontsize=8, color=C_SKIP,
+# --- Market Context (right column) -------------------------------------------
+rbox(26.0, 47.8, BW, BH, "Market Context", "VIX gate · Futures signal · Fear & Greed · Calendar", PRE_L)
+# scanner → market context (via top)
+elbow(16.0, 48.32, 26.0, 48.32, PRE_L, lw=2)
+
+# SKIP gate
+diamond(26.0, 46.45, 3.4, 1.0, "SKIP?", SKIP)
+v_arr(26.0, 47.32, 46.95, PRE_L, lw=2)
+# skip label
+ax.text(27.9, 46.45, "YES  →  No trades today", fontsize=9, color=SKIP,
         fontfamily=FONT, va="center", fontstyle="italic")
-ax.text(16.7, 25.75, "NO", fontsize=8, color=C_PRE_ACC,
-        fontfamily=FONT, va="center", fontstyle="italic")
+ax.text(26.35, 45.85, "NO ↓", fontsize=9, color="#AAAAAA",
+        fontfamily=FONT, va="center")
 
-# Arrow from scanner to news intel
-vert_arrow(10.0, 26.75, 26.05, C_PRE_ACC)
+# --- Row B: News Intelligence -------------------------------------------------
+rbox(16.0, 45.6, BW, BH, "News Intelligence", "Earnings blackout filter · News sentiment", PRE_L)
+v_arr(16.0, 47.32, 46.12, PRE_L, lw=2)
 
-# Row 2: News Intel
-box(10.0, 25.65, 3.5, 0.7, "News Intelligence", "Earnings blackout · News sentiment", C_PRE_BOX)
+# --- Row C: Pre-filter --------------------------------------------------------
+rbox(16.0, 43.4, BW, BH, "Strategy Pre-filter  (step 1.75)", "Drops candidates with score < 4", PRE_L)
+v_arr(16.0, 45.12, 43.92, PRE_L, lw=2)
 
-# Step 1.75 Pre-filter
-vert_arrow(10.0, 25.3, 24.75, C_PRE_ACC)
-box(10.0, 24.4, 3.5, 0.7, "Strategy Pre-filter", "Score ≥ 4  →  drops weak candidates", C_PRE_BOX)
+# --- Row D: ML · Live Prices · VWAP (3-up) -----------------------------------
+rbox(7.5,  41.2, 5.4, BH, "ML Scorer  (step 1.76)", "P(hit +2%)  AUC 0.78  ·  re-ranks candidates", PRE_L)
+rbox(16.0, 41.2, 5.4, BH, "Live Price Refresh  (step 1.8)", "Alpaca real-time ask prices", PRE_L)
+rbox(24.5, 41.2, 5.4, BH, "VWAP + RS Enrichment  (step 1.85)", "above_vwap · rs_vs_spy  ·  re-sort", PRE_L)
 
-# Row 3: ML → Live Prices → VWAP
-vert_arrow(10.0, 24.05, 23.45, C_PRE_ACC)
+v_arr(16.0, 42.92, 41.72, PRE_L, lw=2)
+# elbow from center to ML (left) and VWAP (right)
+elbow(16.0, 41.72, 7.5, 41.72, PRE_L, lw=2)
+h_arr(13.7, 18.7, 41.2, PRE_L, lw=2)   # ML → Live Prices
+h_arr(18.7, 21.8, 41.2, PRE_L, lw=2)   # Live Prices → VWAP
 
-box(4.5,  23.1, 3.2, 0.7, "ML Scorer", "P(hit +2%)  AUC 0.78  →  re-rank", C_PRE_BOX)
-box(10.0, 23.1, 3.5, 0.7, "Live Price Refresh", "Alpaca ask prices  (step 1.8)", C_PRE_BOX)
-box(16.5, 23.1, 3.2, 0.7, "VWAP + RS Enrichment", "above_vwap · rs_vs_spy  (step 1.85)", C_PRE_BOX)
-
-horiz_arrow(8.25, 6.1,  23.1, C_PRE_ACC)   # ← to ML
-horiz_arrow(11.75, 14.85, 23.1, C_PRE_ACC) # → to VWAP
-# re-sort after VWAP
-horiz_arrow(14.85, 11.75, 22.5, C_PRE_ACC)
-ax.text(13.3, 22.62, "re-sort", fontsize=7.5, color=C_PRE_ACC,
+# VWAP re-sort arrow loops back to center
+elbow(24.5, 40.72, 16.0, 40.72, PRE_L, lw=1.5)
+ax.text(20.5, 40.5, "re-sort  ↓", fontsize=8.5, color=PRE_L,
         fontfamily=FONT, va="center", ha="center", fontstyle="italic")
 
-# Claude Strategy
-vert_arrow(10.0, 22.75, 22.1, C_PRE_ACC)
-box(10.0, 21.75, 4.2, 0.7, "Claude Strategy Agent", "Selects trades · entry · target · stop · confidence", C_PRE_BOX, fontsize=9.5)
+# --- Row E: Claude Strategy ---------------------------------------------------
+rbox(16.0, 39.2, 7.0, BH, "Claude Strategy Agent", "Selects trades  ·  entry  ·  target  ·  stop  ·  confidence", PRE_L, title_sz=11)
+v_arr(16.0, 40.72, 39.72, PRE_L, lw=2)
 
-# Risk → Sector → Guardrails in a row
-vert_arrow(10.0, 21.4, 20.75, C_PRE_ACC)
+# --- Row F: Risk · Sector · Guardrails ----------------------------------------
+rbox(7.5,  37.0, 5.4, BH, "Risk Agent", "R:R ≥ 3:1  ·  position sizing  ·  price sanity", PRE_L)
+rbox(16.0, 37.0, 5.4, BH, "Sector Guard", "Max 3 positions per sector", PRE_L)
+rbox(24.5, 37.0, 5.4, BH, "Guardrails", "6 safety checks  ·  daily loss limit  ·  capital cap", PRE_L)
 
-box(5.5,  20.4, 2.8, 0.7, "Risk Agent", "R:R ≥ 3:1 · sizing · price", C_PRE_BOX)
-box(10.5, 20.4, 2.8, 0.7, "Sector Guard", "Max 3 per sector", C_PRE_BOX)
-box(15.5, 20.4, 2.8, 0.7, "Guardrails", "6 safety checks", C_PRE_BOX)
+v_arr(16.0, 38.72, 37.52, PRE_L, lw=2)
+elbow(16.0, 37.52, 7.5,  37.52, PRE_L, lw=2)
+elbow(16.0, 37.52, 24.5, 37.52, PRE_L, lw=2)
 
-horiz_arrow(8.4, 6.9, 20.4, C_PRE_ACC)
-horiz_arrow(11.9, 14.1, 20.4, C_PRE_ACC)
-horiz_arrow(12.85, 14.1, 20.4, C_PRE_ACC)
+# converge back
+elbow(7.5,  36.48, 16.0, 36.48, PRE_L, lw=2)
+elbow(24.5, 36.48, 16.0, 36.48, PRE_L, lw=2)
 
-# Approved trades
-vert_arrow(10.0, 20.05, 19.8, C_PRE_ACC)
-box(10.0, 19.45, 4.2, 0.65, "Alpaca Bracket Orders", "Entry limit · Take-profit · Native trailing stop", "#1A5276", fontsize=9.5)
+# --- Row G: Alpaca Bracket Orders --------------------------------------------
+rbox(16.0, 34.8, 7.5, BH, "Alpaca Bracket Orders", "Entry limit  ·  Take-profit  ·  Native trailing stop", "#0D2D5A", title_sz=11.5)
+v_arr(16.0, 36.48, 35.32, PRE_L, lw=2)
+# DB write
+elbow(19.75, 34.8, 26.0, 34.8, DB_L, lw=1.5)
+ax.text(23.5, 35.05, "positions · trade_plans", fontsize=8.5,
+        color=DB_L, fontfamily=FONT, va="center", ha="center", fontstyle="italic")
 
-# DB arrow from premarket
-arrow(12.1, 19.45, 17.2, 19.45, C_DB_BG, label="positions · trade_plans\nscan_results", lw=1.4)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# INTRADAY SECTION  y: 11.5 → 19.0
-# ═══════════════════════════════════════════════════════════════════════════════
-section_bg(0.5, 11.5, FIG_W - 1, 7.2, C_INT_BG, alpha=0.07)
-section_label(1.1, 18.75, "② INTRADAY  —  every 15 min  (10:00 AM – 3:45 PM ET)", C_INT_BG)
-ax.text(FIG_W - 1.1, 18.75, "orchestrator.py  →  intraday()", fontsize=8.5,
-        color="#888888", fontfamily=FONT, va="center", ha="right", zorder=5)
-
-# Section join arrow
-vert_arrow(10.0, 19.12, 18.5, C_INT_ACC, label="")
-ax.text(10.3, 18.8, "Positions open", fontsize=7.5, color=C_INT_ACC,
-        fontfamily=FONT, va="center", fontstyle="italic")
-
-# Reconcile + Refresh
-box(5.5,  18.05, 3.0, 0.65, "Alpaca Reconcile", "OPEN in DB but gone → UNFILLED", C_INT_BOX)
-box(11.5, 18.05, 3.0, 0.65, "Refresh Positions", "Sync price · P&L · high watermark", C_INT_BOX)
-horiz_arrow(7.0, 10.0, 18.05, C_INT_ACC)
-
-# Decision row
-vert_arrow(11.5, 17.72, 17.1, C_INT_ACC)
-
-box(4.0,  16.7, 2.4, 0.65, "TARGET hit?", "+2% reached", C_INT_BOX)
-box(8.2,  16.7, 2.4, 0.65, "STOP hit?", "-0.67% reached", C_INT_BOX)
-box(12.5, 16.7, 2.4, 0.65, "TRAIL fired?", "Alpaca native stop", C_INT_BOX)
-box(17.0, 16.7, 2.6, 0.65, "Tiered Lock-in?", "Realized ≥ $716", C_INT_BOX)
-
-horiz_arrow(10.3, 5.2, 16.7, C_INT_ACC)
-horiz_arrow(9.1, 7.0, 16.7, C_INT_ACC)
-horiz_arrow(13.7, 11.4, 16.7, C_INT_ACC)
-horiz_arrow(15.9, 14.7, 16.7, C_INT_ACC)
-
-# Outcomes
-vert_arrow(4.0,  16.37, 15.55, C_INT_ACC)
-vert_arrow(8.2,  16.37, 15.55, C_INT_ACC)
-vert_arrow(12.5, 16.37, 15.55, C_INT_ACC)
-
-box(8.2, 15.2, 3.6, 0.65, "Close Position", "Book P&L  →  close_reason  →  exit_mechanism", C_INT_BOX)
-
-# Tier 1 / Tier 2
-vert_arrow(17.0, 16.37, 15.55, C_INT_ACC)
-box(17.0, 15.2, 2.8, 0.65, "Tier 1  $716", "Tighten trail · let winners ride", C_INT_BOX)
-vert_arrow(17.0, 14.87, 14.35, C_INT_ACC)
-box(17.0, 14.0, 2.8, 0.65, "Tier 2  $1,000", "Close all · protect the day", C_INT_BOX)
-
-# Loop back
-ax.annotate("", xy=(10.0, 18.37), xytext=(2.0, 14.0),
-            arrowprops=dict(arrowstyle="-|>", color=C_INT_ACC, lw=1.6,
-                            connectionstyle="arc3,rad=-0.3"), zorder=2)
-ax.text(1.2, 16.2, "repeat\nevery\n15 min", fontsize=8, color=C_INT_ACC,
-        fontfamily=FONT, va="center", ha="center", fontstyle="italic")
-
-# DB arrow intraday
-arrow(9.8, 15.2, 17.5, 15.2, C_DB_BG, label="positions updated", lw=1.4)
-
-# Transition to EOD
-vert_arrow(8.2, 11.87, 11.3, C_INT_ACC)
-ax.text(8.7, 11.6, "4:30 PM — market close", fontsize=8, color="#888888",
-        fontfamily=FONT, va="center", fontstyle="italic")
+# section-to-section arrow
+v_arr(16.0, 34.27, 33.35, "#666666", lw=2.2, label="  positions open")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# EOD SECTION  y: 3.5 → 11.0
-# ═══════════════════════════════════════════════════════════════════════════════
-section_bg(0.5, 3.5, FIG_W - 1, 7.2, C_EOD_BG, alpha=0.07)
-section_label(1.1, 10.75, "③ EOD  —  4:30 PM ET", C_EOD_BG)
-ax.text(FIG_W - 1.1, 10.75, "orchestrator.py  →  eod()", fontsize=8.5,
-        color="#888888", fontfamily=FONT, va="center", ha="right", zorder=5)
+# ══════════════════════════════════════════════════════════════════════════════
+# ② INTRADAY   y: 20.5 → 32.5
+# ══════════════════════════════════════════════════════════════════════════════
+section_bg(20.5, 32.5, INT)
+section_hdr(32.0, "②  INTRADAY  —  every 15 min  (10:00 AM – 3:45 PM ET)", INT,
+            right_note="orchestrator.py → intraday()")
 
-# Close all
-box(5.5, 10.1, 3.0, 0.65, "Close All Positions", "Market-sell remaining · cancel brackets", C_EOD_BOX)
-horiz_arrow(4.0, 10.1, 10.1, C_EOD_ACC)
+# --- Row A: Reconcile · Refresh ----------------------------------------------
+rbox(9.5,  30.9, 5.8, BH, "Alpaca Reconcile", "OPEN in DB but gone from Alpaca  →  UNFILLED", INT_L)
+rbox(22.5, 30.9, 5.8, BH, "Refresh Positions", "Sync price  ·  P&L  ·  high watermark", INT_L)
+h_arr(12.4, 19.6, 30.9, INT_L, lw=2)
 
-# Performance
-horiz_arrow(7.0, 8.5, 10.1, C_EOD_ACC)
-box(9.8, 10.1, 2.8, 0.65, "Performance Agent", "P&L · win rate · best/worst · capital", C_EOD_BOX)
+# --- Row B: Decision gates (4-up) -------------------------------------------
+v_arr(16.0, 30.42, 29.52, INT_L, lw=2)
 
-# Daily Summary
-horiz_arrow(11.2, 13.0, 10.1, C_EOD_ACC)
-box(14.3, 10.1, 2.8, 0.65, "Daily Summary", "Claude Haiku · 3-sentence narrative", C_EOD_BOX)
+rbox(5.5,  28.85, 4.5, 0.9, "TARGET?", "+2% reached", INT_L, title_sz=10)
+rbox(12.0, 28.85, 4.5, 0.9, "STOP?", "−0.67% hit", INT_L, title_sz=10)
+rbox(18.5, 28.85, 4.5, 0.9, "TRAIL fired?", "Alpaca native stop", INT_L, title_sz=10)
+rbox(26.0, 28.85, 4.5, 0.9, "Lock-in?", "Realized ≥ $716", INT_L, title_sz=10)
 
-# Eval
-horiz_arrow(15.7, 17.5, 10.1, C_EOD_ACC)
-box(18.8, 10.1, 2.8, 0.65, "Eval Agent", "Grade · scorecard · integrity checks", C_EOD_BOX)
+elbow(16.0, 29.52, 5.5,  29.3, INT_L, lw=2)
+elbow(16.0, 29.52, 12.0, 29.3, INT_L, lw=2)
+elbow(16.0, 29.52, 18.5, 29.3, INT_L, lw=2)
+elbow(16.0, 29.52, 26.0, 29.3, INT_L, lw=2)
 
-# DB arrows from EOD
-arrow(5.5, 9.77, 5.5, 8.8, C_DB_BG, lw=1.4)
-arrow(9.8, 9.77, 9.8, 8.8, C_DB_BG, lw=1.4)
-arrow(14.3, 9.77, 14.3, 8.8, C_DB_BG, lw=1.4)
-arrow(18.8, 9.77, 18.8, 8.8, C_DB_BG, lw=1.4)
+# --- Row C: Outcomes ----------------------------------------------------------
+rbox(12.0, 27.2, 6.0, BH, "Close Position", "Book P&L  ·  close_reason  ·  exit_mechanism", INT_L)
+
+elbow(5.5,  28.4, 12.0, 27.72, INT_L, lw=2)
+elbow(12.0, 28.4, 12.0, 27.72, INT_L, lw=2)
+elbow(18.5, 28.4, 12.0, 27.72, INT_L, lw=2)
+
+# Tiered lock-in outcome
+rbox(26.0, 27.2, 4.5, BH, "Tier 1  $716", "Tighten trail\nLet winners ride", INT_L, title_sz=10)
+v_arr(26.0, 28.4, 27.72, INT_L, lw=2)
+v_arr(26.0, 26.72, 25.82, INT_L, lw=1.5)
+rbox(26.0, 25.35, 4.5, BH, "Tier 2  $1,000", "Close all positions\nProtect the day", INT_L, title_sz=10)
+
+# DB write
+elbow(15.0, 27.2, 19.5, 27.2, DB_L, lw=1.5)
+ax.text(18.0, 27.42, "positions updated", fontsize=8.5,
+        color=DB_L, fontfamily=FONT, va="center", ha="center", fontstyle="italic")
+
+# Loop-back arrow (left spine)
+ax.annotate("", xy=(4.2, 30.9), xytext=(4.2, 25.5),
+            arrowprops=dict(arrowstyle="-|>", color=INT_L, lw=2,
+                            connectionstyle="arc3,rad=0"), zorder=3)
+ax.plot([4.2, 4.2], [25.5, 30.9], color=INT_L, lw=2, zorder=3)
+elbow(4.2, 30.9, 6.6, 30.9, INT_L, lw=2)
+ax.text(2.2, 28.2, "repeat\nevery\n15 min", fontsize=10, color=INT_L,
+        fontfamily=FONT, va="center", ha="center", fontweight="bold")
+
+# section-to-section
+v_arr(16.0, 26.72, 21.35, "#666666", lw=2.2, label="  4:30 PM — market close")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SUPABASE + DASHBOARD  y: 3.8 → 8.6
-# ═══════════════════════════════════════════════════════════════════════════════
-section_bg(0.5, 3.8, FIG_W - 1, 4.7, C_DB_BG, alpha=0.07)
-section_label(1.1, 8.35, "④ SUPABASE  +  DASHBOARD", C_DB_BG)
+# ══════════════════════════════════════════════════════════════════════════════
+# ③ EOD   y: 12.5 → 21.0
+# ══════════════════════════════════════════════════════════════════════════════
+section_bg(12.5, 21.0, EOD)
+section_hdr(20.5, "③  EOD  —  4:30 PM ET", EOD,
+            right_note="orchestrator.py → eod()")
 
-# Supabase tables
-tables = [
-    ("trade_plans", "Daily trade plan"),
-    ("positions", "Every open & closed position"),
-    ("daily_performance", "EOD P&L record"),
-    ("scan_results", "Premarket scans · scorecard\nintraday snapshots · daily summary"),
-]
-table_xs = [3.0, 7.5, 12.5, 17.5]
-for (name, desc), tx in zip(tables, table_xs):
-    box(tx, 7.2, 3.8, 0.85, name, desc, C_DB_BOX, fontsize=9)
+rbox(5.5,  18.9, 5.4, BH, "Close All Positions", "Market-sell remaining\nCancel bracket legs", EOD_L)
+rbox(13.0, 18.9, 5.4, BH, "Performance Agent", "Daily P&L  ·  win rate\nbest / worst  ·  capital", EOD_L)
+rbox(20.5, 18.9, 5.4, BH, "Daily Summary", "Claude Haiku\n3-sentence narrative", EOD_L)
+rbox(28.0, 18.9, 5.4, BH, "Eval Agent", "Grade  ·  scorecard\nintegrity checks", EOD_L)
 
-# Dashboard
-box(11.0, 5.5, 5.5, 1.0,
-    "Streamlit Dashboard",
-    "Summary · Today · Positions · Performance · Scan Log",
-    "#2C3E50", fontsize=10)
+h_arr(8.2,  10.3, 18.9, EOD_L, lw=2)
+h_arr(15.7, 17.8, 18.9, EOD_L, lw=2)
+h_arr(23.2, 25.3, 18.9, EOD_L, lw=2)
 
-# Arrows from tables to dashboard
-for tx in table_xs:
-    arrow(tx, 6.77, 10.5 + (tx - 10.0) * 0.12, 6.0, C_DB_BOX, lw=1.2)
+# eval → write scorecard
+v_arr(28.0, 18.42, 17.52, EOD_L, lw=1.6, label="  --write")
 
-# Dashboard URL
-ax.text(11.0, 4.9, "trading-agent.streamlit.app  ·  password protected",
-        fontsize=8.5, color="#888888", fontfamily=FONT, va="center", ha="center")
+# DB writes from EOD
+for cx in [5.5, 13.0, 20.5, 28.0]:
+    v_arr(cx, 18.42, 17.52, DB_L, lw=1.4)
 
-# GitHub Actions cron note
-box(4.5, 5.5, 4.5, 1.0,
-    "GitHub Actions + cron-job.org",
-    "Premarket 9:45 AM  ·  Intraday /15 min\nEOD 4:30 PM  ·  3× retry on failure",
-    "#4A5568", fontsize=9)
+# section-to-section
+v_arr(16.0, 17.52, 13.35, "#666666", lw=2.2)
 
-# Health check
-box(17.5, 5.5, 3.5, 1.0,
-    "Health Check",
-    "8:45 AM ET  Mon–Fri\nEmail alert on failure",
-    "#4A5568", fontsize=9)
 
-# bottom note
-ax.text(FIG_W/2, 4.05,
-        "Alpaca Paper Trading  ·  Native trailing stop  ·  Bracket orders (entry + take-profit + stop)",
-        fontsize=9, color="#555555", fontfamily=FONT, va="center", ha="center",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="#EFEFEF", edgecolor="#CCCCCC", alpha=0.8))
+# ══════════════════════════════════════════════════════════════════════════════
+# ④ SUPABASE + DASHBOARD   y: 1.5 → 13.0
+# ══════════════════════════════════════════════════════════════════════════════
+section_bg(1.5, 13.0, DB)
+section_hdr(12.5, "④  SUPABASE  +  INFRASTRUCTURE", DB)
 
-# ── Legend ────────────────────────────────────────────────────────────────────
+# Supabase tables (4-up)
+rbox(5.0,  11.0, 5.4, BH, "trade_plans", "Daily trade plan", DB_L)
+rbox(11.5, 11.0, 5.4, BH, "positions", "Every open & closed position", DB_L)
+rbox(18.5, 11.0, 5.4, BH, "daily_performance", "EOD P&L record", DB_L)
+rbox(26.0, 11.0, 5.4, BH, "scan_results", "Premarket · intraday · scorecard\ndaily summary", DB_L)
+
+# Dashboard (center)
+rbox(16.0, 8.8, 9.0, 1.2, "Streamlit Dashboard",
+     "Summary  ·  Today  ·  Positions  ·  Performance  ·  Scan Log",
+     DB_L, title_sz=12)
+
+# Tables → Dashboard
+for cx in [5.0, 11.5, 18.5, 26.0]:
+    elbow(cx, 10.47, 16.0 + (cx - 16.0)*0.08, 9.4, DB_L, lw=1.5)
+
+ax.text(16.0, 8.15, "trading-agent.streamlit.app  ·  password protected",
+        fontsize=9, color="#AAAAAA", fontfamily=FONT, va="center", ha="center")
+
+# GitHub Actions + Health Check
+rbox(7.0, 6.6, 6.5, 1.2, "GitHub Actions + cron-job.org",
+     "Premarket 9:45 AM  ·  Intraday /15 min\nEOD 4:30 PM  ·  3× retry on failure", DB_L)
+rbox(25.0, 6.6, 6.5, 1.2, "Health Check",
+     "8:45 AM ET  Mon–Fri\nEmail alert on failure", DB_L)
+
+# arrows connecting infra to main flow
+elbow(7.0, 7.2, 7.0, 8.2, DB_L, lw=1.4)
+elbow(25.0, 7.2, 25.0, 8.2, DB_L, lw=1.4)
+
+# Alpaca note
+rbox(16.0, 5.0, 9.0, 1.0, "Alpaca Paper Trading",
+     "Bracket orders (entry + take-profit + native trailing stop)  ·  Simulation fallback", "#0D2D5A", title_sz=11)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LEGEND
+# ══════════════════════════════════════════════════════════════════════════════
 legend_items = [
-    (C_PRE_BOX,  "Premarket agent / step"),
-    (C_INT_BOX,  "Intraday agent / check"),
-    (C_EOD_BOX,  "EOD agent / step"),
-    (C_DB_BOX,   "Infrastructure / storage"),
-    (C_SKIP,     "Decision / gate"),
+    (PRE_L, "Premarket step"),
+    (INT_L, "Intraday step"),
+    (EOD_L, "EOD step"),
+    (DB_L,  "Infrastructure / Supabase"),
+    (SKIP,  "Decision gate"),
 ]
-lx, ly = 1.2, 3.3
-for i, (color, label) in enumerate(legend_items):
-    patch = FancyBboxPatch((lx + i*3.8, ly - 0.18), 0.45, 0.36,
-                           boxstyle="round,pad=0.04,rounding_size=0.06",
-                           facecolor=color, edgecolor=color, alpha=0.9, zorder=4)
-    ax.add_patch(patch)
-    ax.text(lx + i*3.8 + 0.6, ly, label, fontsize=8, color="#333333",
+lx, ly = 2.0, 3.2
+ax.text(lx, ly + 0.5, "Legend", fontsize=10, fontweight="bold", color="#555555",
+        fontfamily=FONT, va="center")
+for i, (col, lbl) in enumerate(legend_items):
+    bx = FancyBboxPatch((lx, ly - i*0.7 - 0.2), 0.7, 0.4,
+                         boxstyle="round,pad=0.05,rounding_size=0.08",
+                         facecolor=col, linewidth=0, zorder=5)
+    ax.add_patch(bx)
+    ax.text(lx + 0.9, ly - i*0.7, lbl, fontsize=9, color="#444444",
             fontfamily=FONT, va="center", zorder=5)
 
+
 # ── Save ──────────────────────────────────────────────────────────────────────
-plt.tight_layout(pad=0)
 out = "/Users/amitgarg/Claude Projects/trading-agent/workflow_diagram.png"
-plt.savefig(out, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+plt.savefig(out, dpi=DPI, bbox_inches="tight",
+            facecolor=fig.get_facecolor(), edgecolor="none")
 print(f"Saved: {out}")
 plt.close()
