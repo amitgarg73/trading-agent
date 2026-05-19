@@ -5,6 +5,7 @@ Stores result in scan_results as scan_type="daily_summary".
 """
 import anthropic
 from datetime import date, datetime
+from typing import Optional
 from core import db
 from config.settings import ANTHROPIC_API_KEY, DAILY_PROFIT_TARGET, DAILY_LOSS_LIMIT
 
@@ -66,7 +67,7 @@ Portfolio value: ${ending_cap:,.2f}
 Write a 3-4 sentence plain-English summary of today's session. Cover: what happened overall, what worked, what didn't, and one specific actionable observation for tomorrow. Be direct and specific — no filler, no padding. Do not repeat the raw numbers verbatim; interpret them."""
 
 
-def generate(record: dict, broker: str = "simulation") -> str | None:
+def generate(record: dict, broker: str = "simulation") -> Optional[str]:
     today = record.get("date") or date.today().isoformat()
 
     # Load today's closed positions for exit breakdown
