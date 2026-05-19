@@ -215,8 +215,14 @@ if page == "Summary":
     st.divider()
 
     # ── KPI Row ───────────────────────────────────────────────────
+    _perf_rows = db.select("daily_performance", order="date", limit=1)
+    _latest_cap = _perf_rows[0]["ending_capital"] if _perf_rows else TOTAL_CAPITAL
+    _cap_delta  = _latest_cap - TOTAL_CAPITAL
+
     k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Capital", f"${TOTAL_CAPITAL:,}")
+    k1.metric("Capital", f"${_latest_cap:,.0f}",
+              delta=f"{_cap_delta:+,.0f} all-time" if _cap_delta != 0 else None,
+              delta_color="normal")
     k2.metric("Today's P&L",
               fmt_pnl(total_pnl),
               delta=f"{pct_return:+.2f}% return",
