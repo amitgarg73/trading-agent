@@ -1059,22 +1059,37 @@ elif page == "Performance":
 
             st.markdown("---")
 
-            # ── Trade breakdown + Recommendations ─────────────────────
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown("**Exit reasons**  *(healthy: TARGET >50%, STOP <35%, EOD <20%)*")
-                cr_rows = [{"Exit": k, "Count": v, "%": f"{v/total_cr*100:.0f}%"}
-                           for k, v in sorted(cr.items(), key=lambda x: -x[1])]
-                if cr_rows:
-                    st.dataframe(pd.DataFrame(cr_rows), use_container_width=True, hide_index=True)
-                if ev.get("best_ticker"):
-                    st.success(f"Best: {ev['best_ticker']}  +${ev['best_pnl']:,.2f}")
-                if ev.get("worst_ticker"):
-                    st.error(f"Worst: {ev['worst_ticker']}  ${ev['worst_pnl']:,.2f}")
-            with col_b:
-                st.markdown("**Recommendations**")
-                for rec in ev.get("recommendations", []):
-                    st.markdown(f"• {rec}")
+            # ── Trade breakdown ────────────────────────────────────────
+            _exit_explain = {
+                "TARGET":       "Hit +2% profit goal — ideal exit",
+                "STOP":         "Stop-loss fired at -0.67% — cut loss",
+                "EOD":          "Market closed, position still open — sold at whatever price",
+                "LOCK_IN":      "Daily profit target hit — all positions closed to protect the day",
+                "MANUAL_TRAIL": "Trailing stop fired (simulation) — stock reversed from its peak",
+                "NATIVE_TRAIL": "Trailing stop fired (Alpaca) — stock reversed from its peak",
+                "CLEANUP":      "Stale open position closed during reconciliation",
+                "UNFILLED":     "Limit order never filled — entry price was missed",
+            }
+            st.markdown("**Exit reasons**")
+            cr_rows = [
+                {
+                    "Exit": k,
+                    "Count": v,
+                    "%": f"{v/total_cr*100:.0f}%",
+                    "What it means": _exit_explain.get(k, "—"),
+                }
+                for k, v in sorted(cr.items(), key=lambda x: -x[1])
+            ]
+            if cr_rows:
+                st.dataframe(pd.DataFrame(cr_rows), use_container_width=True, hide_index=True)
+            if ev.get("best_ticker"):
+                st.success(f"Best: {ev['best_ticker']}  +${ev['best_pnl']:,.2f}")
+            if ev.get("worst_ticker"):
+                _worst_pnl = ev["worst_pnl"]
+                if _worst_pnl >= 0:
+                    st.success(f"Worst: {ev['worst_ticker']}  +${_worst_pnl:,.2f}  (all trades profitable)")
+                else:
+                    st.error(f"Worst: {ev['worst_ticker']}  ${_worst_pnl:,.2f}")
 
             st.markdown("---")
 
