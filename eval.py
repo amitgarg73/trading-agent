@@ -145,8 +145,9 @@ def _vwap_signal_analysis(positions: list, eval_dates: set) -> dict | None:
     }
 
 
-def _compute_metrics(days: int) -> dict | None:
-    perf_rows = db.select("daily_performance", order="date", limit=days)
+def _compute_metrics(days: int = None, perf_rows: list = None) -> dict | None:
+    if perf_rows is None:
+        perf_rows = db.select("daily_performance", order="date", limit=days)
     if not perf_rows:
         return None
 
@@ -154,7 +155,7 @@ def _compute_metrics(days: int) -> dict | None:
     avg_daily_pnl = total_pnl / len(perf_rows)
     win_days      = sum(1 for r in perf_rows if (r["total_pnl"] or 0) > 0)
     avg_win_rate  = sum(r["win_rate"] or 0 for r in perf_rows) / len(perf_rows)
-    latest_cap    = perf_rows[0]["ending_capital"] or TOTAL_CAPITAL
+    latest_cap    = max(perf_rows, key=lambda r: r["date"])["ending_capital"] or TOTAL_CAPITAL
     total_return  = ((latest_cap - TOTAL_CAPITAL) / TOTAL_CAPITAL) * 100
     ann_return    = total_return / len(perf_rows) * 250
     target_days   = sum(1 for r in perf_rows if (r["total_pnl"] or 0) >= DAILY_PROFIT_TARGET)

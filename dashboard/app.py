@@ -14,6 +14,7 @@ import yfinance as yf
 from datetime import date, datetime
 from core import db
 from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT, LOCK_IN_TRAIL_PCT, MIN_REWARD_RISK, DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET, STRATEGY_MIN_SCORE, DAILY_LOSS_LIMIT, MIN_POSITION_PCT, MAX_POSITION_PCT
+from eval import _compute_metrics
 from config.company_names import COMPANY_NAMES
 
 _ETF_SET = set(ETF_UNIVERSE)
@@ -873,14 +874,29 @@ elif page == "Performance":
 
     st.markdown("---")
 
-    # ── Agent Scorecard (latest eval) ────────────────────────────
-    eval_rows = db.select("scan_results", filters={"scan_type": "eval"}, order="created_at", limit=1)
-    if eval_rows:
-        ev = eval_rows[0].get("results", {})
-        grade_label = {"A": "Excellent", "B": "Good", "C": "Mediocre", "D": "Poor"}.get(ev.get("grade", ""), "")
-        days = ev.get("days", 0)
+    # ── Load & filter perf data ───────────────────────────────────
+    perf = db.select("daily_performance", order="date")
+    if not perf:
+        st.info("No performance data yet.")
+        st.stop()
 
-        with st.expander(f"Agent Scorecard — last eval run {eval_rows[0]['date']} · {days}-day eval window · Grade **{ev.get('grade','?')}** ({grade_label})  *(charts and metrics below reflect selected date range)*", expanded=True):
+    df = pd.DataFrame(perf).sort_values("date")
+    if _n_days:
+        _cutoff = (pd.Timestamp.today() - pd.Timedelta(days=_n_days)).strftime("%Y-%m-%d")
+        df = df[df["date"] >= _cutoff]
+    if df.empty:
+        st.info(f"No trading data in the selected range ({_selected}).")
+        st.stop()
+
+    # ── Live scorecard metrics for selected window ────────────────
+    ev   = _compute_metrics(perf_rows=df.to_dict("records")) or {}
+    days = len(df)
+
+    # ── Agent Scorecard ───────────────────────────────────────────
+    if ev:
+        grade_label = {"A": "Excellent", "B": "Good", "C": "Mediocre", "D": "Poor"}.get(ev.get("grade", ""), "")
+
+        with st.expander(f"Agent Scorecard — {_selected} · {days} day{'s' if days != 1 else ''} · Grade **{ev.get('grade','?')}** ({grade_label})", expanded=True):
 
             # ── VERDICT ──────────────────────────────────────────────
             st.markdown("#### Verdict")
@@ -1272,19 +1288,6 @@ elif page == "Performance":
                         st.warning(f"❌ No RS edge detected (${rs_delta:+.0f} avg) — low-RS entries are matching high-RS.")
 
         st.markdown("---")
-
-    perf = db.select("daily_performance", order="date")
-    if not perf:
-        st.info("No performance data yet.")
-        st.stop()
-
-    df = pd.DataFrame(perf).sort_values("date")
-    if _n_days:
-        _cutoff = (pd.Timestamp.today() - pd.Timedelta(days=_n_days)).strftime("%Y-%m-%d")
-        df = df[df["date"] >= _cutoff]
-    if df.empty:
-        st.info(f"No data in the selected range ({_selected}).")
-        st.stop()
 
     total_pnl    = df["total_pnl"].sum()
     avg_daily    = df["total_pnl"].mean()
