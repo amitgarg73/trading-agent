@@ -911,7 +911,7 @@ elif page == "Performance":
     if ev:
         grade_label = {"A": "Excellent", "B": "Good", "C": "Mediocre", "D": "Poor"}.get(ev.get("grade", ""), "")
 
-        with st.expander(f"Agent Scorecard — {_selected} · {days} day{'s' if days != 1 else ''} · Grade **{ev.get('grade','?')}** ({grade_label})", expanded=True):
+        with st.expander(f"Agent Scorecard — {days} trading day{'s' if days != 1 else ''} of data ({_selected}) · Grade **{ev.get('grade','?')}** ({grade_label})", expanded=True):
 
             # ── VERDICT ──────────────────────────────────────────────
             st.markdown("#### Verdict")
