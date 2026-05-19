@@ -23,11 +23,12 @@ def _reconcile_with_alpaca():
         if pos["ticker"] not in alpaca_tickers:
             print(f"  ⚠️  Reconciliation: {pos['ticker']} is OPEN in DB but not in Alpaca — marking UNFILLED")
             db.update("positions", {"id": pos["id"]}, {
-                "status":       "CLOSED",
-                "close_reason": "UNFILLED",
-                "closed_at":    datetime.utcnow().isoformat(),
-                "realized_pnl": 0,
-                "close_price":  pos.get("entry_price"),
+                "status":         "CLOSED",
+                "close_reason":   "UNFILLED",
+                "exit_mechanism": "UNFILLED",
+                "closed_at":      datetime.utcnow().isoformat(),
+                "realized_pnl":   0,
+                "close_price":    pos.get("entry_price"),
             })
 
 
