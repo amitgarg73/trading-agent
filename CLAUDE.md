@@ -29,5 +29,3 @@ Do not deploy real capital until all criteria pass.
 ### P0 — Pre-real-money
 - **P&L reconciliation:** Pull Alpaca `get_account().equity` at EOD as source of truth; replace fill-price calc. Add `friction_breakdown` dict (commission, spread, slippage, entry buffer) to daily_performance.
 
-### Performance
-- **Parallelize premarket pipeline:** Steps 1→1.85 (scan, news intel, ML scoring, live price refresh, intraday signals) all run sequentially today and are slow. Candidate: use `concurrent.futures.ThreadPoolExecutor` or `asyncio` to run independent steps in parallel. Biggest wins: ML scoring + live price refresh + intraday signals can all run concurrently once candidates list is known.
