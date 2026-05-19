@@ -199,6 +199,8 @@ if page == "Summary":
         badge, badge_color = "STALE", "#7f8c8d"
     elif plan:
         badge, badge_color = "TRADING", "#27ae60"
+    elif scan:
+        badge, badge_color = "NO TRADES", "#e67e22"
     else:
         badge, badge_color = "PENDING", "#7f8c8d"
     h2.markdown(
