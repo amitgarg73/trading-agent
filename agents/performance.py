@@ -32,9 +32,10 @@ def run(broker: str = "simulation") -> dict:
     best  = max(today_closed, key=lambda p: p.get("realized_pnl", 0))
     worst = min(today_closed, key=lambda p: p.get("realized_pnl", 0))
 
-    # Retrieve previous ending capital or use default
-    prev = db.select("daily_performance", order="date", limit=1)
-    starting_capital = prev[0]["ending_capital"] if prev else TOTAL_CAPITAL
+    # Retrieve previous ending capital — skip today's own row to handle re-run case
+    prev = db.select("daily_performance", order="date", limit=2)
+    prev_day = [r for r in prev if r["date"] < today]
+    starting_capital = prev_day[0]["ending_capital"] if prev_day else TOTAL_CAPITAL
     ending_capital   = round(starting_capital + total_pnl, 2)
 
     record = {

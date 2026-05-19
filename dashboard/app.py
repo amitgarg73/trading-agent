@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 from datetime import date, datetime
 from core import db
-from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT, LOCK_IN_TRAIL_PCT, MIN_REWARD_RISK, DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET, STRATEGY_MIN_SCORE
+from config.settings import DASHBOARD_PASSWORD, TOTAL_CAPITAL, DAILY_PROFIT_TARGET, ETF_UNIVERSE, TRAIL_PCT, LOCK_IN_TRAIL_PCT, MIN_REWARD_RISK, DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET, STRATEGY_MIN_SCORE, DAILY_LOSS_LIMIT, MIN_POSITION_PCT, MAX_POSITION_PCT
 from config.company_names import COMPANY_NAMES
 
 _ETF_SET = set(ETF_UNIVERSE)
@@ -877,6 +877,12 @@ elif page == "Performance":
 
             # ── VERDICT ──────────────────────────────────────────────
             st.markdown("#### Verdict")
+            st.caption(
+                f"Score = P&L vs target (up to 40 pts: avg daily P&L ÷ ${DAILY_PROFIT_TARGET:,} × 40)  "
+                f"+ Win day rate (30 pts: profitable days ÷ total days × 30)  "
+                f"+ Trade win rate (30 pts: % of trades won × 30).  "
+                f"Grade: A ≥ 80 · B ≥ 60 · C ≥ 40 · D < 40."
+            )
             wins, watchs, actions = [], [], []
 
             pnl      = ev.get("avg_daily_pnl", 0)
@@ -952,42 +958,61 @@ elif page == "Performance":
             elif unfill_pct >= 5:
                 watchs.append(f"{unfill_pct:.0f}% unfilled rate — monitor; rising trend is a problem")
 
-            v1, v2, v3 = st.columns(3)
-            with v1:
-                st.markdown("**✅ What's working**")
-                for w in wins:
-                    st.markdown(f"<span style='color:#1e8449'>• {w}</span>", unsafe_allow_html=True)
-                if not wins:
-                    st.markdown("<span style='color:#95a5a6'>— none yet</span>", unsafe_allow_html=True)
-            with v2:
-                st.markdown("**⚠️ Watch**")
-                for w in watchs:
-                    st.markdown(f"<span style='color:#f39c12'>• {w}</span>", unsafe_allow_html=True)
-                if not watchs:
-                    st.markdown("<span style='color:#95a5a6'>— none</span>", unsafe_allow_html=True)
-            with v3:
-                st.markdown("**❌ Action required**")
-                for a in actions:
-                    st.markdown(f"<span style='color:#e74c3c'>• {a}</span>", unsafe_allow_html=True)
-                if not actions:
-                    st.markdown("<span style='color:#1e8449'>✅ No action required</span>", unsafe_allow_html=True)
+            grade_color = {"A": "#1e8449", "B": "#1e8449", "C": "#f39c12", "D": "#e74c3c"}.get(ev.get("grade", ""), "#888")
+            grade_word  = {"A": "excellent", "B": "good", "C": "mixed", "D": "poor"}.get(ev.get("grade", ""), "")
+
+            summary_parts = []
+            if wins:
+                summary_parts.append(" ".join(wins))
+            verdict_text = f"<span style='color:{grade_color}'><b>Grade {ev.get('grade','?')} — {grade_word.upper()}.</b></span> " + (
+                " ".join(summary_parts) if summary_parts else "No standout positives yet — more data needed."
+            )
+
+            watch_text = ""
+            if watchs:
+                watch_text = f"<span style='color:#f39c12'><b>Watch:</b> {('  ·  ').join(watchs)}.</span>"
+
+            action_text = ""
+            if actions:
+                action_text = f"<span style='color:#e74c3c'><b>Action required:</b> {('  ·  ').join(actions)}.</span>"
+            else:
+                action_text = f"<span style='color:#1e8449'>No action required.</span>"
+
+            st.markdown(
+                verdict_text + ("  " + watch_text if watch_text else "") + "  " + action_text,
+                unsafe_allow_html=True,
+            )
 
             st.markdown("---")
 
             # ── Score metrics ─────────────────────────────────────────
             st.markdown("#### Score Breakdown")
             sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
-            sc1.metric("Score",          f"{ev.get('score', 0):.0f} / 100")
-            sc2.metric("Avg Daily P&L",  f"${ev.get('avg_daily_pnl', 0):,.0f}",
-                       delta=f"target ${DAILY_PROFIT_TARGET:,}")
-            sc3.metric("Win Days",       f"{win_days} / {days}")
-            sc4.metric("Trade Win Rate", f"{ev.get('avg_win_rate', 0):.1f}%")
-            sc5.metric("Actual R:R",     f"{ev.get('actual_rr', 0):.2f}x")
-            sc6.metric("Ann. Return",    f"{ev.get('ann_return', 0):+.0f}%")
-
             ps = ev.get("pnl_score", 0)
             ws = ev.get("winday_score", 0)
             rs = ev.get("winrate_score", 0)
+            sc1.metric("Score", f"{ev.get('score', 0):.0f} / 100",
+                       help=f"Composite 0–100 score across 3 dimensions:\n"
+                            f"• P&L vs target: {ps:.0f}/40 pts (avg daily P&L ÷ ${DAILY_PROFIT_TARGET:,} target × 40)\n"
+                            f"• Win day rate: {ws:.0f}/30 pts (profitable days ÷ total days × 30)\n"
+                            f"• Trade win rate: {rs:.0f}/30 pts (% of trades that won × 30)\n"
+                            f"Grade: A ≥80, B ≥60, C ≥40, D <40")
+            sc2.metric("Avg Daily P&L", f"${ev.get('avg_daily_pnl', 0):,.0f}",
+                       delta=f"target ${DAILY_PROFIT_TARGET:,}",
+                       help=f"Average realized P&L per trading day over the {days}-day eval window. Target: ${DAILY_PROFIT_TARGET:,}/day.")
+            sc3.metric("Win Days", f"{win_days} / {days}",
+                       help="Days where total realized P&L was positive. Target: ≥80% of days profitable (consistent execution).")
+            sc4.metric("Trade Win Rate", f"{ev.get('avg_win_rate', 0):.1f}%",
+                       help="Average % of individual trades (not days) that closed in profit. "
+                            "At 3:1 reward:risk you only need 25% to break even. Target: ≥60%.")
+            sc5.metric("Actual R:R", f"{ev.get('actual_rr', 0):.2f}x",
+                       help="Reward:Risk ratio = avg winning trade ÷ avg losing trade (absolute values). "
+                            "3.0x means your wins are 3× bigger than your losses on average. "
+                            "Target: ≥3.0x. Below 2.0x means stops may be too tight or targets too far.")
+            sc6.metric("Ann. Return", f"{ev.get('ann_return', 0):+.0f}%",
+                       help=f"Extrapolates the {days}-day return to a full 250-day trading year. "
+                            f"Treat as directional — it stabilizes with more data. >50% = exceptional, >20% = strong.")
+
             st.caption(f"Score components: P&L {ps:.0f}/40 pts · Win days {ws:.0f}/30 pts · Win rate {rs:.0f}/30 pts")
 
             st.markdown("---")
@@ -1016,29 +1041,58 @@ elif page == "Performance":
             int_col, qual_col = st.columns(2)
 
             with int_col:
-                st.markdown("**Integrity checks**")
+                st.markdown("**Integrity checks**  — *guardrail audit; these should all be ✅*")
                 unfill_n = ev.get("unfilled_count", 0)
                 unfill_flag = "✅" if unfill_pct < 10 else "⚠️"
-                st.markdown(f"{unfill_flag} UNFILLED rate: **{unfill_n}** ({unfill_pct:.0f}%)")
-                st.markdown(f"{'✅' if not orphaned else '❌'} Orphaned open positions: **{len(orphaned)}**")
+                st.markdown(f"{unfill_flag} UNFILLED rate: **{unfill_n}** ({unfill_pct:.0f}%)  "
+                            f"<span style='color:#888;font-size:0.82em'>— limit order submitted but entry never filled (stock moved away). >10% means entry price buffer is too tight.</span>",
+                            unsafe_allow_html=True)
+                st.markdown(f"{'✅' if not orphaned else '❌'} Orphaned open positions: **{len(orphaned)}**  "
+                            f"<span style='color:#888;font-size:0.82em'>— positions opened on a prior day still showing OPEN. Should be zero; means EOD close missed them.</span>",
+                            unsafe_allow_html=True)
                 dups = ev.get("duplicate_count", 0)
-                st.markdown(f"{'✅' if dups == 0 else '❌'} Duplicate tickers same day: **{dups}**")
+                st.markdown(f"{'✅' if dups == 0 else '❌'} Duplicate tickers same day: **{dups}**  "
+                            f"<span style='color:#888;font-size:0.82em'>— same ticker entered twice in one day. The open-position guardrail should block this.</span>",
+                            unsafe_allow_html=True)
                 missing = ev.get("missing_exit", 0)
-                st.markdown(f"{'✅' if missing == 0 else '⚠️'} Missing exit_mechanism: **{missing}**")
-                st.markdown(f"📉 Loss-limit days: **{ev.get('loss_limit_days', 0)}** / {days}")
-                st.markdown(f"🎯 Lock-in days: **{ev.get('lock_in_days', 0)}** / {days}")
+                st.markdown(f"{'✅' if missing == 0 else '⚠️'} Missing exit mechanism: **{missing}**  "
+                            f"<span style='color:#888;font-size:0.82em'>— closed positions where we couldn't determine if exit was TARGET, STOP, or TRAIL. Means a code path gap.</span>",
+                            unsafe_allow_html=True)
+                st.markdown(f"📉 Loss-limit days: **{ev.get('loss_limit_days', 0)}** / {days}  "
+                            f"<span style='color:#888;font-size:0.82em'>— days where realized P&L went below the daily loss floor (${DAILY_LOSS_LIMIT:,}). Agent stops trading for the day.</span>",
+                            unsafe_allow_html=True)
+                st.markdown(f"🎯 Lock-in days: **{ev.get('lock_in_days', 0)}** / {days}  "
+                            f"<span style='color:#888;font-size:0.82em'>— days where realized P&L crossed the ${DAILY_LOCK_IN_TARGET:,} Tier 1 floor. Remaining positions ride with a tighter 0.5% trail.</span>",
+                            unsafe_allow_html=True)
+                halted_ev = ev.get("halted_days", [])
+                active_ev = [h for h in halted_ev if h.get("active")]
+                halt_icon = "🛑" if active_ev else "✅"
+                st.markdown(f"{halt_icon} Halted days in window: **{len(halted_ev)}** {'(halt still active!)' if active_ev else '(all cleared)' if halted_ev else ''}")
+                for h in halted_ev:
+                    st.caption(f"  → {h['date']}  {h.get('reason', '')}  {'🛑 ACTIVE' if h.get('active') else '✅ cleared'}")
 
             with qual_col:
-                st.markdown("**Claude quality checks**")
+                st.markdown("**Claude quality checks**  — *validates Claude is following the strategy rules*")
                 rr_v = ev.get("rr_violations", [])
-                st.markdown(f"{'✅' if not rr_v else '❌'} R:R violations: **{len(rr_v)}** trades below {MIN_REWARD_RISK}x")
+                st.markdown(f"{'✅' if not rr_v else '❌'} R:R violations: **{len(rr_v)}** trades below {MIN_REWARD_RISK}x  "
+                            f"<span style='color:#888;font-size:0.82em'>— Reward:Risk ratio = (target − entry) ÷ (entry − stop). "
+                            f"Claude is required to only submit trades where the potential gain is at least {MIN_REWARD_RISK}× the potential loss. "
+                            f"Violations mean Claude submitted a trade that doesn't meet the minimum return profile.</span>",
+                            unsafe_allow_html=True)
                 if rr_v:
                     for v in rr_v:
                         st.caption(f"  → {v['ticker']} R:R {v['rr']:.2f}x")
                 sz_v = ev.get("size_violations", [])
-                st.markdown(f"{'✅' if not sz_v else '⚠️'} Position size violations: **{len(sz_v)}**")
+                st.markdown(f"{'✅' if not sz_v else '⚠️'} Position size violations: **{len(sz_v)}**  "
+                            f"<span style='color:#888;font-size:0.82em'>— Each position must be sized between ${MIN_POSITION_PCT*TOTAL_CAPITAL:,.0f} and ${MAX_POSITION_PCT*TOTAL_CAPITAL:,.0f} "
+                            f"({MIN_POSITION_PCT*100:.0f}%–{MAX_POSITION_PCT*100:.0f}% of ${TOTAL_CAPITAL:,} capital). "
+                            f"Claude chooses size by confidence (HIGH/MEDIUM/LOW); violations mean it went outside the allowed band.</span>",
+                            unsafe_allow_html=True)
 
-                st.markdown("**Confidence cohort**  *(validates HIGH $7K / MEDIUM $6K / LOW $5K)*")
+                st.markdown("**Confidence cohort**  — *does Claude's confidence signal predict better outcomes?*  "
+                            "<span style='color:#888;font-size:0.82em'>HIGH conviction trades get $7K, MEDIUM $6K, LOW $5K. "
+                            "If HIGH confidence doesn't outperform LOW, the signal is unreliable.</span>",
+                            unsafe_allow_html=True)
                 conf_rows = []
                 for level in ("HIGH", "MEDIUM", "LOW"):
                     s = cs.get(level)
@@ -1140,28 +1194,45 @@ elif page == "Performance":
 
             st.markdown("---")
 
-            # ── VWAP Signal Quality (Thread 1 validation) ─────────────
-            st.markdown("#### VWAP Signal Quality")
-            st.caption("Thread 1 validation: do above-VWAP + high-RS entries at selection time actually produce better trade outcomes?")
+            # ── VWAP Signal Quality ────────────────────────────────────
+            st.markdown("#### VWAP & Relative Strength Signal Quality")
+            st.caption(
+                "Do stocks that were already trading above VWAP — and outpacing the market — at the time of entry "
+                "actually produce better trade outcomes? This table compares closed-trade P&L across four cohorts to answer that question."
+            )
+            with st.expander("ℹ️ What do VWAP and RS mean here?"):
+                st.markdown(
+                    "**VWAP (Volume-Weighted Average Price)** — The average price of a stock weighted by volume since market open. "
+                    "Institutions use it as a benchmark: buying above VWAP means sustained demand; below VWAP means the stock is struggling to hold up. "
+                    "A stock above VWAP at 9:45 AM is showing early momentum strength.\n\n"
+                    "**RS (Relative Strength vs SPY)** — How much the stock's move today outpaced the S&P 500. "
+                    "RS 2.0× means the stock moved twice as far as SPY since open. "
+                    "RS ≥ 1.5× = market leader (the stock is outperforming the broad market). "
+                    "RS < 1.0× = laggard (SPY is actually doing better). "
+                    "High RS at entry is an institutional signal that money is flowing into this name specifically.\n\n"
+                    "**Why it matters:** A stock above VWAP with RS ≥ 1.5× is the ideal momentum setup — "
+                    "confirmed buying pressure *and* outperforming peers. This table validates whether that entry signal actually translates to better P&L."
+                )
             vwap_ev = ev.get("vwap_analysis")
 
             if not vwap_ev:
-                st.info("No VWAP data yet — available for Alpaca runs from 2026-05-18 onward. Will appear once enough enriched trades have closed.")
+                st.info("No VWAP data yet — accumulates from Alpaca runs from 2026-05-18 onward. Will appear once enough enriched trades have closed.")
             else:
                 vq1, vq2 = st.columns(2)
                 vq1.metric("Positions Matched", f"{vwap_ev['matched']} / {vwap_ev['total']}",
-                           help="Positions cross-referenced to a VWAP entry signal from the premarket scan.")
+                           help="Positions cross-referenced to a VWAP/RS entry signal from the premarket scan. Unmatched = simulation runs or pre-enrichment history.")
 
                 above = vwap_ev.get("above_vwap")
                 below = vwap_ev.get("below_vwap")
                 if above and below:
                     delta = above["avg_pnl"] - below["avg_pnl"]
-                    vq2.metric("Above vs Below VWAP", f"{delta:+.2f} avg P&L",
-                               help="Positive = above-VWAP entries outperform. Target: > $10 edge to confirm Thread 1 is working.")
+                    vq2.metric("Above vs Below VWAP edge", f"{delta:+.2f} avg P&L",
+                               help="Avg P&L for above-VWAP entries minus avg P&L for below-VWAP entries. "
+                                    "Positive = the VWAP filter is adding value. Target: > $10 edge to confirm signal quality.")
 
                 cohort_rows = []
-                for key, label in [("above_vwap", "▲ Above VWAP"), ("below_vwap", "▼ Below VWAP"),
-                                    ("high_rs",    "RS ≥ 1.5×"),    ("low_rs",     "RS < 1.5×")]:
+                for key, label in [("above_vwap", "▲ Above VWAP at entry"), ("below_vwap", "▼ Below VWAP at entry"),
+                                    ("high_rs",    "RS ≥ 1.5× (market leader)"), ("low_rs", "RS < 1.5× (laggard or in-line)")]:
                     c = vwap_ev.get(key)
                     if c:
                         cohort_rows.append({
@@ -1176,22 +1247,22 @@ elif page == "Performance":
 
                 if above and below:
                     if delta > 10:
-                        st.success(f"✅ VWAP filter confirmed — above-VWAP entries +${delta:.0f} avg vs below-VWAP.")
+                        st.success(f"✅ VWAP filter confirmed — above-VWAP entries average +${delta:.0f} more per trade vs below-VWAP.")
                     elif delta >= 0:
-                        st.info(f"⚠️ Slight VWAP edge (+${delta:.0f}) — more data needed to confirm Thread 1 signal quality.")
+                        st.info(f"⚠️ Slight VWAP edge (+${delta:.0f} avg) — signal is directionally correct but more data needed to confirm.")
                     else:
-                        st.warning(f"❌ No VWAP edge yet (${delta:+.0f}) — below-VWAP matching or beating above-VWAP.")
+                        st.warning(f"❌ No VWAP edge yet (${delta:+.0f} avg) — below-VWAP entries are matching or beating above-VWAP.")
 
                 high_rs = vwap_ev.get("high_rs")
                 low_rs  = vwap_ev.get("low_rs")
                 if high_rs and low_rs:
                     rs_delta = high_rs["avg_pnl"] - low_rs["avg_pnl"]
                     if rs_delta > 10:
-                        st.success(f"✅ RS filter confirmed — high relative strength entries +${rs_delta:.0f} avg vs low-RS.")
+                        st.success(f"✅ RS filter confirmed — high-RS entries (≥1.5×) average +${rs_delta:.0f} more per trade vs low-RS.")
                     elif rs_delta >= 0:
-                        st.info(f"⚠️ Slight RS edge (+${rs_delta:.0f}) — more data needed.")
+                        st.info(f"⚠️ Slight RS edge (+${rs_delta:.0f} avg) — directionally positive but more data needed.")
                     else:
-                        st.warning(f"❌ No RS edge detected (${rs_delta:+.0f}) — low-RS entries matching high-RS.")
+                        st.warning(f"❌ No RS edge detected (${rs_delta:+.0f} avg) — low-RS entries are matching high-RS.")
 
         st.markdown("---")
 
@@ -1211,16 +1282,34 @@ elif page == "Performance":
     total_return = (latest_cap - TOTAL_CAPITAL) / TOTAL_CAPITAL * 100
     ann_return   = total_return / total_days * 250 if total_days > 0 else 0
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total P&L",        fmt_pnl(total_pnl))
-    c2.metric("Avg Daily P&L",    fmt_pnl(avg_daily))
-    c3.metric("Win Days",         f"{win_days}/{total_days}")
-    c4.metric("Avg Trade Win %",  f"{avg_win_rate:.1f}%")
-    c5.metric("Portfolio Value",  f"${latest_cap:,.0f}")
-    c6.metric("Ann. Return",      f"{ann_return:+.0f}%",
-              help=f"Annualized: {total_return:.1f}% over {total_days} days × 250 trading days/year")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total P&L", fmt_pnl(total_pnl),
+              help=f"Sum of realized P&L across all {total_days} trading day(s) shown. Does not include any open unrealized positions.")
+    c2.metric("Avg Daily P&L", fmt_pnl(avg_daily),
+              help=f"Total P&L ÷ {total_days} days. Target is ${DAILY_PROFIT_TARGET:,}/day.")
+    c3.metric("Win Days", f"{win_days}/{total_days}",
+              help="Days where realized P&L was positive. Target: ≥80% of trading days profitable.")
+    c4.metric("Avg Trade Win %", f"{avg_win_rate:.1f}%",
+              help="Average % of individual trades (not days) that closed in profit. At 3:1 reward:risk, you only need 25% to break even.")
+
+    c5, c6, c7 = st.columns(3)
+    c5.metric("Portfolio Value", f"${latest_cap:,.0f}",
+              help=f"Current account value = starting capital ${TOTAL_CAPITAL:,} + all realized gains to date. Updates each EOD run.")
+    c6.metric("Total Return", f"{total_return:+.2f}%",
+              help=f"(Portfolio Value − Starting Capital) ÷ Starting Capital. ${latest_cap - TOTAL_CAPITAL:+,.2f} gain on ${TOTAL_CAPITAL:,} since Day 1.")
+    c7.metric("Ann. Return", f"{ann_return:+.0f}%",
+              help=f"Extrapolates your {total_return:.2f}% return over {total_days} day(s) to a full 250-day trading year. Early days — this number stabilizes with more history.")
 
     st.markdown("---")
+
+    # ── Load halt dates for chart markers ─────────────────────────
+    _chart_halt_dates = set()
+    for _ftype in ("halt_flag", "halt_flag_cleared"):
+        for _row in db.select("scan_results", filters={"scan_type": _ftype}):
+            _d = (_row.get("results", {}).get("halted_at") or "")[:10]
+            if _d:
+                _chart_halt_dates.add(_d)
+    _chart_date_strs = set(df["date"].astype(str))
 
     # ── Daily P&L bar chart ────────────────────────────────────────
     st.subheader("Daily P&L")
@@ -1235,6 +1324,11 @@ elif page == "Performance":
     ))
     fig_bar.add_hline(y=DAILY_PROFIT_TARGET, line_dash="dot", line_color="#f39c12",
                       annotation_text=f"${DAILY_PROFIT_TARGET:,} target", annotation_position="top right")
+    for _hd in sorted(_chart_halt_dates):
+        if _hd in _chart_date_strs:
+            fig_bar.add_vline(x=_hd, line_dash="dash", line_color="rgba(231,76,60,0.7)",
+                              annotation_text="🛑 Halted", annotation_position="top left",
+                              annotation_font_color="rgba(231,76,60,0.9)")
     fig_bar.update_layout(
         xaxis_title="Date",
         yaxis_title="Daily P&L ($)",
@@ -1267,6 +1361,11 @@ elif page == "Performance":
     ))
     fig_line.add_hline(y=TOTAL_CAPITAL, line_dash="dash", line_color="rgba(128,128,128,0.5)",
                        annotation_text="Starting capital", annotation_position="bottom right")
+    for _hd in sorted(_chart_halt_dates):
+        if _hd in _chart_date_strs:
+            fig_line.add_vline(x=_hd, line_dash="dash", line_color="rgba(231,76,60,0.7)",
+                               annotation_text="🛑 Halted", annotation_position="top left",
+                               annotation_font_color="rgba(231,76,60,0.9)")
     fig_line.update_layout(
         height=350,
         margin=dict(l=20, r=60, t=20, b=20),

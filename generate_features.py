@@ -389,6 +389,26 @@ add_table(
          'hiding 4 intermediate steps. Full audit trail now visible for every premarket run.',
          'S', 'P1', 'SHIPPED v5.7'),
 
+        ('Manual override — stop/restart via GitHub Actions',
+         'control.py CLI: --action stop (writes halt_flag to Supabase), restart (updates to halt_flag_cleared + resumed_at), '
+         'status (check current state). stop.yml workflow_dispatch: reason input + close_positions toggle (market-sells all '
+         'open Alpaca positions via close_all_positions() before setting flag). restart.yml: one-click resume. '
+         'Orchestrator skips every run while halt_flag is active. Red halt banner on every dashboard page.',
+         'No way to stop the unsupervised agent without killing GitHub Actions jobs manually. '
+         'One-click stop/restart from any device without terminal or Supabase access. '
+         'close_positions toggle gives the choice between leaving Alpaca native stops active or market-selling everything.',
+         'S', 'P0', 'SHIPPED v5.7'),
+
+        ('Halt history preservation + eval chart markers',
+         'restart() updates halt_flag to halt_flag_cleared with resumed_at (preserves history instead of deleting). '
+         'eval.py detects halted days in the eval window from both flag types; prints in INTEGRITY CHECKS. '
+         'Dashboard Performance tab: red dashed vline markers on Daily P&L and Portfolio Value charts for halted dates; '
+         'Agent Scorecard shows halted-days count with active/cleared status.',
+         'Without history, a halted trading day looks like a zero-P&L day with no explanation. '
+         'Chart markers immediately distinguish "no trading" from "traded and lost". '
+         'eval.py integrity section flags any active halt that was missed.',
+         'S', 'P1', 'SHIPPED v5.7'),
+
         ('Intraday price chart with entry/exit markers',
          'Show a 1-day candlestick chart per position with entry price, target, stop, and trail stop marked',
          'Visual context for each trade; immediately shows whether price is trending toward target or stalling',
@@ -605,6 +625,8 @@ add_table(
         ('—', 'Native Alpaca trailing stop', 'Execution', 'L', 'SHIPPED v5.6 — trail_percent bracket leg; 2-week paper gate closes 2026-06-01'),
         ('—', 'Tiered lock-in — Thread 2', 'Position Mgmt', 'S', 'SHIPPED v5.7 — Tier 1 $716 ride with tighter trail, Tier 2 $1,000 ceiling close'),
         ('—', 'VWAP + RS vs SPY enrichment — Thread 1', 'Signal Quality', 'S', 'SHIPPED v5.7 — step 1.85 enriches candidates with live institutional signals before Claude'),
+        ('—', 'Manual override stop/restart', 'Operational', 'S', 'SHIPPED v5.7 — control.py + stop.yml + restart.yml; halt banner on every dashboard page'),
+        ('—', 'Halt history + eval markers', 'Operational', 'S', 'SHIPPED v5.7 — halt_flag_cleared + resumed_at; vline chart markers; INTEGRITY CHECKS in eval'),
         ('1', 'VWAP signal quality validation (June 1)', 'Validation', 'M', '~8 trading days accumulating; eval.py reports cohort deltas on June 1'),
         ('2', 'June 1 gate: python3 eval.py --days 14', 'Validation', 'S', 'Pass criteria: win rate ≥80%, avg P&L ≥$500/day, NATIVE_TRAIL confirmed'),
         ('3', 'Momentum confirmation — 15-min rule (V2f)', 'Signal Quality', 'M', 'Reduces false entries; should improve win rate by 3–5%'),

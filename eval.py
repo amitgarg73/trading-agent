@@ -279,6 +279,24 @@ def _compute_metrics(days: int) -> dict | None:
     if not recs:
         recs.append("Keep monitoring.")
 
+    # Halt detection — find any halt_flag or halt_flag_cleared records whose halted_at date
+    # falls within the eval window (preserves history when restart() updates scan_type)
+    halted_days = []
+    for flag_type in ("halt_flag", "halt_flag_cleared"):
+        halt_rows = db.select("scan_results", filters={"scan_type": flag_type})
+        for row in halt_rows:
+            r = row.get("results", {})
+            halt_date = (r.get("halted_at") or "")[:10]
+            if halt_date and halt_date in eval_dates:
+                halted_days.append({
+                    "date":        halt_date,
+                    "reason":      r.get("reason", "unknown"),
+                    "halted_at":   r.get("halted_at", ""),
+                    "resumed_at":  r.get("resumed_at", ""),
+                    "active":      flag_type == "halt_flag",
+                })
+    halted_days.sort(key=lambda x: x["date"])
+
     # Tailwind analysis — which positions rode past the $716 floor
     tailwind = _tailwind_analysis(all_closed_in_window, eval_dates, perf_rows)
 
@@ -352,6 +370,8 @@ def _compute_metrics(days: int) -> dict | None:
         "tailwind":         tailwind,
         # VWAP signal quality (Thread 1 validation)
         "vwap_analysis":    vwap_analysis,
+        # Halt history
+        "halted_days":      halted_days,
     }
 
 
@@ -699,6 +719,19 @@ def _print_metrics(m: dict):
             print(f"    {p['ticker']}  opened {(p.get('opened_at') or '')[:10]}  entry ${p['entry_price']:.2f}")
     else:
         print(f"  Orphaned open pos:    ✅ none")
+
+    halted = m.get("halted_days", [])
+    if halted:
+        active_halts = [h for h in halted if h["active"]]
+        cleared_halts = [h for h in halted if not h["active"]]
+        status = "🛑 STILL ACTIVE" if active_halts else "✅ all cleared"
+        print(f"  Halted days:          {len(halted)} in eval window  ({status})")
+        for h in halted:
+            halted_at = h["halted_at"][:16].replace("T", " ") if h["halted_at"] else "unknown"
+            resumed = h["resumed_at"][:16].replace("T", " ") if h.get("resumed_at") else ("still active" if h["active"] else "unknown")
+            print(f"    {h['date']}  halted {halted_at}  resumed {resumed}  reason: {h['reason']}")
+    else:
+        print(f"  Halted days:          ✅ none in eval window")
 
     print(f"\n[ CLAUDE QUALITY CHECKS ]")
     rr_v = m.get("rr_violations", [])

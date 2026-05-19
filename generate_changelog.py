@@ -208,6 +208,63 @@ body(
     'pipeline_counts populates from the next live premarket run onward.'
 )
 
+divider()
+subheading('6. Manual Override — Stop/Restart via GitHub Actions')
+body(
+    'What: New control.py CLI script and two GitHub Actions workflows for manual override. '
+    'control.py --action stop writes a halt_flag row to scan_results (reason, halted_at, '
+    'positions_closed). control.py --action restart clears the flag. control.py --action status '
+    'checks current state. '
+    'stop.yml (workflow_dispatch) accepts a reason string and a close_positions choice (false/true). '
+    'When close_positions=true: cancel_all_orders() then close_all_positions() run before the halt flag is set — '
+    'every open Alpaca position is market-sold. When false: positions left open with Alpaca native stops protecting them. '
+    'restart.yml (workflow_dispatch) runs control.py --action restart. '
+    'close_all_positions() added to alpaca_broker.py — fetches all positions via get_all_positions() '
+    'and calls close_position() on each; returns list of {ticker, success, fill_price}. '
+    'Orchestrator premarket(), intraday(), and eod() each call _is_halted() at the top — '
+    'skips the entire run if a halt_flag row exists, prints reason and halted_at.'
+)
+body(
+    'Why: The agent runs unsupervised across market hours via GitHub Actions cron. '
+    'If a market circuit breaker fires, strategy degradation is detected, or a technical issue occurs, '
+    'there is no way to stop it mid-run without killing the GitHub Actions job manually. '
+    'A simple workflow_dispatch "Stop Trading Agent" button in GitHub gives one-click manual control '
+    'from any device without needing terminal access or Supabase credentials.'
+)
+body(
+    'Dashboard: Red st.error() halt banner appears on every page after auth — '
+    'shows reason, halted_at timestamp, and positions_closed list (or note that Alpaca native stops are active). '
+    'Trigger message to restart via GitHub Actions. Applies regardless of which tab is active.'
+)
+
+divider()
+subheading('7. Halt History Preservation + eval.py Detection + Dashboard Chart Markers')
+body(
+    'What: restart() in control.py now updates the halt_flag row to scan_type=halt_flag_cleared '
+    'with a resumed_at timestamp rather than deleting the record. This preserves the full halt history '
+    'in Supabase — both the stop event (halted_at, reason, positions_closed) and the restart event '
+    '(resumed_at) are retained in one row per halt cycle. '
+    'stop() still hard-deletes any existing halt_flag before writing a fresh one '
+    '(guards against stale double-flag state if stop is triggered twice).'
+)
+body(
+    'eval.py: _compute_metrics() now queries both halt_flag and halt_flag_cleared records. '
+    'Any record whose halted_at date falls within the eval window is included in halted_days list '
+    'with: date, reason, halted_at, resumed_at, and active (bool). '
+    '_print_metrics() prints halted_days in [ INTEGRITY CHECKS ] with icon (🛑 if active, ✅ if cleared), '
+    'per-halt detail line showing halt time, resume time, and reason. '
+    'halted_days is also included in the metrics dict written to Supabase on --write runs.'
+)
+body(
+    'Dashboard Performance tab: Agent Scorecard integrity section shows halted days count '
+    'with status icon and per-day captions. '
+    'Before the Daily P&L bar chart and Portfolio Value line chart, halt dates are loaded '
+    'from scan_results (both halt_flag and halt_flag_cleared). For any halt date that appears '
+    'in the chart\'s date range, a red dashed vertical line (add_vline) is drawn on both charts '
+    'with a "🛑 Halted" annotation — makes it immediately visible which trading days were paused '
+    'and avoids misattributing a flat/missing bar to poor performance.'
+)
+
 add_table(
     ['Item', 'Status'],
     [
@@ -219,6 +276,11 @@ add_table(
         ('eval.py VWAP signal quality section', '✅ Done'),
         ('Agent Scorecard tailwind + VWAP sections', '✅ Done'),
         ('Pipeline funnel transparency in Today tab', '✅ Done'),
+        ('Manual override — stop.yml + restart.yml + control.py', '✅ Done'),
+        ('Halt banner on every dashboard page', '✅ Done'),
+        ('Halt history preservation (halt_flag_cleared + resumed_at)', '✅ Done'),
+        ('eval.py halt detection + INTEGRITY CHECKS section', '✅ Done'),
+        ('Dashboard chart vline markers for halted dates', '✅ Done'),
         ('VWAP signal quality validation (June 1 gate)', '⏳ ~8 trading days of data accumulating'),
         ('June 1 gate: python3 eval.py --days 14', '⏳ Gate date: 2026-06-01'),
     ]

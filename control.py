@@ -15,7 +15,8 @@ from datetime import date, datetime
 from core import db
 
 
-def _clear_existing_flags():
+def _delete_active_flags():
+    """Hard-delete active halt_flags (used by stop() to avoid double-flag edge case)."""
     rows = db.select("scan_results", filters={"scan_type": "halt_flag"})
     for row in rows:
         db.delete("scan_results", {"id": row["id"]})
@@ -41,7 +42,7 @@ def stop(reason: str, close_positions: bool = False):
                 print(f"  ⚠️  Failed to close: {', '.join(failed)} — check Alpaca manually.")
             print(f"  Closed {len(closed_tickers)} position(s).")
 
-    cleared = _clear_existing_flags()
+    cleared = _delete_active_flags()
     if cleared:
         print(f"  Replaced {cleared} existing halt flag(s).")
 
@@ -63,13 +64,21 @@ def stop(reason: str, close_positions: bool = False):
 
 
 def restart():
-    cleared = _clear_existing_flags()
-    if cleared == 0:
+    active = db.select("scan_results", filters={"scan_type": "halt_flag"})
+    if not active:
         print("✅  No halt flag found — agent is already running.")
-    else:
-        print(f"✅  Halt flag cleared — trading agent will resume on next scheduled run.")
-        print(f"    Cleared {cleared} flag(s).")
-        print(f"    Next premarket run: 9:45 AM ET on the next trading day.")
+        return
+    for row in active:
+        db.update("scan_results", {"id": row["id"]}, {
+            "scan_type": "halt_flag_cleared",
+            "results": {
+                **row.get("results", {}),
+                "resumed_at": datetime.now().isoformat(),
+            },
+        })
+    print(f"✅  Halt flag cleared — trading agent will resume on next scheduled run.")
+    print(f"    Cleared {len(active)} flag(s).")
+    print(f"    Next premarket run: 9:45 AM ET on the next trading day.")
 
 
 def status():
