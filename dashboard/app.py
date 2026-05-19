@@ -866,6 +866,13 @@ elif page == "Positions":
 elif page == "Performance":
     st.title("Performance History")
 
+    # ── Date range selector ───────────────────────────────────────
+    _range_opts = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90, "All time": None}
+    _selected   = st.radio("Date range", list(_range_opts.keys()), horizontal=True, index=1)
+    _n_days     = _range_opts[_selected]
+
+    st.markdown("---")
+
     # ── Agent Scorecard (latest eval) ────────────────────────────
     eval_rows = db.select("scan_results", filters={"scan_type": "eval"}, order="created_at", limit=1)
     if eval_rows:
@@ -873,7 +880,7 @@ elif page == "Performance":
         grade_label = {"A": "Excellent", "B": "Good", "C": "Mediocre", "D": "Poor"}.get(ev.get("grade", ""), "")
         days = ev.get("days", 0)
 
-        with st.expander(f"Agent Scorecard — {eval_rows[0]['date']} · {days}-day window · Grade **{ev.get('grade','?')}** ({grade_label})", expanded=True):
+        with st.expander(f"Agent Scorecard — last eval run {eval_rows[0]['date']} · {days}-day eval window · Grade **{ev.get('grade','?')}** ({grade_label})  *(charts and metrics below reflect selected date range)*", expanded=True):
 
             # ── VERDICT ──────────────────────────────────────────────
             st.markdown("#### Verdict")
@@ -1266,12 +1273,18 @@ elif page == "Performance":
 
         st.markdown("---")
 
-    perf = db.select("daily_performance", order="date", limit=60)
+    perf = db.select("daily_performance", order="date")
     if not perf:
         st.info("No performance data yet.")
         st.stop()
 
     df = pd.DataFrame(perf).sort_values("date")
+    if _n_days:
+        _cutoff = (pd.Timestamp.today() - pd.Timedelta(days=_n_days)).strftime("%Y-%m-%d")
+        df = df[df["date"] >= _cutoff]
+    if df.empty:
+        st.info(f"No data in the selected range ({_selected}).")
+        st.stop()
 
     total_pnl    = df["total_pnl"].sum()
     avg_daily    = df["total_pnl"].mean()
