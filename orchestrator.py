@@ -156,7 +156,8 @@ def premarket(broker: str = "simulation"):
         updated    = 0
         for c in candidates:
             ask = live.get(c["ticker"])
-            if ask and abs(ask - c["current_price"]) / c["current_price"] < 0.10:
+            cur = c.get("current_price") or 0
+            if ask and cur and abs(ask - cur) / cur < 0.10:
                 # Only update if within 10% of yfinance price — guards against bad data
                 c["current_price"] = ask
                 updated += 1
