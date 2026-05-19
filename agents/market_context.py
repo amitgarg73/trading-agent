@@ -28,6 +28,7 @@ Economic calendar:
 """
 from __future__ import annotations
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 import pandas as pd
 import urllib.request
@@ -175,11 +176,17 @@ def run() -> dict:
     """
     print("[ 0/4 ] Checking market conditions...")
 
-    vix          = _fetch_vix()
-    futures      = _fetch_futures()
-    intl         = _fetch_intl_markets()
-    fear_greed   = _fetch_fear_greed()
-    econ_events  = _check_economic_calendar()
+    with ThreadPoolExecutor(max_workers=5) as _pool:
+        _f_vix   = _pool.submit(_fetch_vix)
+        _f_fut   = _pool.submit(_fetch_futures)
+        _f_intl  = _pool.submit(_fetch_intl_markets)
+        _f_fg    = _pool.submit(_fetch_fear_greed)
+        _f_econ  = _pool.submit(_check_economic_calendar)
+        vix         = _f_vix.result()
+        futures     = _f_fut.result()
+        intl        = _f_intl.result()
+        fear_greed  = _f_fg.result()
+        econ_events = _f_econ.result()
 
     # ── VIX gate ──────────────────────────────────────────────────────
     skip_reason   = None

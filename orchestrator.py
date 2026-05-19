@@ -5,6 +5,7 @@ Called by GitHub Actions with --mode premarket | intraday | eod
 import sys
 import json
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from scanner.scanner import run_scan
 from scanner.ml_scorer import score_candidates as ml_score_candidates, is_available as ml_available
@@ -148,39 +149,35 @@ def premarket(broker: str = "simulation"):
     vwap_enriched_count = 0
     above_vwap_count = 0
 
-    # 1.8 Live price refresh (Alpaca only) — replace stale yfinance prices with
-    # real-time ask prices so Claude sets entry prices on accurate data.
+    # 1.8 + 1.85 Live price refresh and intraday signals — run concurrently (Alpaca only).
     if broker == "alpaca":
-        tickers    = [c["ticker"] for c in candidates]
-        live       = alpaca_broker.get_live_prices(tickers)
-        updated    = 0
+        tickers = [c["ticker"] for c in candidates]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_prices  = executor.submit(alpaca_broker.get_live_prices, tickers)
+            f_signals = executor.submit(alpaca_broker.get_intraday_signals, tickers)
+            live          = f_prices.result()
+            intraday_sigs = f_signals.result()
+
+        updated = 0
         for c in candidates:
             ask = live.get(c["ticker"])
             cur = c.get("current_price") or 0
             if ask and cur and abs(ask - cur) / cur < 0.10:
-                # Only update if within 10% of yfinance price — guards against bad data
                 c["current_price"] = ask
                 updated += 1
         live_price_updated = updated
         print(f"[ 1.8/4 ] Live price refresh: {updated}/{len(candidates)} tickers updated from Alpaca")
 
-    # 1.85 Intraday signal enrichment (Alpaca only) — VWAP position, relative strength vs SPY.
-    # Enriches each candidate so Claude can prioritize stocks already trading above institutional
-    # benchmarks and outperforming the market — a quality filter the scanner can't compute.
-    if broker == "alpaca":
-        tickers       = [c["ticker"] for c in candidates]
-        intraday_sigs = alpaca_broker.get_intraday_signals(tickers)
-        enriched      = 0
+        enriched = 0
         for c in candidates:
             sig = intraday_sigs.get(c["ticker"])
             if sig:
                 c.update(sig)
                 enriched += 1
-        # Above-VWAP candidates first; ties broken by RS vs SPY descending
         candidates.sort(
             key=lambda x: (not x.get("above_vwap", False), -(x.get("rs_vs_spy") or 0))
         )
-        above_vwap_count = sum(1 for c in candidates if c.get("above_vwap"))
+        above_vwap_count    = sum(1 for c in candidates if c.get("above_vwap"))
         vwap_enriched_count = enriched
         print(f"[ 1.85/4 ] Intraday signals: {enriched}/{len(candidates)} enriched — "
               f"{above_vwap_count} above VWAP")

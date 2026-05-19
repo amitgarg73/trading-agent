@@ -4,6 +4,7 @@ Scores -10 to +10. Candidates with |score| >= SCORE_THRESHOLD are passed
 to the strategy agent.
 """
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 import pandas as pd
 import ta
@@ -112,49 +113,51 @@ def _passes_filters(info: dict, price: float) -> bool:
     return price >= MIN_PRICE and avg_vol >= MIN_AVG_VOLUME
 
 
+def _scan_ticker(ticker: str) -> dict | None:
+    info, df = _fetch(ticker)
+    if df is None:
+        return None
+    tech = _technical(ticker, df)
+    price = tech["price"]
+    if not _passes_filters(info, price):
+        return None
+    if abs(tech["technical_score"]) < SCORE_THRESHOLD:
+        return None
+    return {
+        "ticker": ticker,
+        "name": info.get("longName", ticker),
+        "sector": info.get("sector") or info.get("category", "ETF"),
+        "price": price,
+        "market_cap_b": round((info.get("marketCap") or 0) / 1e9, 1),
+        "avg_volume": info.get("averageVolume", 0),
+        "beta": info.get("beta"),
+        "pe_forward": info.get("forwardPE"),
+        "technical_score": tech["technical_score"],
+        "signals": tech["signals"],
+        "rsi": tech["rsi"],
+        "macd_hist": tech["macd_hist"],
+        "bb_pct": tech["bb_pct"],
+        "volume_ratio": tech["volume_ratio"],
+        "atr_pct": tech["atr_pct"],
+        "range_52w_pct": tech["range_52w_pct"],
+        "dist_sma20": tech["dist_sma20"],
+        "dist_sma50": tech["dist_sma50"],
+        "mom1": tech["mom1"],
+        "mom5": tech["mom5"],
+        "ml_score": None,
+        "scanned_at": datetime.utcnow().isoformat(),
+    }
+
+
 def run_scan(universe=None) -> list[dict]:
-    candidates = []
     tickers = universe if universe is not None else UNIVERSE
-
-    for ticker in tickers:
-        info, df = _fetch(ticker)
-        if df is None:
-            continue
-
-        tech = _technical(ticker, df)
-        price = tech["price"]
-
-        if not _passes_filters(info, price):
-            continue
-
-        if abs(tech["technical_score"]) < SCORE_THRESHOLD:
-            continue
-
-        candidates.append({
-            "ticker": ticker,
-            "name": info.get("longName", ticker),
-            "sector": info.get("sector") or info.get("category", "ETF"),
-            "price": price,
-            "market_cap_b": round((info.get("marketCap") or 0) / 1e9, 1),
-            "avg_volume": info.get("averageVolume", 0),
-            "beta": info.get("beta"),
-            "pe_forward": info.get("forwardPE"),
-            "technical_score": tech["technical_score"],
-            "signals": tech["signals"],
-            "rsi": tech["rsi"],
-            "macd_hist": tech["macd_hist"],
-            "bb_pct": tech["bb_pct"],
-            "volume_ratio": tech["volume_ratio"],
-            "atr_pct": tech["atr_pct"],
-            "range_52w_pct": tech["range_52w_pct"],
-            "dist_sma20": tech["dist_sma20"],
-            "dist_sma50": tech["dist_sma50"],
-            "mom1": tech["mom1"],
-            "mom5": tech["mom5"],
-            "ml_score": None,
-            "scanned_at": datetime.utcnow().isoformat(),
-        })
-
+    candidates = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futs = {executor.submit(_scan_ticker, t): t for t in tickers}
+        for fut in as_completed(futs):
+            result = fut.result()
+            if result is not None:
+                candidates.append(result)
     candidates.sort(key=lambda x: abs(x["technical_score"]), reverse=True)
     return candidates
 
