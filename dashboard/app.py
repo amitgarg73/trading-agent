@@ -1340,43 +1340,66 @@ elif page == "Performance":
     )
     st.plotly_chart(fig_bar, use_container_width=True)
 
-    # ── Portfolio value + cumulative P&L ─────────────────────────
-    st.subheader("Portfolio Value & Cumulative P&L")
+    # ── Portfolio value + cumulative P&L — side by side ──────────
     df["cumulative_pnl"] = df["total_pnl"].cumsum()
+    ch_left, ch_right = st.columns(2)
 
-    fig_line = go.Figure()
-    fig_line.add_trace(go.Scatter(
-        x=df["date"], y=df["ending_capital"],
-        name="Portfolio Value",
-        line=dict(color="#1A3A6A", width=2),
-        hovertemplate="<b>%{x}</b><br>Portfolio: $%{y:,.0f}<extra></extra>",
-        fill="tozeroy", fillcolor="rgba(26,58,106,0.08)",
-    ))
-    fig_line.add_trace(go.Scatter(
-        x=df["date"], y=df["cumulative_pnl"],
-        name="Cumulative P&L",
-        line=dict(color="#27ae60", width=2, dash="dot"),
-        hovertemplate="<b>%{x}</b><br>Cum. P&L: $%{y:,.0f}<extra></extra>",
-        yaxis="y2",
-    ))
-    fig_line.add_hline(y=TOTAL_CAPITAL, line_dash="dash", line_color="rgba(128,128,128,0.5)",
-                       annotation_text="Starting capital", annotation_position="bottom right")
-    for _hd in sorted(_chart_halt_dates):
-        if _hd in _chart_date_strs:
-            fig_line.add_vline(x=_hd, line_dash="dash", line_color="rgba(231,76,60,0.7)",
-                               annotation_text="🛑 Halted", annotation_position="top left",
-                               annotation_font_color="rgba(231,76,60,0.9)")
-    fig_line.update_layout(
-        height=350,
-        margin=dict(l=20, r=60, t=20, b=20),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", y=1.08),
-        yaxis=dict(title="Portfolio Value ($)", gridcolor="rgba(128,128,128,0.2)"),
-        yaxis2=dict(title="Cumulative P&L ($)", overlaying="y", side="right",
-                    gridcolor="rgba(0,0,0,0)"),
-    )
-    st.plotly_chart(fig_line, use_container_width=True)
+    with ch_left:
+        st.subheader("Portfolio Value")
+        fig_pv = go.Figure()
+        fig_pv.add_trace(go.Scatter(
+            x=df["date"], y=df["ending_capital"],
+            name="Portfolio Value",
+            line=dict(color="#1A3A6A", width=2),
+            hovertemplate="<b>%{x}</b><br>Portfolio: $%{y:,.0f}<extra></extra>",
+            fill="tozeroy", fillcolor="rgba(26,58,106,0.08)",
+        ))
+        fig_pv.add_hline(y=TOTAL_CAPITAL, line_dash="dash", line_color="rgba(128,128,128,0.5)",
+                         annotation_text=f"Starting ${TOTAL_CAPITAL:,}", annotation_position="bottom right")
+        for _hd in sorted(_chart_halt_dates):
+            if _hd in _chart_date_strs:
+                fig_pv.add_vline(x=_hd, line_dash="dash", line_color="rgba(231,76,60,0.7)",
+                                 annotation_text="🛑", annotation_position="top left",
+                                 annotation_font_color="rgba(231,76,60,0.9)")
+        fig_pv.update_layout(
+            yaxis_title="Portfolio Value ($)",
+            height=320,
+            margin=dict(l=20, r=20, t=20, b=20),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            yaxis=dict(gridcolor="rgba(128,128,128,0.2)"),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_pv, use_container_width=True)
+
+    with ch_right:
+        st.subheader("Cumulative P&L")
+        cum_colors = ["#27ae60" if v >= 0 else "#e74c3c" for v in df["cumulative_pnl"]]
+        fig_cum = go.Figure()
+        fig_cum.add_trace(go.Scatter(
+            x=df["date"], y=df["cumulative_pnl"],
+            name="Cumulative P&L",
+            line=dict(color="#27ae60", width=2),
+            hovertemplate="<b>%{x}</b><br>Cum. P&L: $%{y:,.0f}<extra></extra>",
+            fill="tozeroy", fillcolor="rgba(39,174,96,0.08)",
+        ))
+        fig_cum.add_hline(y=0, line_dash="dash", line_color="rgba(128,128,128,0.5)",
+                          annotation_text="Break even", annotation_position="bottom right")
+        for _hd in sorted(_chart_halt_dates):
+            if _hd in _chart_date_strs:
+                fig_cum.add_vline(x=_hd, line_dash="dash", line_color="rgba(231,76,60,0.7)",
+                                  annotation_text="🛑", annotation_position="top left",
+                                  annotation_font_color="rgba(231,76,60,0.9)")
+        fig_cum.update_layout(
+            yaxis_title="Cumulative P&L ($)",
+            height=320,
+            margin=dict(l=20, r=20, t=20, b=20),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            yaxis=dict(gridcolor="rgba(128,128,128,0.2)"),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_cum, use_container_width=True)
 
     st.subheader("Daily Log")
     display = df[["date", "total_pnl", "total_trades", "win_count", "loss_count",
