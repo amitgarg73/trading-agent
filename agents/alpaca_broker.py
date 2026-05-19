@@ -219,6 +219,24 @@ def cancel_all_orders() -> None:
         pass
 
 
+def close_all_positions() -> list[dict]:
+    """Market-close every open position on Alpaca. Returns list of {ticker, success, fill_price}."""
+    results = []
+    try:
+        positions = _client().get_all_positions()
+    except Exception as e:
+        print(f"  ⚠️  Could not fetch Alpaca positions: {e}")
+        return results
+    for pos in positions:
+        ticker = pos.symbol
+        ok, fill = close_position(ticker)
+        results.append({"ticker": ticker, "success": ok, "fill_price": fill})
+        status = f"${fill:.2f}" if fill else "pending"
+        icon = "✅" if ok else "❌"
+        print(f"  {icon} {ticker}: market close submitted — fill {status}")
+    return results
+
+
 def get_buying_power() -> float | None:
     """Return current buying power from Alpaca account."""
     try:

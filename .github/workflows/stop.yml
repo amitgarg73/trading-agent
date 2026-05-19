@@ -7,6 +7,12 @@ on:
         description: 'Reason for stopping (logged in Supabase and shown in dashboard)'
         required: false
         default: 'Manual stop'
+      close_positions:
+        description: 'Close all open Alpaca positions immediately? (leave open = Alpaca native stops protect them)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 jobs:
   stop:
@@ -26,12 +32,19 @@ jobs:
 
       - name: Set halt flag
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:      ${{ secrets.SUPABASE_KEY }}
+          ALPACA_API_KEY:    ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: |
-          python control.py --action stop --reason "${{ github.event.inputs.reason }}"
+          CLOSE_FLAG=""
+          if [ "${{ github.event.inputs.close_positions }}" = "true" ]; then
+            CLOSE_FLAG="--close-positions"
+          fi
+          python control.py --action stop --reason "${{ github.event.inputs.reason }}" $CLOSE_FLAG
 
       - name: Confirm
         run: |
           echo "✅ Halt flag set. All scheduled premarket / intraday / EOD runs will skip until restarted."
+          echo "   Close positions: ${{ github.event.inputs.close_positions }}"
           echo "   Trigger 'Restart Trading Agent' to resume."

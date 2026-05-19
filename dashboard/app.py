@@ -61,6 +61,21 @@ if not check_password():
     st.stop()
 
 
+# ── Halt banner — shown on every page if agent is stopped ─────────
+_halt_rows = db.select("scan_results", filters={"scan_type": "halt_flag"})
+if _halt_rows:
+    _hr = _halt_rows[0].get("results", {})
+    _halted_at = _hr.get("halted_at", "")[:16].replace("T", " ")
+    _closed    = _hr.get("positions_closed", [])
+    _pos_note  = (f"{len(_closed)} position(s) closed: {', '.join(_closed)}"
+                  if _closed else "Open positions left running — Alpaca native stops active")
+    st.error(
+        f"🛑 **TRADING HALTED** — {_hr.get('reason', 'Manual override')}  "
+        f"·  Since {_halted_at} UTC  ·  {_pos_note}  ·  "
+        f"*Trigger 'Restart Trading Agent' in GitHub Actions to resume.*",
+        icon=None,
+    )
+
 # ── Sidebar ───────────────────────────────────────────────────────
 st.sidebar.title("📈 Trading Agent")
 st.sidebar.caption(f"Capital: ${TOTAL_CAPITAL:,} | Target: ${DAILY_PROFIT_TARGET:,}/day")
