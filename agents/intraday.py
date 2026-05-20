@@ -32,10 +32,10 @@ def _reconcile_with_alpaca():
     if not open_positions:
         return
 
-    # Fetch today's filled sell orders once — covers stop/target exits
+    # Fetch today's orders once — covers both sell exits and pending buys
     try:
         all_orders = alpaca_broker._client().get_orders(
-            GetOrdersRequest(status=QueryOrderStatus.ALL, limit=50)
+            GetOrdersRequest(status=QueryOrderStatus.ALL, limit=100)
         )
         today = datetime.utcnow().date().isoformat()
         filled_sells = {
@@ -45,11 +45,26 @@ def _reconcile_with_alpaca():
             and str(o.status) == "filled"
             and (o.filled_at or o.submitted_at or "").startswith(today[:10])
         }
+        # Buy orders still in flight — limit orders placed but not yet filled.
+        # Do not mark UNFILLED while a pending buy exists: the fill may arrive
+        # in the next 30-min cycle.
+        pending_buys = {
+            str(o.symbol)
+            for o in all_orders
+            if str(o.side) == "buy"
+            and str(o.status) in ("pending_new", "accepted", "new", "held", "partially_filled")
+            and (o.submitted_at or "").startswith(today[:10])
+        }
     except Exception:
         filled_sells = {}
+        pending_buys = set()
 
     for pos in open_positions:
         if pos["ticker"] not in alpaca_tickers:
+            if pos["ticker"] in pending_buys:
+                # Buy order submitted but not yet filled — leave OPEN, check next cycle
+                print(f"  ⏳ Reconciliation: {pos['ticker']} buy order pending — waiting for fill")
+                continue
             sell_order = filled_sells.get(pos["ticker"])
             if sell_order and sell_order.filled_avg_price:
                 # Entry filled, bracket exited via stop or target
@@ -69,7 +84,7 @@ def _reconcile_with_alpaca():
                     "close_price":    close_price,
                 })
             else:
-                # Entry never filled
+                # Entry never filled and no pending order — truly unfilled
                 print(f"  ⚠️  Reconciliation: {pos['ticker']} is OPEN in DB but not in Alpaca — marking UNFILLED")
                 db.update("positions", {"id": pos["id"]}, {
                     "status":         "CLOSED",

@@ -176,11 +176,18 @@ if page == "Summary":
         and p.get("planned_trade_id") in plan_trade_ids
         and p.get("close_reason") not in ("CLEANUP", "UNFILLED")
     ]
+    # UNFILLED tracked separately — shown in plan table but excluded from P&L
+    run_unfilled = [
+        p for p in all_closed
+        if (p.get("closed_at") or "").startswith(run_date)
+        and p.get("planned_trade_id") in plan_trade_ids
+        and p.get("close_reason") == "UNFILLED"
+    ]
 
-    # Only show planned_trades that actually have a position (open or real closed).
+    # Only show planned_trades that actually have a position (open, real closed, or unfilled).
     # This filters out ghost rows from repeated test premarket runs that opened
     # different tickers — the cap is on positions, not planned_trades rows.
-    executed_trade_ids = {p["planned_trade_id"] for p in open_pos + run_closed}
+    executed_trade_ids = {p["planned_trade_id"] for p in open_pos + run_closed + run_unfilled}
     trades = [t for t in trades if t["id"] in executed_trade_ids]
 
     realized   = sum(p.get("realized_pnl",   0) or 0 for p in run_closed)
@@ -271,13 +278,15 @@ if page == "Summary":
         st.progress(progress, text=f"Total {fmt_pnl(total_pnl)}  →  ${DAILY_BONUS_TARGET:,} ceiling")
 
     # Build position lookup (planned_trade_id → position)
-    pos_by_trade = {p["planned_trade_id"]: p for p in open_pos + run_closed}
+    pos_by_trade = {p["planned_trade_id"]: p for p in open_pos + run_closed + run_unfilled}
 
     def trade_status(trade_id):
         """Return (status_label, pnl_value) for a planned trade."""
         pos = pos_by_trade.get(trade_id)
         if not pos:
             return "⏳ Pending", 0
+        if pos.get("close_reason") == "UNFILLED":
+            return "⚫ Unfilled", 0
         if pos["status"] == "OPEN":
             if in_tailwind:
                 return "🚀 Riding Tailwind", pos.get("unrealized_pnl", 0) or 0
@@ -306,14 +315,25 @@ if page == "Summary":
             "border-radius:4px;font-size:11px;margin-left:6px'>🚀 tailwind</span>"
             if in_tailwind else ""
         )
+        # Count per ticker to detect partial-split legs — label them clearly
+        from collections import Counter
+        ticker_counts = Counter(p["ticker"] for p in open_pos)
+        ticker_seen: dict = {}
         for pos in open_pos:
             pnl  = pos.get("unrealized_pnl", 0) or 0
             icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
             name = COMPANY_NAMES.get(pos["ticker"], "")
-            label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
+            base = f"{pos['ticker']} · {name}" if name else pos["ticker"]
+            # Add leg label when a ticker appears more than once (partial profit split)
+            if ticker_counts[pos["ticker"]] > 1:
+                ticker_seen[pos["ticker"]] = ticker_seen.get(pos["ticker"], 0) + 1
+                leg_tag = " <span style='background:#2c3e50;color:#aaa;padding:1px 5px;border-radius:3px;font-size:10px'>partial</span>" if ticker_seen[pos["ticker"]] == 1 else " <span style='background:#2c3e50;color:#aaa;padding:1px 5px;border-radius:3px;font-size:10px'>full</span>"
+            else:
+                leg_tag = ""
+            label = base
             vwap_badge = fmt_vwap_badge(pos["ticker"], vwap_signals)
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 2])
-            c1.markdown(f"**{icon} {label}**{tail_badge}{vwap_badge}", unsafe_allow_html=True)
+            c1.markdown(f"**{icon} {label}**{leg_tag}{tail_badge}{vwap_badge}", unsafe_allow_html=True)
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Now: **${pos.get('current_price', 0):.2f}**")
             c4.markdown(f"Target ${pos['target_price']:.2f}  ·  {fmt_stop(pos, tight=in_tailwind)}")
