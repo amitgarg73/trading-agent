@@ -12,8 +12,8 @@ SUPABASE_KEY      = os.getenv("SUPABASE_KEY", "")  # service role key
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "changeme")
 
 # Capital
-TOTAL_CAPITAL        = 100_000
-DAILY_PROFIT_TARGET  = 1_000
+TOTAL_CAPITAL        = 50_000
+DAILY_PROFIT_TARGET  = 500
 MAX_POSITION_PCT     = 0.07       # max 7% of capital per position (fits 15 positions)
 MIN_POSITION_PCT     = 0.05       # min 5% of capital per position
 MAX_POSITIONS        = 15         # max concurrent positions
@@ -43,9 +43,9 @@ USE_NATIVE_TRAILING_STOP    = False       # trail_percent not supported in StopL
                                           # When False: manual high_watermark check every 15 min (safe default, paper OK)
                                           # Enable after 2-week paper A/B validation — P0 before real money
 POSITION_SIZE_BY_CONFIDENCE = {           # Position size mapped to Claude confidence level
-    "HIGH":   7_000,
-    "MEDIUM": 6_000,
-    "LOW":    5_000,
+    "HIGH":   3_500,
+    "MEDIUM": 3_000,
+    "LOW":    2_500,
 }
 
 # Scanner thresholds
