@@ -95,10 +95,12 @@ def filter_trades(approved_trades: list, broker: str = "simulation",
         elif ticker in traded_today:
             reason = f"Duplicate: {ticker} already open or traded today"
 
-        # Price sanity check
+        # Price sanity check — fail closed: no fresh price = no trade
         else:
             market_price = _current_price(ticker)
-            if market_price:
+            if market_price is None:
+                reason = "Price sanity: could not fetch current market price — blocking trade (no stale data risk)"
+            else:
                 entry = trade["entry_price"]
                 deviation = abs(entry - market_price) / market_price
                 if deviation > PRICE_SANITY_PCT:
