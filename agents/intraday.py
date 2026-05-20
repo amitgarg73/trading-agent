@@ -253,8 +253,8 @@ def _maybe_run_intraday_scan(broker: str):
                                "rejected": len(trades)})
             return None
 
-        plan   = db.insert("trade_plans", {"date": today, "scan_type": "intraday_scan",
-                                     "status": "EXECUTED", "trade_count": len(approved)})
+        existing = db.select("trade_plans", filters={"date": today})
+        plan     = existing[0] if existing else db.insert("trade_plans", {"date": today, "status": "EXECUTED"})
         # Disable partial profit split — 1% target == Leg A target, splitting is redundant
         opened = open_positions(plan["id"], approved, broker=broker, enable_partial=False)
 
@@ -353,4 +353,5 @@ if __name__ == "__main__":
     if result["closed_details"]:
         print(f"\n  Closed this run:")
         for c in result["closed_details"]:
-            print(f"    {c['ticker']:6s}  {c['reason']:8s}  ${c['realized_pnl']:,.2f}")
+            pnl = c.get('realized_pnl') or 0
+            print(f"    {c['ticker']:6s}  {c['reason']:8s}  ${pnl:,.2f}")
