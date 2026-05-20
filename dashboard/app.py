@@ -176,19 +176,12 @@ if page == "Summary":
         and p.get("planned_trade_id") in plan_trade_ids
         and p.get("close_reason") not in ("CLEANUP", "UNFILLED")
     ]
-    # UNFILLED tracked separately — shown in plan table but excluded from P&L
-    run_unfilled = [
-        p for p in all_closed
-        if (p.get("closed_at") or "").startswith(run_date)
-        and p.get("planned_trade_id") in plan_trade_ids
-        and p.get("close_reason") == "UNFILLED"
-    ]
-
-    # Only show planned_trades that actually have a position (open, real closed, or unfilled).
-    # This filters out ghost rows from repeated test premarket runs that opened
-    # different tickers — the cap is on positions, not planned_trades rows.
-    executed_trade_ids = {p["planned_trade_id"] for p in open_pos + run_closed + run_unfilled}
+    # Only show planned_trades that actually have a position (open or real closed).
+    # UNFILLED positions are excluded entirely — they are test/reconciliation artefacts
+    # that add noise without contributing to P&L or trade analysis.
+    executed_trade_ids = {p["planned_trade_id"] for p in open_pos + run_closed}
     trades = [t for t in trades if t["id"] in executed_trade_ids]
+    run_unfilled = []  # kept for compatibility; no longer shown
 
     realized   = sum(p.get("realized_pnl",   0) or 0 for p in run_closed)
     unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in open_pos)
@@ -228,9 +221,12 @@ if page == "Summary":
     st.divider()
 
     # ── KPI Row ───────────────────────────────────────────────────
-    _perf_rows = db.select("daily_performance", order="date", limit=1)
-    _latest_cap = _perf_rows[0]["ending_capital"] if _perf_rows else TOTAL_CAPITAL
-    _cap_delta  = _latest_cap - TOTAL_CAPITAL
+    # Compute capital from TOTAL_CAPITAL + cumulative P&L — avoids stale chained values
+    # when TOTAL_CAPITAL is changed (e.g. $100K → $50K capital split).
+    _all_perf_rows  = db.select("daily_performance", order="date")
+    _cumulative_pnl = sum(r.get("total_pnl", 0) or 0 for r in _all_perf_rows)
+    _latest_cap     = TOTAL_CAPITAL + _cumulative_pnl
+    _cap_delta      = _cumulative_pnl
 
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Capital", f"${_latest_cap:,.0f}",
@@ -1384,7 +1380,7 @@ elif page == "Performance":
     win_days     = (df["total_pnl"] > 0).sum()
     total_days   = len(df)
     avg_win_rate = df["win_rate"].mean()
-    latest_cap   = df.iloc[-1]["ending_capital"]
+    latest_cap   = TOTAL_CAPITAL + df["total_pnl"].sum()
     total_return = (latest_cap - TOTAL_CAPITAL) / TOTAL_CAPITAL * 100
     ann_return   = total_return / total_days * 250 if total_days > 0 else 0
 

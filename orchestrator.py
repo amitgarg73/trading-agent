@@ -17,6 +17,25 @@ from config.settings import UNIVERSE, STRATEGY_MIN_SCORE
 from agents import alpaca_broker
 
 
+def _is_trading_day() -> bool:
+    """Return False on weekends and NYSE holidays using Alpaca's calendar."""
+    if date.today().weekday() >= 5:
+        return False
+    try:
+        from agents.alpaca_broker import _client
+        from alpaca.trading.client import TradingClient
+        import os
+        client = TradingClient(
+            os.environ.get("ALPACA_API_KEY", ""),
+            os.environ.get("ALPACA_SECRET_KEY", ""),
+            paper=True,
+        )
+        cal = client.get_calendar(start=str(date.today()), end=str(date.today()))
+        return len(cal) > 0
+    except Exception:
+        return True  # fail open
+
+
 def _is_halted() -> bool:
     """Return True if a manual halt flag is active in Supabase."""
     rows = db.select("scan_results", filters={"scan_type": "halt_flag"})
@@ -52,6 +71,10 @@ def premarket(broker: str = "simulation"):
     print(f"\n{'='*60}")
     print(f"  PREMARKET RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')} [{broker}]")
     print(f"{'='*60}\n")
+
+    if not _is_trading_day():
+        print(f"[orchestrator] {date.today()} is not a NYSE trading day — skipping")
+        return
 
     if _is_halted():
         return
