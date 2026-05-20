@@ -1,0 +1,64 @@
+name: Test Suite
+
+on:
+  push:
+    paths:
+      - "agents/risk.py"
+      - "agents/guardrails.py"
+      - "agents/portfolio.py"
+      - "agents/sector_guard.py"
+      - "scanner/scanner.py"
+      - "eval.py"
+      - "tests/**"
+      - "config/settings.py"
+  pull_request:
+    paths:
+      - "agents/risk.py"
+      - "agents/guardrails.py"
+      - "agents/portfolio.py"
+      - "agents/sector_guard.py"
+      - "scanner/scanner.py"
+      - "eval.py"
+      - "tests/**"
+      - "config/settings.py"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-mock
+
+      - name: Run test suite
+        env:
+          # Minimal env so imports don't crash — no real API calls made
+          ANTHROPIC_API_KEY: "test-key"
+          SUPABASE_URL: "https://fake.supabase.co"
+          SUPABASE_KEY: "fake-key"
+          ALPACA_API_KEY: "fake-alpaca-key"
+          ALPACA_SECRET_KEY: "fake-alpaca-secret"
+          ALPACA_PAPER: "true"
+          DASHBOARD_PASSWORD: "test"
+        run: |
+          pytest tests/ -v --tb=short --no-header \
+            -p no:warnings \
+            2>&1 | tee test_output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload test output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: test_output.txt
+          retention-days: 7
