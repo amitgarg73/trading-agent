@@ -1,7 +1,7 @@
 """
 Universe Refresh Agent — runs weekly (Monday 8:30 AM ET).
-Fetches S&P 500 + Nasdaq 100 from Wikipedia, adds curated high-momentum
-tickers, screens for liquidity + volatility, saves to Supabase.
+Screens the full static UNIVERSE (settings.py) + curated high-momentum tickers
+for liquidity + volatility, sorts by ATR%, saves to Supabase.
 
 Criteria:
   price       $5 – $500
@@ -15,11 +15,7 @@ from __future__ import annotations
 import time
 import yfinance as yf
 import pandas as pd
-import requests
-from io import StringIO
 from datetime import date
-
-_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; trading-agent/1.0)"}
 
 MIN_PRICE      = 5.0
 MAX_PRICE      = 500.0
@@ -47,37 +43,6 @@ CURATED = [
     "CBRS",
 ]
 
-
-def _wiki_tables(url: str) -> list:
-    try:
-        resp = requests.get(url, headers=_HEADERS, timeout=15)
-        resp.raise_for_status()
-        return pd.read_html(StringIO(resp.text))
-    except Exception as e:
-        raise RuntimeError(f"Wikipedia fetch failed: {e}")
-
-
-def _fetch_sp500() -> list[str]:
-    try:
-        tables = _wiki_tables("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        df = tables[0]
-        return df["Symbol"].str.replace(".", "-", regex=False).tolist()
-    except Exception as e:
-        print(f"        ⚠️  S&P 500 fetch failed: {e}")
-        return []
-
-
-def _fetch_nasdaq100() -> list[str]:
-    try:
-        tables = _wiki_tables("https://en.wikipedia.org/wiki/Nasdaq-100")
-        for t in tables:
-            for col in ("Ticker", "Symbol"):
-                if col in t.columns:
-                    return t[col].tolist()
-        return []
-    except Exception as e:
-        print(f"        ⚠️  Nasdaq 100 fetch failed: {e}")
-        return []
 
 
 def _screen_batch(batch: list[str]) -> tuple[list[dict], int]:
@@ -149,22 +114,11 @@ def _score(ticker: str, df: pd.DataFrame) -> dict | None:
 
 
 def run() -> list[str]:
-    print("\n[ Universe Refresh ] Fetching index components...")
+    print("\n[ Universe Refresh ] Building screening pool...")
 
-    sp500    = _fetch_sp500()
-    ndx100   = _fetch_nasdaq100()
-
-    # If Wikipedia fetches both fail, fall back to the full static universe
-    # so the refresh still produces a meaningful screened list
-    if not sp500 and not ndx100:
-        from config.settings import UNIVERSE as _STATIC
-        print(f"        ⚠️  Both index fetches failed — falling back to {len(_STATIC)} static tickers")
-        combined = list(dict.fromkeys(_STATIC + CURATED))
-    else:
-        combined = list(dict.fromkeys(sp500 + ndx100 + CURATED))
-
-    print(f"        S&P 500: {len(sp500)} | Nasdaq 100: {len(ndx100)} | "
-          f"Curated: {len(CURATED)} | Combined: {len(combined)}")
+    from config.settings import UNIVERSE as _STATIC
+    combined = list(dict.fromkeys(_STATIC + CURATED))
+    print(f"        Static universe: {len(_STATIC)} | Curated additions: {len(CURATED)} | Combined: {len(combined)}")
 
     print(f"        Screening {len(combined)} tickers "
           f"(price ${MIN_PRICE}–${MAX_PRICE}, vol ≥{MIN_AVG_VOLUME:,}, ATR ≥{MIN_ATR_PCT}%)...")
