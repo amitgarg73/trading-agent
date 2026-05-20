@@ -196,5 +196,5 @@ UNIVERSE = STOCK_UNIVERSE + ETF_UNIVERSE
 
 # Scheduler (UTC times, assuming EDT = UTC-4)
 PREMARKET_UTC  = "14:00"   # 10:00 AM ET (delayed from 9:00 — Alpaca spreads stabilize ~30 min after open)
-INTRADAY_UTC   = "*/30 13-20 * * 1-5"  # every 30min, Mon-Fri
+INTRADAY_UTC   = "*/15 14-19 * * 1-5"  # every 15min, Mon-Fri
 EOD_UTC        = "20:30"   # 4:30 PM ET
