@@ -349,7 +349,7 @@ if page == "Summary":
                 "Actual P&L": fmt_pnl(pnl_val) if pnl_val != 0 else "—",
             })
         df_plan = pd.DataFrame(plan_rows)
-        st.dataframe(df_plan, use_container_width=True, hide_index=True)
+        st.dataframe(df_plan, width="stretch", hide_index=True)
 
         with st.expander("💬 Claude's Reasoning"):
             for t in deduped_plan:
@@ -414,7 +414,7 @@ if page == "Summary":
             margin=dict(l=0, r=0, t=10, b=0),
             paper_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_hm, use_container_width=True)
+        st.plotly_chart(fig_hm, width="stretch")
         st.caption("Block size = position size. Color = P&L (green = profit, red = loss, gray = pending/flat).")
     else:
         st.info("No trades to display yet.")
@@ -671,7 +671,7 @@ elif page == "Today":
                          "above_vwap", "rs_vs_spy", "price", "atr_pct", "signals"]
             df_scan = df_scan[[c for c in show_cols if c in df_scan.columns]]
             df_scan = add_company_col(df_scan)
-            st.dataframe(df_scan, use_container_width=True, height=320)
+            st.dataframe(df_scan, width="stretch", height=320)
             st.caption(
                 f"Sorted by order Claude saw them: above VWAP first, then RS vs SPY descending. "
                 f"ml_score = P(hit +2% intraday). technical_score = scanner score ({STRATEGY_MIN_SCORE}–10 after pre-filter)."
@@ -709,7 +709,7 @@ elif page == "Today":
             df_t = add_company_col(df_t)
             df_t["position_size"]    = df_t["position_size"].apply(lambda x: f"${x:,.0f}")
             df_t["estimated_profit"] = df_t["estimated_profit"].apply(lambda x: f"${x:,.0f}")
-            st.dataframe(df_t, use_container_width=True)
+            st.dataframe(df_t, width="stretch")
 
             with st.expander("💬 Claude's Reasoning per Trade"):
                 for t in trades:
@@ -723,14 +723,12 @@ elif page == "Today":
                     )
 
         if sector_blocked:
-            with st.expander(f"🏭 Sector Cap — {len(sector_blocked)} ticker(s) blocked",
-                             help="V2d: max 3 positions per sector. Lowest-confidence excess trades dropped."):
+            with st.expander(f"🏭 Sector Cap — {len(sector_blocked)} ticker(s) blocked"):
                 for s in sector_blocked:
                     st.markdown(f"- **{s['ticker']}** ({s['sector']}): {s['reason']}")
 
         if guardrail_blocked:
-            with st.expander(f"🛑 Guardrails — {len(guardrail_blocked)} ticker(s) blocked",
-                             help="V5: safety checks — action whitelist, ticker whitelist, duplicate guard, price sanity, capital check, daily loss limit."):
+            with st.expander(f"🛑 Guardrails — {len(guardrail_blocked)} ticker(s) blocked"):
                 for g in guardrail_blocked:
                     st.markdown(f"- **{g['ticker']}**: {g['reason']}")
 
@@ -806,7 +804,7 @@ elif page == "Today":
         df_cl = df_cl[[c for c in cl_cols if c in df_cl.columns]]
         df_cl = add_company_col(df_cl)
         df_cl["realized_pnl"] = df_cl["realized_pnl"].apply(fmt_pnl)
-        st.dataframe(df_cl, use_container_width=True)
+        st.dataframe(df_cl, width="stretch")
 
     if not open_pos and not run_closed:
         st.info("No positions yet.")
@@ -868,7 +866,7 @@ elif page == "Positions":
                                           "shares", "realized_pnl", "close_reason", "closed_at"]]
         df = add_company_col(df)
         df["realized_pnl"] = df["realized_pnl"].apply(fmt_pnl)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
 
 
 # ── PERFORMANCE ───────────────────────────────────────────────────
@@ -1092,7 +1090,7 @@ elif page == "Performance":
                 for k, v in sorted(cr.items(), key=lambda x: -x[1])
             ]
             if cr_rows:
-                st.dataframe(pd.DataFrame(cr_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(cr_rows), width="stretch", hide_index=True)
             if ev.get("best_ticker"):
                 st.success(f"Best: {ev['best_ticker']}  +${ev['best_pnl']:,.2f}")
             if ev.get("worst_ticker"):
@@ -1194,7 +1192,7 @@ elif page == "Performance":
                             "Total":    f"${s['total_pnl']:,.0f}",
                         })
                 if conf_rows:
-                    st.dataframe(pd.DataFrame(conf_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(conf_rows), width="stretch", hide_index=True)
                 if high and low:
                     delta = high["avg_pnl"] - low["avg_pnl"]
                     if delta > 0:
@@ -1272,7 +1270,7 @@ elif page == "Performance":
                                     "P&L":    fmt_pnl(r["pnl"]),
                                     "Note":   note,
                                 })
-                            st.dataframe(pd.DataFrame(rider_rows), use_container_width=True, hide_index=True)
+                            st.dataframe(pd.DataFrame(rider_rows), width="stretch", hide_index=True)
                         else:
                             st.caption("No riders — all positions closed before Tier 1 trigger.")
 
@@ -1332,7 +1330,7 @@ elif page == "Performance":
                             "Total P&L": f"${c['total_pnl']:,.0f}",
                         })
                 if cohort_rows:
-                    st.dataframe(pd.DataFrame(cohort_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(cohort_rows), width="stretch", hide_index=True)
 
                 if above and below:
                     if delta > 10:
@@ -1420,7 +1418,7 @@ elif page == "Performance":
         paper_bgcolor="rgba(0,0,0,0)",
         yaxis=dict(gridcolor="rgba(128,128,128,0.2)"),
     )
-    st.plotly_chart(fig_bar, use_container_width=True)
+    st.plotly_chart(fig_bar, width="stretch")
 
     # ── Portfolio value + cumulative P&L — side by side ──────────
     df["cumulative_pnl"] = df["total_pnl"].cumsum()
@@ -1469,7 +1467,7 @@ elif page == "Performance":
             ),
             legend=dict(orientation="h", y=-0.2, x=0),
         )
-        st.plotly_chart(fig_pv, use_container_width=True)
+        st.plotly_chart(fig_pv, width="stretch")
 
     with ch_right:
         st.subheader("Cumulative P&L")
@@ -1512,14 +1510,14 @@ elif page == "Performance":
             ),
             showlegend=False,
         )
-        st.plotly_chart(fig_cum, use_container_width=True)
+        st.plotly_chart(fig_cum, width="stretch")
 
     st.subheader("Daily Log")
     display = df[["date", "total_pnl", "total_trades", "win_count", "loss_count",
                   "win_rate", "ending_capital", "notes"]].sort_values("date", ascending=False)
     display["total_pnl"]       = display["total_pnl"].apply(fmt_pnl)
     display["ending_capital"]  = display["ending_capital"].apply(lambda x: f"${x:,.0f}")
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
 
 
 # ── SCAN LOG ─────────────────────────────────────────────────────
@@ -1554,6 +1552,6 @@ elif page == "Scan Log":
                     show_cols = ["ticker", "price", "technical_score", "rsi", "volume_ratio", "atr_pct"]
                     df = df[[c for c in show_cols if c in df.columns]]
                     df = add_company_col(df)
-                    st.dataframe(df, use_container_width=True)
+                    st.dataframe(df, width="stretch")
             else:
                 st.json(results)
