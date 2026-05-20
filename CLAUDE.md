@@ -29,3 +29,6 @@ Do not deploy real capital until all criteria pass.
 ### P0 — Pre-real-money
 - **P&L reconciliation:** Pull Alpaca `get_account().equity` at EOD as source of truth; replace fill-price calc. Add `friction_breakdown` dict (commission, spread, slippage, entry buffer) to daily_performance.
 
+### P1 — Capability expansion
+- **Intraday trade entries:** Run scan + strategy + risk + order flow inside the intraday agent (every 30 min). Only enter if: (a) daily realized P&L is not negative, (b) open position count is below MAX_POSITIONS, (c) sector guard passes. Factor time-of-day into targets — shorter window to close means tighter targets. Adds compounding risk; validate on paper for 2 weeks before enabling on real capital.
+
