@@ -353,10 +353,13 @@ if page == "Summary":
             seen_t.add(t["ticker"])
             deduped_plan.append(t)
 
-    st.subheader(f"📋 Today's Plan — {len(deduped_plan)} trade{'s' if len(deduped_plan) != 1 else ''} selected")
-    if deduped_plan:
+    # Only show trades that were actually executed (have a real position)
+    executed_plan = [t for t in deduped_plan if trade_status(t["id"])[0] != "⏳ Pending"]
+
+    st.subheader(f"📋 Today's Plan — {len(executed_plan)} trade{'s' if len(executed_plan) != 1 else ''} executed")
+    if executed_plan:
         plan_rows = []
-        for t in deduped_plan:
+        for t in executed_plan:
             status_label, pnl_val = trade_status(t["id"])
             plan_rows.append({
                 "Status":     status_label,
@@ -374,7 +377,7 @@ if page == "Summary":
         st.dataframe(df_plan, width="stretch", hide_index=True)
 
         with st.expander("💬 Claude's Reasoning"):
-            for t in deduped_plan:
+            for t in executed_plan:
                 conf_color = "green" if t["confidence"] == "HIGH" else (
                              "orange" if t["confidence"] == "MEDIUM" else "gray")
                 st.markdown(
@@ -383,6 +386,8 @@ if page == "Summary":
                     f"{t.get('reasoning', '—')}",
                     unsafe_allow_html=True
                 )
+    elif deduped_plan:
+        st.caption("No trades executed yet today.")
     else:
         st.caption("No trade plan yet.")
 
@@ -390,7 +395,7 @@ if page == "Summary":
 
     # ── Trade Heatmap ─────────────────────────────────────────────
     st.subheader("🗺️ Trade Heatmap — P&L by Stock")
-    all_heatmap_trades = deduped_plan if deduped_plan else trades
+    all_heatmap_trades = executed_plan if executed_plan else trades
     if all_heatmap_trades:
         hm_labels, hm_pnl, hm_size, hm_text, hm_hover = [], [], [], [], []
         for t in all_heatmap_trades:

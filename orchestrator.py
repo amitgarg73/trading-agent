@@ -13,7 +13,7 @@ from agents import strategy, risk, sector_guard, guardrails, performance, market
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
-from config.settings import UNIVERSE, STRATEGY_MIN_SCORE
+from config.settings import UNIVERSE, STRATEGY_MIN_SCORE, TOTAL_CAPITAL, MAX_POSITIONS, POSITION_SIZE_BY_CONFIDENCE
 from agents import alpaca_broker
 
 
@@ -105,6 +105,16 @@ def premarket(broker: str = "simulation"):
 
     today_max_positions = mkt["max_positions"]
     quiet_day           = mkt.get("quiet_day", False)
+
+    # Cap by available capital — never plan more trades than capital can fund
+    _open_pos    = db.select("positions", filters={"status": "OPEN"})
+    _deployed    = sum(float(p.get("position_size") or 0) for p in _open_pos)
+    _available   = TOTAL_CAPITAL - _deployed
+    _min_size    = min(POSITION_SIZE_BY_CONFIDENCE.values())
+    _capital_cap = max(0, int(_available // _min_size))
+    today_max_positions = min(today_max_positions, _capital_cap, MAX_POSITIONS)
+    print(f"        Capital: ${_available:,.0f} available → max {today_max_positions} positions "
+          f"(market gate: {mkt['max_positions']}, capital gate: {_capital_cap})")
 
     # 1. Scan
     print("[ 1/4 ] Running market scan...")
