@@ -18,7 +18,7 @@ MAX_POSITION_PCT     = 0.07       # max 7% of capital per position (fits 15 posi
 MIN_POSITION_PCT     = 0.05       # min 5% of capital per position
 MAX_POSITIONS        = 15         # max concurrent positions
 MAX_LOSS_PER_TRADE   = 0.0067     # stop loss: 0.67% of position size (maintains 3:1 R:R with 2% target)
-MIN_REWARD_RISK            = 3.0   # minimum reward:risk ratio (2% target / 0.67% stop = 3:1)
+MIN_REWARD_RISK            = 2.9   # minimum reward:risk ratio (~3:1; 2% target / 0.67% stop = 2.985 due to rounding)
 QUIET_DAY_MIN_REWARD_RISK  = 2.0   # relaxed R:R on quiet days (Fear&Greed < 35) — 2:1 still profitable at 80% win rate
 QUIET_DAY_FG_THRESHOLD     = 35    # Fear&Greed below this = quiet day
 TARGET_PCT           = 0.02       # 2% profit target per trade (lowered from 3% — more achievable intraday move)

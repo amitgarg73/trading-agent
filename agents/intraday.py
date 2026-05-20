@@ -205,27 +205,32 @@ def _maybe_run_intraday_scan(broker: str):
         ]
 
         # Merge: momentum first (higher conviction), dedupe by ticker
-        seen    = {c["ticker"] for c in momentum_candidates}
-        merged  = momentum_candidates + [c for c in technical_candidates if c["ticker"] not in seen]
-        merged  = merged[:available_slots * 3]  # cap tokens sent to Claude
+        seen             = {c["ticker"] for c in momentum_candidates}
+        technical_extra  = [c for c in technical_candidates if c["ticker"] not in seen]
+        token_cap        = available_slots * 3   # limit tokens sent to Claude
+        merged           = (momentum_candidates + technical_extra)[:token_cap]
 
         if not merged:
             print("  📊 Intraday scan: no candidates found")
             _save_scan_result(today, now_utc, {"candidates": 0, "momentum": 0})
             return None
 
-        print(f"        Total candidates: {len(merged)} "
-              f"({len(momentum_candidates)} momentum + {len(merged)-len(momentum_candidates)} technical)")
+        print(f"        Total candidates sent to Claude: {len(merged)} "
+              f"({min(len(momentum_candidates), token_cap)} momentum + {len(technical_extra[:max(0, token_cap-len(momentum_candidates))])} technical)")
+
+        # Respect market context max_positions (CAUTION may cap below available_slots)
+        ctx_max  = mkt.get("max_positions") or available_slots
+        strategy_slots = min(available_slots, ctx_max)
 
         market_note = (
             f"{mkt.get('summary', '')}\n\n"
             f"INTRADAY SCAN #{run_num}: Focus on momentum plays already moving today. "
             f"Prefer stocks with today_pct_change > {int(MIN_INTRADAY_MOVE_PCT)}% and rs_vs_spy > 1.5. "
-            f"Targets are capped at 1% (less time remaining in session)."
+            f"Use standard 2% targets and 0.67% stops to maintain 3:1 reward:risk."
         )
         strategy_out = strategy.run(merged, market_summary=market_note,
-                                    max_positions=available_slots)
-        trades = (strategy_out.get("trades") or [])[:available_slots]
+                                    max_positions=strategy_slots)
+        trades = (strategy_out.get("trades") or [])[:strategy_slots]
 
         if not trades:
             print("  📊 Intraday scan: no trades selected by strategy")
@@ -248,7 +253,7 @@ def _maybe_run_intraday_scan(broker: str):
                                "rejected": len(trades)})
             return None
 
-        plan   = db.insert("plans", {"date": today, "scan_type": "intraday_scan",
+        plan   = db.insert("trade_plans", {"date": today, "scan_type": "intraday_scan",
                                      "status": "EXECUTED", "trade_count": len(approved)})
         # Disable partial profit split — 1% target == Leg A target, splitting is redundant
         opened = open_positions(plan["id"], approved, broker=broker, enable_partial=False)
