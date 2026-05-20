@@ -11,25 +11,68 @@ from config.settings import DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET
 def _reconcile_with_alpaca():
     """
     Close any Supabase OPEN positions that don't exist in Alpaca.
-    Catches the rare case where a bracket order was submitted but the entry leg never filled.
+    Distinguishes two cases:
+      - Entry filled + bracket closed (stop/target fired) → mark STOP/TARGET with real P&L
+      - Entry never filled → mark UNFILLED with $0 P&L
     Only runs in Alpaca mode (called explicitly).
     """
     from agents import alpaca_broker
+    from alpaca.trading.requests import GetOrdersRequest
+    from alpaca.trading.enums import QueryOrderStatus
 
     alpaca_tickers = alpaca_broker.get_open_tickers()
     open_positions = db.select("positions", filters={"status": "OPEN"})
 
+    if not open_positions:
+        return
+
+    # Fetch today's filled sell orders once — covers stop/target exits
+    try:
+        all_orders = alpaca_broker._client().get_orders(
+            GetOrdersRequest(status=QueryOrderStatus.ALL, limit=50)
+        )
+        today = datetime.utcnow().date().isoformat()
+        filled_sells = {
+            str(o.symbol): o
+            for o in all_orders
+            if str(o.side) == "sell"
+            and str(o.status) == "filled"
+            and (o.filled_at or o.submitted_at or "").startswith(today[:10])
+        }
+    except Exception:
+        filled_sells = {}
+
     for pos in open_positions:
         if pos["ticker"] not in alpaca_tickers:
-            print(f"  ⚠️  Reconciliation: {pos['ticker']} is OPEN in DB but not in Alpaca — marking UNFILLED")
-            db.update("positions", {"id": pos["id"]}, {
-                "status":         "CLOSED",
-                "close_reason":   "UNFILLED",
-                "exit_mechanism": "UNFILLED",
-                "closed_at":      datetime.utcnow().isoformat(),
-                "realized_pnl":   0,
-                "close_price":    pos.get("entry_price"),
-            })
+            sell_order = filled_sells.get(pos["ticker"])
+            if sell_order and sell_order.filled_avg_price:
+                # Entry filled, bracket exited via stop or target
+                close_price = float(sell_order.filled_avg_price)
+                type_str    = str(sell_order.order_type).lower()
+                mechanism   = "TARGET" if "limit" in type_str else ("NATIVE_TRAIL" if "trailing" in type_str else "STOP")
+                entry       = pos.get("entry_price") or 0
+                shares      = pos.get("shares") or 0
+                realized    = round((close_price - entry) * shares, 2)
+                print(f"  📋 Reconciliation: {pos['ticker']} closed via {mechanism} @ ${close_price:.2f} | P&L: ${realized:+.2f}")
+                db.update("positions", {"id": pos["id"]}, {
+                    "status":         "CLOSED",
+                    "close_reason":   mechanism,
+                    "exit_mechanism": mechanism,
+                    "closed_at":      datetime.utcnow().isoformat(),
+                    "realized_pnl":   realized,
+                    "close_price":    close_price,
+                })
+            else:
+                # Entry never filled
+                print(f"  ⚠️  Reconciliation: {pos['ticker']} is OPEN in DB but not in Alpaca — marking UNFILLED")
+                db.update("positions", {"id": pos["id"]}, {
+                    "status":         "CLOSED",
+                    "close_reason":   "UNFILLED",
+                    "exit_mechanism": "UNFILLED",
+                    "closed_at":      datetime.utcnow().isoformat(),
+                    "realized_pnl":   0,
+                    "close_price":    pos.get("entry_price"),
+                })
 
 
 def _today_realized_pnl() -> float:
