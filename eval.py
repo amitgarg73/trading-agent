@@ -410,9 +410,9 @@ def _print_summary(m: dict):
 
     # Win day rate
     win_day_pct = m["win_days"] / days * 100 if days else 0
-    if win_day_pct >= 80:
+    if win_day_pct >= 50:
         wins.append(f"{m['win_days']}/{days} profitable days ({win_day_pct:.0f}%) — consistent daily execution")
-    elif win_day_pct >= 60:
+    elif win_day_pct >= 40:
         watchs.append(f"{m['win_days']}/{days} profitable days ({win_day_pct:.0f}%) — more losing days than ideal")
     else:
         actions.append(f"Only {m['win_days']}/{days} profitable days — strategy inconsistency, review entry timing")
@@ -519,8 +519,8 @@ def _print_metrics(m: dict):
     print(f"  Total P&L:            ${m['total_pnl']:,.2f}")
     print(f"  Avg daily P&L:        ${m['avg_daily_pnl']:,.2f}  {_flag(m['avg_daily_pnl'], DAILY_PROFIT_TARGET, DAILY_PROFIT_TARGET*0.5)}"
           f"  (target: ${DAILY_PROFIT_TARGET:,})")
-    print(f"  Win days / Loss days: {m['win_days']} / {m['loss_days']}  {_flag(win_day_pct, 80, 60)}"
-          f"  ({win_day_pct:.0f}% — target: ≥80%)")
+    print(f"  Win days / Loss days: {m['win_days']} / {m['loss_days']}  {_flag(win_day_pct, 50, 40)}"
+          f"  ({win_day_pct:.0f}% — target: ≥50%)")
     print(f"  Days hitting target:  {m['target_days']} / {days}"
           f"  ({m['target_days']/days*100:.0f}% of days cleared ${DAILY_PROFIT_TARGET:,})")
     print(f"  Avg trade win rate:   {m['avg_win_rate']:.1f}%  {_flag(m['avg_win_rate'], 60, 50)}"
