@@ -459,14 +459,14 @@ elif page == "Today":
     skipped       = results.get("skipped", False)
     vix           = results.get("vix")
     fear_greed    = results.get("fear_greed")
-    econ_events   = results.get("economic_events", [])
-    futures       = results.get("futures", {})
-    futures_bias  = results.get("futures_bias", "NEUTRAL")
-    intl          = results.get("intl_markets", {})
-    candidates        = results.get("candidates", [])
-    blackout          = results.get("blackout_tickers", [])
-    sector_blocked    = results.get("sector_blocked", [])
-    guardrail_blocked = results.get("guardrail_blocked", [])
+    econ_events   = results.get("economic_events") or []
+    futures       = results.get("futures") or {}
+    futures_bias  = results.get("futures_bias") or "NEUTRAL"
+    intl          = results.get("intl_markets") or {}
+    candidates        = results.get("candidates") or []
+    blackout          = results.get("blackout_tickers") or []
+    sector_blocked    = results.get("sector_blocked") or []
+    guardrail_blocked = results.get("guardrail_blocked") or []
 
     # ── Header ─────────────────────────────────────────────────────
     if is_stale and results:
@@ -1539,8 +1539,8 @@ elif page == "Scan Log":
             elif scan["scan_type"] == "premarket" and "candidates" in results:
                 vix = results.get("vix")
                 futures_bias = results.get("futures_bias", "")
-                blackout = results.get("blackout_tickers", [])
-                cands = results.get("candidates", [])
+                blackout = results.get("blackout_tickers") or []
+                cands = results.get("candidates") or []
 
                 m1, m2, m3 = st.columns(3)
                 m1.metric("VIX", f"{vix:.1f}" if vix else "N/A")
