@@ -1139,6 +1139,27 @@ elif page == "Performance":
                 for h in halted_ev:
                     st.caption(f"  → {h['date']}  {h.get('reason', '')}  {'🛑 ACTIVE' if h.get('active') else '✅ cleared'}")
 
+                # ── Broker friction gap ───────────────────────────────
+                _gap_rows = df[df["friction_gap"].notna()] if "friction_gap" in df.columns else pd.DataFrame()
+                if not _gap_rows.empty:
+                    _latest_gap   = float(_gap_rows.iloc[-1]["friction_gap"])
+                    _latest_eq    = float(_gap_rows.iloc[-1].get("alpaca_equity") or 0)
+                    _avg_gap      = float(_gap_rows["friction_gap"].mean())
+                    _gap_sign     = "+" if _latest_gap >= 0 else ""
+                    _gap_icon     = "✅" if abs(_latest_gap) < 50 else ("⚠️" if abs(_latest_gap) < 200 else "❌")
+                    st.markdown(
+                        f"{_gap_icon} Broker friction gap (latest): **{_gap_sign}${_latest_gap:,.2f}**  "
+                        f"<span style='color:#888;font-size:0.82em'>— Alpaca equity ${_latest_eq:,.2f} minus our P&L calc. "
+                        f"Avg over window: {'+' if _avg_gap >= 0 else ''}${_avg_gap:,.2f}. "
+                        f"<$50 = ✅ clean · $50–$200 = ⚠️ monitor · >$200 = ❌ investigate.</span>",
+                        unsafe_allow_html=True,
+                    )
+                    if len(_gap_rows) > 1:
+                        st.caption("  Gap by day: " + "  ·  ".join(
+                            f"{r['date']} {'+' if r['friction_gap'] >= 0 else ''}${r['friction_gap']:,.2f}"
+                            for _, r in _gap_rows.iterrows()
+                        ))
+
             with qual_col:
                 st.markdown("**Claude quality checks**  — *validates Claude is following the strategy rules*")
                 rr_v = ev.get("rr_violations", [])
