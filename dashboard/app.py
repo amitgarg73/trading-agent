@@ -86,6 +86,12 @@ if st.sidebar.button("🔄 Refresh"):
     st.rerun()
 st.sidebar.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 
+_auto_refresh = st.sidebar.selectbox(
+    "Auto-refresh", ["Off", "30s", "60s", "5 min"], index=2,
+    help="Automatically reload data from DB on this interval."
+)
+_refresh_secs = {"Off": 0, "30s": 30, "60s": 60, "5 min": 300}.get(_auto_refresh, 0)
+
 
 # ── Helpers ───────────────────────────────────────────────────────
 def fmt_pnl(val):
@@ -1555,3 +1561,9 @@ elif page == "Scan Log":
                     st.dataframe(df, width="stretch")
             else:
                 st.json(results)
+
+# ── Auto-refresh ──────────────────────────────────────────────────
+if _refresh_secs > 0:
+    import time
+    time.sleep(_refresh_secs)
+    st.rerun()
