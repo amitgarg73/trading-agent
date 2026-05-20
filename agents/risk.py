@@ -6,11 +6,11 @@ from __future__ import annotations
 from config.settings import (
     TOTAL_CAPITAL, MAX_POSITION_PCT, MIN_POSITION_PCT,
     MAX_LOSS_PER_TRADE, MIN_REWARD_RISK, MAX_POSITIONS,
-    POSITION_SIZE_BY_CONFIDENCE,
+    POSITION_SIZE_BY_CONFIDENCE, QUIET_DAY_MIN_REWARD_RISK,
 )
 
 
-def _validate_trade(trade: dict) -> tuple[bool, str]:
+def _validate_trade(trade: dict, min_rr: float = MIN_REWARD_RISK) -> tuple[bool, str]:
     entry  = trade.get("entry_price", 0)
     target = trade.get("target_price", 0)
     stop   = trade.get("stop_loss", 0)
@@ -55,8 +55,8 @@ def _validate_trade(trade: dict) -> tuple[bool, str]:
     # Reward:risk check (round to 2dp — price discreteness means ratio is never exact)
     if potential_loss > 0:
         rr = potential_gain / potential_loss
-        if round(rr, 2) < MIN_REWARD_RISK:
-            return False, f"Reward:risk {rr:.2f} below minimum {MIN_REWARD_RISK}"
+        if round(rr, 2) < min_rr:
+            return False, f"Reward:risk {rr:.2f} below minimum {min_rr}"
 
     return True, "OK"
 
@@ -77,14 +77,17 @@ def _compute_shares(trade: dict) -> int:
     return max(1, int(size / entry))
 
 
-def run(strategy_output: dict) -> dict:
+def run(strategy_output: dict, quiet_day: bool = False) -> dict:
     raw_trades = strategy_output.get("trades", [])
     approved   = []
     rejected   = []
+    min_rr     = QUIET_DAY_MIN_REWARD_RISK if quiet_day else MIN_REWARD_RISK
+    if quiet_day:
+        print(f"        🤫 Quiet day mode — R:R floor relaxed to {min_rr} (from {MIN_REWARD_RISK})")
 
     for trade in raw_trades[:MAX_POSITIONS]:
         trade = _apply_confidence_sizing(trade)
-        ok, reason = _validate_trade(trade)
+        ok, reason = _validate_trade(trade, min_rr=min_rr)
         if ok:
             trade["shares"]  = _compute_shares(trade)
             trade["status"]  = "PLANNED"

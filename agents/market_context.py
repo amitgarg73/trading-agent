@@ -45,6 +45,7 @@ FUTURES_CAUTION = -0.5
 FG_EXTREME_FEAR = 25
 FG_FEAR         = 45
 FG_EXTREME_GREED = 80
+from config.settings import QUIET_DAY_FG_THRESHOLD
 
 # ── Economic calendar — update annually from official sources ──────────────
 # FOMC decision days: federalreserve.gov/monetarypolicy/fomccalendars.htm
@@ -290,13 +291,18 @@ def run() -> dict:
     print(f"        🌍 International: {intl_str}")
     if econ_events:
         print(f"        📅 Economic events: {', '.join(econ_events)} — positions reduced")
-    print(f"        Decision: {decision} | Max positions today: {max_positions}")
+    fg_value  = fear_greed["value"] if fear_greed else None
+    quiet_day = fg_value is not None and fg_value < QUIET_DAY_FG_THRESHOLD
+
+    print(f"        Decision: {decision} | Max positions today: {max_positions}"
+          + (" | 🤫 Quiet day — relaxed R:R (2:1)" if quiet_day else ""))
     if skip_reason:
         print(f"        ⛔ {skip_reason}")
 
     return {
         "decision":        decision,
         "max_positions":   max_positions,
+        "quiet_day":       quiet_day,
         "vix":             vix,
         "fear_greed":      fear_greed,
         "economic_events": econ_events,

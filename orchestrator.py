@@ -81,6 +81,7 @@ def premarket(broker: str = "simulation"):
         return
 
     today_max_positions = mkt["max_positions"]
+    quiet_day           = mkt.get("quiet_day", False)
 
     # 1. Scan
     print("[ 1/4 ] Running market scan...")
@@ -198,7 +199,7 @@ def premarket(broker: str = "simulation"):
 
     # 3. Risk validation
     print("[ 3/4 ] Running risk agent...")
-    risk_out = risk.run(strategy_out)
+    risk_out = risk.run(strategy_out, quiet_day=quiet_day)
     approved = risk_out["approved_trades"]
     rejected = risk_out["rejected_trades"]
     print(f"        Approved: {len(approved)} | Rejected: {len(rejected)}")
