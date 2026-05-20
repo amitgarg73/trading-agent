@@ -75,62 +75,80 @@ NFP_DATES = {
 }
 
 
-def _fetch_vix() -> Optional[float]:
+_FUTURES_MAP = {"S&P500": "ES=F", "Nasdaq": "NQ=F", "Dow": "YM=F"}
+_INTL_MAP    = {
+    "Nikkei (Japan)":  "^N225",
+    "FTSE (UK)":       "^FTSE",
+    "DAX (Germany)":   "^GDAXI",
+    "Hang Seng (HK)":  "^HSI",
+    "Shanghai":        "000001.SS",
+}
+
+
+def _fetch_market_data() -> dict:
+    """
+    Single batched yfinance download for VIX, futures, and international markets.
+    One request instead of 9 eliminates Invalid Crumb rate-limit errors.
+    """
+    all_syms = ["^VIX"] + list(_FUTURES_MAP.values()) + list(_INTL_MAP.values())
     try:
-        df = yf.download("^VIX", period="2d", interval="1d", progress=False)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        if df.empty:
-            return None
-        return round(float(df["Close"].iloc[-1]), 2)
+        raw = yf.download(all_syms, period="5d", interval="1d",
+                          progress=False, group_by="ticker")
     except Exception:
-        return None
+        return {"vix": None, "futures": {}, "intl": {}}
 
-
-def _fetch_futures() -> dict:
-    tickers = {"S&P500": "ES=F", "Nasdaq": "NQ=F", "Dow": "YM=F"}
-    results = {}
-    for name, symbol in tickers.items():
+    def _sym_close(sym: str) -> Optional[pd.Series]:
+        """Extract Close series for one ticker from the multi-ticker DataFrame."""
         try:
-            # period="5d" ensures 2+ trading days even on Mondays or after holidays
-            df = yf.download(symbol, period="5d", interval="1d", progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            if len(df) >= 2:
-                prev  = float(df["Close"].iloc[-2])
-                curr  = float(df["Close"].iloc[-1])
-                change_pct = round((curr - prev) / prev * 100, 2)
-                results[name] = {"price": round(curr, 2), "change_pct": change_pct}
-            else:
-                print(f"        ⚠️  Futures {name} ({symbol}): insufficient data ({len(df)} rows)")
-        except Exception as e:
-            print(f"        ⚠️  Futures {name} ({symbol}): {e}")
-    return results
-
-
-def _fetch_intl_markets() -> dict:
-    """Key international indices as proxies."""
-    tickers = {
-        "Nikkei (Japan)":  "^N225",
-        "FTSE (UK)":       "^FTSE",
-        "DAX (Germany)":   "^GDAXI",
-        "Hang Seng (HK)":  "^HSI",
-        "Shanghai":        "000001.SS",
-    }
-    results = {}
-    for name, symbol in tickers.items():
-        try:
-            df = yf.download(symbol, period="2d", interval="1d", progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            if len(df) >= 2:
-                prev  = float(df["Close"].iloc[-2])
-                curr  = float(df["Close"].iloc[-1])
-                change_pct = round((curr - prev) / prev * 100, 2)
-                results[name] = {"change_pct": change_pct}
+            if isinstance(raw.columns, pd.MultiIndex):
+                # group_by="ticker" → (ticker, column)
+                col = (sym, "Close")
+                if col in raw.columns:
+                    return raw[col].dropna()
+            elif "Close" in raw.columns:
+                return raw["Close"].dropna()
         except Exception:
             pass
-    return results
+        return None
+
+    # VIX
+    vix = None
+    try:
+        s = _sym_close("^VIX")
+        if s is not None and len(s) >= 1:
+            vix = round(float(s.iloc[-1]), 2)
+    except Exception:
+        pass
+
+    # Futures — need 2 rows for prev/curr comparison
+    futures = {}
+    for name, sym in _FUTURES_MAP.items():
+        try:
+            s = _sym_close(sym)
+            if s is not None and len(s) >= 2:
+                prev = float(s.iloc[-2])
+                curr = float(s.iloc[-1])
+                change_pct = round((curr - prev) / prev * 100, 2)
+                futures[name] = {"price": round(curr, 2), "change_pct": change_pct}
+            elif s is not None:
+                print(f"        ⚠️  Futures {name} ({sym}): insufficient data ({len(s)} rows)")
+        except Exception as e:
+            print(f"        ⚠️  Futures {name} ({sym}): {e}")
+
+    # International markets
+    intl = {}
+    for name, sym in _INTL_MAP.items():
+        try:
+            s = _sym_close(sym)
+            if s is not None and len(s) >= 2:
+                prev = float(s.iloc[-2])
+                curr = float(s.iloc[-1])
+                change_pct = round((curr - prev) / prev * 100, 2)
+                intl[name] = {"change_pct": change_pct}
+        except Exception:
+            pass
+
+    return {"vix": vix, "futures": futures, "intl": intl}
 
 
 def _fetch_fear_greed() -> Optional[dict]:
@@ -177,17 +195,18 @@ def run() -> dict:
     """
     print("[ 0/4 ] Checking market conditions...")
 
-    with ThreadPoolExecutor(max_workers=5) as _pool:
-        _f_vix   = _pool.submit(_fetch_vix)
-        _f_fut   = _pool.submit(_fetch_futures)
-        _f_intl  = _pool.submit(_fetch_intl_markets)
+    # Batch yfinance download (1 request instead of 9) + Fear&Greed + calendar in parallel
+    with ThreadPoolExecutor(max_workers=3) as _pool:
+        _f_mkt   = _pool.submit(_fetch_market_data)
         _f_fg    = _pool.submit(_fetch_fear_greed)
         _f_econ  = _pool.submit(_check_economic_calendar)
-        vix         = _f_vix.result()
-        futures     = _f_fut.result()
-        intl        = _f_intl.result()
+        _mkt        = _f_mkt.result()
         fear_greed  = _f_fg.result()
         econ_events = _f_econ.result()
+
+    vix     = _mkt["vix"]
+    futures = _mkt["futures"]
+    intl    = _mkt["intl"]
 
     # ── VIX gate ──────────────────────────────────────────────────────
     skip_reason   = None

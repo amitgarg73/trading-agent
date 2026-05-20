@@ -187,7 +187,7 @@ if page == "Summary":
     unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in open_pos)
     total_pnl  = realized + unrealized
     pct_return = total_pnl / TOTAL_CAPITAL * 100
-    anticipated = plan["total_estimated_profit"] if plan else 0
+    anticipated = sum(t.get("estimated_profit", 0) or 0 for t in trades)
     coverage    = anticipated / DAILY_PROFIT_TARGET * 100 if anticipated else 0
 
     # Tiered lock-in state for display
