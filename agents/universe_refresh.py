@@ -153,7 +153,16 @@ def run() -> list[str]:
 
     sp500    = _fetch_sp500()
     ndx100   = _fetch_nasdaq100()
-    combined = list(dict.fromkeys(sp500 + ndx100 + CURATED))
+
+    # If Wikipedia fetches both fail, fall back to the full static universe
+    # so the refresh still produces a meaningful screened list
+    if not sp500 and not ndx100:
+        from config.settings import UNIVERSE as _STATIC
+        print(f"        ⚠️  Both index fetches failed — falling back to {len(_STATIC)} static tickers")
+        combined = list(dict.fromkeys(_STATIC + CURATED))
+    else:
+        combined = list(dict.fromkeys(sp500 + ndx100 + CURATED))
+
     print(f"        S&P 500: {len(sp500)} | Nasdaq 100: {len(ndx100)} | "
           f"Curated: {len(CURATED)} | Combined: {len(combined)}")
 

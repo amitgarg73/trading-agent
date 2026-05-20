@@ -35,13 +35,14 @@ def delete(table: str, match: dict) -> list:
     return q.execute().data
 
 
-def select(table: str, filters: Optional[dict] = None, order: Optional[str] = None, limit: Optional[int] = None) -> list:
+def select(table: str, filters: Optional[dict] = None, order: Optional[str] = None,
+           limit: Optional[int] = None, desc: bool = True) -> list:
     q = get_client().table(table).select("*")
     if filters:
         for col, val in filters.items():
             q = q.eq(col, val)
     if order:
-        q = q.order(order, desc=True)
+        q = q.order(order, desc=desc)
     if limit:
         q = q.limit(limit)
     return q.execute().data

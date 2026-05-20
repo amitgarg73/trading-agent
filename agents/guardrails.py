@@ -36,10 +36,16 @@ def _current_price(ticker: str) -> float | None:
     return None
 
 
+_EXCLUDE_CLOSE_REASONS = {"CLEANUP", "UNFILLED"}
+
 def _today_realized_pnl() -> float:
     today = date.today().isoformat()
     closed = db.select("positions", filters={"status": "CLOSED"})
-    today_closed = [p for p in closed if (p.get("closed_at") or "").startswith(today)]
+    today_closed = [
+        p for p in closed
+        if (p.get("closed_at") or "").startswith(today)
+        and p.get("close_reason") not in _EXCLUDE_CLOSE_REASONS
+    ]
     return sum(p.get("realized_pnl", 0) or 0 for p in today_closed)
 
 

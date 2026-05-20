@@ -145,15 +145,16 @@ class FakeDB:
         return row
 
     def select(self, table: str, filters: dict | None = None,
-               order: str | None = None, limit: int | None = None) -> list:
+               order: str | None = None, limit: int | None = None,
+               desc: bool = True) -> list:
         rows = list(self._tables.get(table, []))
         if filters:
             for k, v in filters.items():
                 rows = [r for r in rows if r.get(k) == v]
         if order:
-            rows = sorted(rows, key=lambda r: r.get(order, ""))
+            rows = sorted(rows, key=lambda r: r.get(order, ""), reverse=desc)
         if limit:
-            rows = rows[-limit:]
+            rows = rows[:limit]
         return rows
 
     def update(self, table: str, match: dict, data: dict) -> None:
