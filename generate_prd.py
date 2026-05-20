@@ -53,7 +53,7 @@ title = doc.add_heading('AI Product Requirements Doc', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = RGBColor(0x1A, 0x3A, 0x6A)
 
-sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.6')
+sub = doc.add_paragraph('AI Trading Agent (PRD) — v5.11')
 sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.bold = True
@@ -94,7 +94,7 @@ doc.add_page_break()
 h1('About')
 body(
     'The AI Trading Agent is a fully autonomous stock trading simulation system. Every weekday '
-    'it wakes up at 9:45 AM ET (skipping first 15 min of wide spreads), checks market conditions (VIX, futures, international markets), '
+    'it wakes up at 9:00 AM ET (before market open, triggered by cron-job.org), checks market conditions (VIX, futures, international markets), '
     'scans 450+ stocks and ETFs for high-conviction setups, filters out earnings-risk tickers, '
     'uses Claude AI to select and validate trades, simulates position management throughout the '
     'day, and produces a complete performance record — all without any human input.'
@@ -254,7 +254,7 @@ add_table(
         ('1M liquidity floor (was 500K)', 'High', 'High', '95%', 'XS', '9.5', 'P1 — shipped (v5.4)'),
         ('Real-time Alpaca price refresh (step 1.8)', 'High', 'High', '90%', 'S', '9.0', 'P1 — shipped (v5.4)'),
         ('Limit order entries (was market orders)', 'High', 'High', '95%', 'S', '9.5', 'P1 — shipped (v5.4)'),
-        ('Premarket 9:45 AM ET (skip first 15 min)', 'High', 'High', '95%', 'XS', '9.5', 'P1 — shipped (v5.4)'),
+        ('Premarket 9:00 AM ET + 60-min mode window', 'High', 'High', '99%', 'XS', '9.9', 'P1 — shipped (v5.11)'),
         ('15-min intraday checks (was 30 min)', 'High', 'Med', '95%', 'XS', '9.0', 'P1 — shipped (v5.4)'),
         ('cron-job.org external triggers', 'High', 'High', '99%', 'S', '9.9', 'P0 — shipped (v5.4)'),
         ('Target 2%, stop 0.67% (3:1 R:R, 25% break-even)', 'High', 'High', '90%', 'XS', '9.0', 'P1 — shipped (v5.5)'),
@@ -308,7 +308,7 @@ add_table(
 doc.add_page_break()
 h1('Technical Architecture')
 body('High-level data flow (premarket pipeline):')
-bullet('cron-job.org → GitHub workflow_dispatch → orchestrator.py (9:45 AM ET)')
+bullet('cron-job.org → GitHub workflow_dispatch → orchestrator.py (9:00 AM ET)')
 bullet('Step 0: market_context agent — checks VIX, futures, international markets → GO/CAUTION/SKIP + max_positions')
 bullet('Step 1: scanner.py — yfinance + ta → scored candidates JSON (450+ tickers, 1M+ avg volume)')
 bullet('Step 1.5: news_intel agent — earnings blackout check + news headlines → filtered candidates')
@@ -516,6 +516,21 @@ body('Phase 2c (v5.2, complete): No-margin enforcement — cumulative capital tr
 body('Phase 2d (v5.3, complete): GitHub Actions retry (3x, 60s backoff); trailing stops — high_watermark tracked per position, effective_stop ratchets up as stock rises, closes on 1% pullback from peak; confidence-weighted sizing — risk agent maps HIGH→$7K, MEDIUM→$6K, LOW→$5K before validation; dashboard annotations — "Trail $X.XX ↑" on In Flight cards, "🔶 Trail Stop" vs "🔴 Stop Hit" in Today\'s Plan status.')
 body('Phase 2e (v5.4, complete): Prompt caching (strategy SYSTEM ephemeral, ~70–75% input token reduction); strategy pre-filter (STRATEGY_MIN_SCORE=4, step 1.75); 1M avg volume liquidity floor; real-time Alpaca price refresh before Claude call (step 1.8); limit order entries at entry × 1.001 (was market orders); premarket moved 9:00 → 9:45 AM ET; intraday every 15 min (was 30 min); cron-job.org external triggers for exact-time scheduling; eval.py date filter fix; futures period fix for Monday availability.')
 body('Phase 2f (v5.5, complete): Target lowered 3% → 2%, stop 1% → 0.67% — maintains 3:1 R:R, break-even at 25% win rate (was 25% break-even, lower risk per trade). ML scorer (step 1.76): HistGradientBoostingClassifier trained on 2y price data for all 429 tickers; 13 features (rsi, macd_hist, bb_pct, vol_ratio, atr_pct, dist_sma20, dist_sma50, mom1, mom5, range_52w_pct, dow, vix, technical_score); AUC 0.78 ± 0.04 (5-fold TimeSeriesSplit CV); top feature: atr_pct (0.165 importance). Monthly retrain workflow (retrain_model.yml): GitHub Actions runs 1st of each month, downloads fresh price history, retrains model, commits updated pkl + feature_columns.json back to main — fully automated, no manual step. Full architecture diagrams (high-level + low-level) regenerated at v5.5 showing all 13 pipeline steps, ML feedback loop, cron-job.org interdependencies.')
+body(
+    'Phase 2g (v5.7–v5.9, complete): VWAP + RS signal enrichment (step 1.85, concurrent with 1.8); '
+    'tiered lock-in (Tier 1 $716 → tighter trail, Tier 2 $1,000 → close all); manual override (stop.yml + restart.yml + halt history); '
+    'eval.py tailwind analysis + VWAP signal quality; dashboard tailwind banners + VWAP badges; '
+    'EOD double-run starting_capital bug fix; chart y-axis zoom; exit reasons table annotations; exit_mechanism integrity fix.'
+)
+body(
+    'Phase 2h (v5.10, complete): Parallelized premarket — steps 1.8 + 1.85 run concurrently via ThreadPoolExecutor; '
+    'current_price guard (or 0) prevents ZeroDivisionError on None Alpaca price; lxml added to requirements.txt for GitHub Actions.'
+)
+body(
+    'Phase 2i (v5.11, complete): 124-test suite + GitHub Actions CI; premarket cron moved to 9:00 AM ET + 60-min mode detection window; '
+    'CLEANUP/UNFILLED excluded from P&L in guardrails + performance; db.select() desc=True + FakeDB ordering fix; '
+    'Alpaca equity reconciliation (friction_gap) in performance.py; Wikipedia removed from universe_refresh — static UNIVERSE + CURATED pool; lxml removed.'
+)
 body('Phase 3: V2e sector rotation scoring, V2f momentum confirmation.')
 body('Phase 3: If win rate > 60% and reward:risk > 2x sustained over 30 live trading days, evaluate real '
      'capital deployment with strict position limits.')
@@ -544,11 +559,12 @@ add_table(
         ('V2c.1 ✅', 'Tune F&G gate: confirming signal only',
          'F&G is lagging — reads low after selloffs during recoveries. New rule: F&G <25 only reduces positions when VIX >20 OR futures bearish. Standalone F&G is context only. Backtest: gate cost -$9,596 → -$2,549; both grade B.',
          'Shipped — v2.3'),
-        ('V3a ✅', 'Dynamic universe refresh — weekly S&P500+Nasdaq100 screener',
-         'Fetches index components from Wikipedia, screens 550+ tickers for ATR≥2%+volume≥500K, saves 450+ to Supabase. '
+        ('V3a ✅', 'Dynamic universe refresh — weekly screener',
+         'Screens static UNIVERSE (429 tickers) + CURATED list (44 high-momentum additions) for ATR≥2%+volume≥500K, saves to Supabase. '
          'orchestrator load_universe() reads Supabase if ≤7 days old, else falls back to static settings.py. '
-         'First run: 553 screened → 458 passed. GitHub Actions fires every Monday 8:30 AM ET.',
-         'Shipped — v3.0'),
+         'No Wikipedia dependency (removed v5.11 — GitHub Actions scraping failures). '
+         'GitHub Actions fires every Monday 8:30 AM ET.',
+         'Shipped — v3.0 (updated v5.11)'),
         ('V2d ✅', 'Sector correlation guard',
          'Max 3 positions per sector. Fetches sector via yfinance for approved trades; ETFs classified separately. '
          'Unknown sector (rate-limited/unclassifiable) passes through — safe fallback. '
@@ -579,6 +595,12 @@ h2('Features & Enhancements')
 add_table(
     ['Item', 'What', 'Why', 'Status'],
     [
+        ('P&L friction breakdown', 'Pull Alpaca get_account().equity at EOD as source of truth; add friction_breakdown dict (commission, spread, slippage, entry buffer) to daily_performance',
+         'Our P&L calc misses fills, commissions, and slippage — Alpaca equity is authoritative; v5.11 adds raw friction_gap; friction_breakdown needs itemized breakdown',
+         'P0 — post-June-1'),
+        ('Daily universe refresh', 'Screen universe + CURATED daily (not just weekly) to catch fast-moving new tickers',
+         'Weekly refresh misses stocks that emerge mid-week (post-earnings gaps, sector rotation breakouts, IPOs); daily screen with ATR/volume filter keeps universe current',
+         'Planned — post-June-1'),
         ('Alerts', 'SMS/email notification on position close',
          'Know immediately when a target is hit or stop is triggered without checking dashboard',
          'Planned — P2'),
@@ -628,10 +650,7 @@ add_table(
          'Acceptable for paper trading simulation; v5.4 adds Alpaca live prices at entry; use paid feed for live trading'),
         ('GitHub Actions scheduler fires 5–15 min late',
          'GitHub cron is not guaranteed to fire at exact time — premarket delay means entries are placed at stale prices',
-         'cron-job.org fires workflow_dispatch at exact UTC times; GitHub schedule kept as backup'),
-        ('Native trailing stop not yet implemented',
-         'alpaca-py bracket orders do not support trail_percent in stop leg; 15-min polling can miss fast reversals',
-         'P0 before real money: build OTO-OCO structure with feature flag + unit tests + 2-week A/B paper test'),
+         'cron-job.org fires workflow_dispatch at exact UTC times (9:00 AM ET); GitHub schedule kept as 9:00 AM ET backup with 60-min detection window (v5.11)'),
     ]
 )
 

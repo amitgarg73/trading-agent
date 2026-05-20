@@ -62,7 +62,7 @@ sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
 sub.runs[0].font.size = Pt(14)
 sub.runs[0].font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.6  ·  Built with Claude Code + Anthropic API')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.11  ·  Built with Claude Code + Anthropic API')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(10)
 meta.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
@@ -82,8 +82,8 @@ body(
     'intervention after setup.'
 )
 body(
-    'The system runs entirely in the cloud. Once deployed, it wakes up on its own schedule, '
-    'makes decisions, stores results, and goes back to sleep. The dashboard shows the full '
+    'The system runs entirely in the cloud. Once deployed, it wakes up at 9:00 AM ET '
+    '(before market open), makes decisions, stores results, and goes back to sleep. The dashboard shows the full '
     'workflow — market conditions, screened stocks, selected trades, and live position P&L — '
     'accessible from any device via a public URL.'
 )
@@ -205,8 +205,8 @@ body(
     'pipeline runs: Premarket, Intraday, and End of Day.'
 )
 
-heading('3a. Premarket Pipeline (9:45 AM ET)', 2)
-body('Runs once at 9:45 AM ET — skips first 15 min of market (widest spreads). Seven stages plus two new pre-entry steps:')
+heading('3a. Premarket Pipeline (9:00 AM ET)', 2)
+body('Runs once at 9:00 AM ET — before market open (9:30 AM ET). cron-job.org fires the exact trigger; GitHub Actions cron serves as a 60-minute-window backup. Seven stages plus two new pre-entry steps:')
 body('Concurrent Run Lock')
 bullet('First action before any pipeline stage runs')
 bullet('Checks if a premarket scan_results row already exists for today — if yes, exits immediately with a skip message')
@@ -398,8 +398,8 @@ body(
 add_table(
     ['Run', 'UTC Cron', 'ET Time', 'What Happens'],
     [
-        ('Universe Refresh', '30 12 * * 1', '8:30 AM Mondays', 'Fetch S&P500+Nasdaq100, screen for ATR/volume, save 450+ tickers to Supabase'),
-        ('Premarket', '45 13 * * 1-5', '9:45 AM Mon–Fri', 'Market check → Scan → Pre-filter → Live prices → News → Strategy → Risk → Limit orders'),
+        ('Universe Refresh', '30 12 * * 1', '8:30 AM Mondays', 'Screen static UNIVERSE + CURATED pool (~450 tickers) for ATR/volume, save to Supabase'),
+        ('Premarket', '0 13 * * 1-5', '9:00 AM Mon–Fri', 'Market check → Scan → Pre-filter → Live prices → News → Strategy → Risk → Limit orders'),
         ('Intraday', '*/15 14-19 * * 1-5', 'Every 15 min 10AM–3:45PM', 'Monitor positions, close on target/stop, trail stop check'),
         ('EOD', '30 20 * * 1-5', '4:30 PM Mon–Fri', 'Close remaining, calculate daily P&L, then auto-run eval (30-day, saves to Supabase)'),
     ]
@@ -620,13 +620,16 @@ bullet('EOD close retry: if Alpaca close_position() fails, retries once after 2 
 bullet('sector_blocked and guardrail_blocked now properly persisted to scan_results JSONB in DB after both steps — fixes prior bug where sector_blocked was always stored as [] and never visible on dashboard')
 
 heading('V3a — Dynamic Universe Refresh (agents/universe_refresh.py)', 2)
-body('Runs every Monday 8:30 AM ET via a separate GitHub Actions workflow. Replaces static universe with a live-screened list:')
-bullet('Fetches S&P 500 (~503 tickers) and Nasdaq 100 (~101 tickers) from Wikipedia using requests with User-Agent header')
-bullet('Adds ~41 curated high-momentum tickers: quantum (IONQ, QUBT, QBTS), crypto miners (MARA, RIOT, CLSK), space/eVTOL (ASTS, RKLB, ACHR), AI (SOUN, BBAI), leveraged ETFs (SOXL, SOXS, TQQQ)')
-bullet('Screens all ~553 combined tickers: price $5–$500, avg daily volume ≥500K, ATR% ≥2%')
+body(
+    'Runs every Monday 8:30 AM ET via a separate GitHub Actions workflow. '
+    'Screens a combined pool of ~450 tickers for volatility and liquidity, saves the passing list to Supabase. '
+    'No external scraping — pool is entirely local (v5.11+):'
+)
+bullet('Pool: config/settings.py UNIVERSE (429 static tickers — S&P 500, Nasdaq 100, key sectors) + CURATED list in universe_refresh.py (44 high-momentum additions: quantum, crypto miners, space/eVTOL, AI, biotech, leveraged ETFs, fintech)')
+bullet('Screens all ~450 combined tickers: price $5–$500, avg daily volume ≥500K (20-day), ATR% ≥2% (14-day)')
 bullet('Saves passing tickers sorted by ATR% descending to Supabase as scan_type="universe_refresh"')
 bullet('orchestrator.py load_universe(): reads Supabase if ≤7 days old, falls back to static settings.py')
-bullet('First run (May 17 2026): 553 screened → 458 passed. Top movers: SOXS, SOXL, QUBT, OKLO, IREN, LUNR, QBTS, IONQ, HUT')
+bullet('Prior implementation (v3.0–v5.10): fetched S&P 500 + Nasdaq 100 from Wikipedia via HTML scraping — removed in v5.11 due to GitHub Actions scraping failures (Wikipedia anti-bot measures + lxml system dependency issues)')
 
 # ── 10. Backtesting ───────────────────────────────────────────────────────────
 heading('10. Backtesting (backtest.py)')
@@ -798,7 +801,7 @@ body('Once deployed, the system requires zero daily intervention. What happens a
 add_table(
     ['Time (ET)', 'What Happens', 'Where to See It'],
     [
-        ('9:45 AM Mon–Fri', 'Market check → Scan → Pre-filter → Live prices → News → Strategy → Risk → Limit orders', 'GitHub Actions logs + Dashboard Today tab'),
+        ('9:00 AM Mon–Fri', 'Market check → Scan → Pre-filter → Live prices → News → Strategy → Risk → Limit orders', 'GitHub Actions logs + Dashboard Today tab'),
         ('Every 15 min 10AM–3:45PM', 'Intraday position monitoring, close on target/stop, trail stop check', 'Dashboard Positions tab'),
         ('4:30 PM Mon–Fri', 'EOD close + daily P&L + auto eval (saves Agent Scorecard to Supabase)', 'Dashboard Performance tab'),
         ('Anytime', 'Manual trigger via GitHub Actions → Run workflow', 'GitHub Actions'),

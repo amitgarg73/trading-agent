@@ -74,7 +74,7 @@ title = doc.add_heading('AI Trading Agent — Session Changelog', 0)
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 title.runs[0].font.color.rgb = NAVY
 
-meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.9  ·  Living document — update each sprint')
+meta = doc.add_paragraph('Amit Garg  ·  May 2026  ·  v5.11  ·  Living document — update each sprint')
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
 meta.runs[0].font.size = Pt(11)
 meta.runs[0].font.color.rgb = GRAY
@@ -85,6 +85,190 @@ body(
     'why it was built, the impact on the trading agent, and the real-money confidence score '
     'at each point. Update this file every time a new version ships. '
     'Run python3 generate_changelog.py to regenerate Trading_Agent_Changelog.docx.'
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v5.11 — 2026-05-19
+# ══════════════════════════════════════════════════════════════════════════════
+doc.add_page_break()
+heading('v5.11 — 2026-05-19')
+body('Confidence score: 6.5/10 (unchanged)')
+body('Theme: Test suite + CI, premarket cron fix, 5 bug fixes, Wikipedia dependency removed.')
+
+divider()
+subheading('1. 124-Test Suite + GitHub Actions CI')
+body(
+    'What: Full pytest suite with 124 tests and zero external API calls. '
+    'tests/conftest.py provides shared fixtures: make_price_df() (realistic OHLCV with controllable trend/volatility), '
+    'make_trade() (default 4:1 R:R, entry=100, target=102, stop=99.50), '
+    'make_position(), make_perf_row(), FakeDB (in-memory mock for core.db supporting select/insert/update with desc=True ordering). '
+    'patch_db fixture monkeypatches core.db with FakeDB — no Supabase calls. '
+    'Tests cover: scanner, risk agent, guardrails, portfolio, intraday, performance, eval, universe_refresh. '
+    'CI: .github/workflows/ci.yml runs pytest on every push and pull request. '
+    'Badge on README. All 124 tests pass in ~5 seconds.'
+)
+body(
+    'Why: The system had no automated regression protection. Any edit to guardrails, risk rules, '
+    'or portfolio logic could silently break critical safety checks (R:R enforcement, capital guards, '
+    'CLEANUP/UNFILLED exclusion). The test suite catches regressions before they reach the live run.'
+)
+body('Impact: Every push is validated automatically. No more manual "run it and see" testing before deploying fixes.')
+
+divider()
+subheading('2. Premarket Cron Fix — 9:00 AM ET, 60-Minute Window')
+body(
+    'What: Two changes to ensure premarket always fires in the right mode. '
+    '(a) GitHub backup cron updated from 45 13 * * 1-5 (9:45 AM ET) to 0 13 * * 1-5 (9:00 AM ET) — '
+    'gives a larger buffer for GitHub\'s known 5–15 min late firing. '
+    '(b) Mode detection window widened: TIME >= 780 && TIME < 840 (9:00–10:00 AM ET, 60-min buffer) '
+    'replacing the prior 30-min window (TIME >= 810 && TIME < 840). '
+    'cron-job.org primary trigger updated to 9:00 AM ET (was 9:45 AM ET) — passes mode=premarket explicitly so no window check needed. '
+    'Comment in trading.yml updated to document both the cron and window logic.'
+)
+body(
+    'Why: GitHub Actions cron fires 5–15 minutes late. With a 9:45 AM ET cron and a 30-min window ending at 10:15 AM, '
+    'late runs landed outside the detection window and were classified as intraday — skipping market context and '
+    'running the wrong pipeline. Moving to 9:00 AM + 60-min window gives 45 minutes of buffer before misclassification.'
+)
+body('Impact: Premarket runs at 9:00 AM ET reliably whether triggered by cron-job.org or GitHub backup cron.')
+
+divider()
+subheading('3. Bug Fix — CLEANUP/UNFILLED Excluded from P&L')
+body(
+    'What: Two modules now exclude CLEANUP and UNFILLED positions from P&L calculations. '
+    '(a) agents/guardrails.py _today_realized_pnl(): added _EXCLUDE_CLOSE_REASONS = {"CLEANUP", "UNFILLED"} — '
+    'daily loss limit check skips these operational closes so a cleanup run doesn\'t incorrectly trigger the -$300 stop. '
+    '(b) agents/performance.py run(): added same exclusion — real_closed filters today_closed by close_reason not in _EXCLUDE; '
+    'scored = real_closed if real_closed else today_closed (fallback if all closes are operational). '
+    'Both win_count/loss_count and total_pnl computed from scored only.'
+)
+body(
+    'Why: CLEANUP positions are stale opens from prior days closed during reconciliation — their P&L is artificial. '
+    'UNFILLED orders never traded — their P&L is $0 (or noise). Including them in P&L calculations '
+    'distorted win rate, loss limit checks, and the EOD summary.'
+)
+body('Impact: Daily P&L and win rate reflect only real intraday trading decisions.')
+
+divider()
+subheading('4. Bug Fix — db.select() Ordering + FakeDB Consistency')
+body(
+    'What: core/db.py select() now accepts a desc: bool = True parameter, forwarded to Supabase '
+    'q.order(order, desc=desc). FakeDB.select() in conftest.py updated to match: '
+    'sorts descending by default (reverse=True) and uses rows[:limit] instead of rows[-limit:]. '
+    'This eliminates a test/production inconsistency where FakeDB returned rows in ascending order '
+    'while real Supabase returned them descending — causing tests to pass on wrong data ordering.'
+)
+body(
+    'Why: performance.py fetches the 2 most recent daily_performance rows to find the previous day\'s '
+    'ending_capital. With ascending ordering in FakeDB, tests were reading the oldest row, not the '
+    'most recent — a silent correctness bug that only manifested in production.'
+)
+body('Impact: test/prod parity on all db.select() ordering. All FakeDB-based tests now match Supabase behavior.')
+
+divider()
+subheading('5. Bug Fix — Alpaca Equity Reconciliation in Performance Agent')
+body(
+    'What: agents/performance.py now fetches Alpaca account equity at EOD when broker="alpaca". '
+    'alpaca_broker._client().get_account().equity provides the ground-truth portfolio value. '
+    'friction_gap = alpaca_equity − our_calc (positive = we undercount; negative = we overcount). '
+    'Both alpaca_equity and friction_gap stored in the daily_performance record. '
+    'Gap printed at EOD: "💰 Alpaca equity: $X | Our calc: $Y | Gap: ±$Z". '
+    'Failure is non-fatal — exception caught with warning print.'
+)
+body(
+    'Why: The system calculates ending_capital = starting_capital + sum(realized_pnl). '
+    'This misses commissions, partial fills, and slippage. Alpaca\'s equity is the authoritative number. '
+    'Tracking the gap over time reveals whether our P&L calc is systematically over- or under-counting.'
+)
+body('Impact: Daily P&L records now include broker ground-truth. Gap visible on dashboard and in eval.py.')
+
+divider()
+subheading('6. Wikipedia Removed — Static Universe Screening')
+body(
+    'What: agents/universe_refresh.py no longer fetches S&P 500 and Nasdaq 100 component lists from Wikipedia. '
+    'Removed: requests, lxml imports, _HEADERS dict, _wiki_tables(), _fetch_sp500(), _fetch_nasdaq100() functions. '
+    'Screening pool is now: UNIVERSE from config/settings.py (429 static tickers, maintained manually) '
+    '+ CURATED list in universe_refresh.py (44 high-momentum additions: quantum computing, crypto miners, space/eVTOL, AI, biotech, leveraged ETFs, fintech). '
+    'Combined pool: 429 + 44 = ~450 unique tickers (deduped). '
+    'ATR/volume/price screening still applied — output is the same volatility-filtered ranked list. '
+    'lxml removed from requirements.txt. Updated docstring.'
+)
+body(
+    'Why: Wikipedia HTML scraping with lxml silently failed in GitHub Actions — the universe_refresh '
+    'returned only 35 tickers (the CURATED list) instead of 450+, cutting the screening pool by 90%. '
+    'The root cause was Wikipedia\'s anti-scraping measures and lxml\'s dependency on system libxml2 '
+    'in the GitHub Actions Ubuntu environment. The static UNIVERSE already covers the S&P 500 and Nasdaq 100 '
+    'and is maintained manually — no Wikipedia dependency needed.'
+)
+body('Impact: Universe refresh reliably produces 400+ screened tickers on every weekly run. No external scraping dependency.')
+
+add_table(
+    ['Item', 'Status'],
+    [
+        ('124-test suite — conftest, FakeDB, make_trade/make_position/make_price_df factories', '✅ Done'),
+        ('GitHub Actions CI — ci.yml runs pytest on every push', '✅ Done'),
+        ('Premarket cron: 9:00 AM ET (GitHub backup) + 60-min mode window', '✅ Done'),
+        ('cron-job.org updated to 9:00 AM ET with explicit mode=premarket', '✅ Done'),
+        ('CLEANUP/UNFILLED excluded from guardrails P&L + performance EOD', '✅ Done'),
+        ('db.select() desc=True parameter + FakeDB ordering fix', '✅ Done'),
+        ('Alpaca equity reconciliation — friction_gap in daily_performance', '✅ Done'),
+        ('Wikipedia removed from universe_refresh — static UNIVERSE + CURATED pool', '✅ Done'),
+        ('lxml removed from requirements.txt', '✅ Done'),
+        ('June 1 gate: python3 eval.py --days 14', '⏳ Gate date: 2026-06-01'),
+    ]
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v5.10 — 2026-05-18
+# ══════════════════════════════════════════════════════════════════════════════
+doc.add_page_break()
+heading('v5.10 — 2026-05-18')
+body('Confidence score: 6.5/10 (unchanged)')
+body('Theme: Parallelized premarket pipeline, defensive guards, and observability improvements.')
+
+divider()
+subheading('1. Parallelized Premarket — Steps 1.8 + 1.85 Concurrent')
+body(
+    'What: orchestrator.py now runs live price refresh (step 1.8) and VWAP/intraday signal enrichment '
+    '(step 1.85) concurrently using ThreadPoolExecutor(max_workers=2). '
+    'Both are Alpaca API calls — they were previously sequential, adding ~2 seconds per run. '
+    'Results are gathered with executor.submit() / future.result() and merged back into the candidate list. '
+    'current_price guard added: c.get("current_price") or 0 prevents ZeroDivisionError when '
+    'Alpaca price is None (rate limit or ticker not found).'
+)
+body(
+    'Why: Both steps are independent I/O-bound Alpaca calls. Running them in parallel halves '
+    'the time spent on price enrichment before the Claude call. The current_price guard was discovered '
+    'when a None price caused a crash during the concurrent run — guarding with "or 0" makes the '
+    'ticker fall through price sanity gracefully.'
+)
+body('Impact: Premarket pipeline completes ~2 seconds faster. No more ZeroDivisionError on None prices.')
+
+divider()
+subheading('2. lxml Added to Requirements (GitHub Actions Fix)')
+body(
+    'What: lxml>=4.9.0 added to requirements.txt to fix universe_refresh.py Wikipedia HTML scraping '
+    'failures in the GitHub Actions Ubuntu environment. The pandas read_html() call requires lxml '
+    'as a backend for HTML table parsing; without it, the S&P 500 and Nasdaq 100 fetch silently '
+    'returned empty DataFrames, leaving only the 44-ticker CURATED list in the screening pool.'
+)
+body(
+    'Why: The GitHub Actions runner has lxml available as a system package but not as a Python pip '
+    'package. Adding it to requirements.txt ensures it is installed in the virtual environment '
+    'where the trading agent runs.'
+)
+body('Impact: Universe refresh returns 450+ tickers (vs. 35 without lxml). (Note: Wikipedia dependency fully removed in v5.11.)')
+
+add_table(
+    ['Item', 'Status'],
+    [
+        ('ThreadPoolExecutor — steps 1.8 + 1.85 concurrent in premarket', '✅ Done'),
+        ('current_price guard — "or 0" prevents ZeroDivisionError on None Alpaca price', '✅ Done'),
+        ('lxml added to requirements.txt for GitHub Actions universe_refresh fix', '✅ Done (superseded by v5.11 removal)'),
+        ('June 1 gate: python3 eval.py --days 14', '⏳ Gate date: 2026-06-01'),
+    ]
 )
 
 
