@@ -147,7 +147,7 @@ STOCK_UNIVERSE = [
     "HON", "MMM", "EMR", "ETN", "PH", "ROK", "AME",
     "GNRC", "OTIS", "CARR", "ITW", "XYL", "KTOS", "AXON",
     "LDOS", "SAIC", "BAH", "CACI", "HII",
-    "JOBY", "ACHR", "EVTL", "SPCE",
+    "JOBY", "ACHR", "EVTL", "SPCE", "BE",
 
     # ── Materials ─────────────────────────────────────────────────
     "LIN", "APD", "DD", "DOW", "PPG", "SHW", "NEM",
