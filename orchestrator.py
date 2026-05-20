@@ -292,6 +292,15 @@ def intraday(broker: str = "simulation"):
     print(f"\n[ INTRADAY ] {datetime.now().strftime('%H:%M ET')} [{broker}]")
     if _is_halted():
         return
+    # Guard: require a successful premarket scan for today before managing positions.
+    # If premarket didn't run (GitHub Actions glitch, crash), skip intraday entirely
+    # rather than acting on absent or stale scan data.
+    today_iso = date.today().isoformat()
+    premarket_today = db.select("scan_results", filters={"date": today_iso, "scan_type": "premarket"})
+    if not premarket_today:
+        print(f"  ⚠️  INTRADAY SKIPPED — no premarket scan found for {today_iso}. "
+              f"Premarket must complete successfully before intraday runs.")
+        return
     result = run_intraday(broker=broker)
     print(f"  Open: {result['open_positions']} | "
           f"Unrealized P&L: ${result['unrealized_pnl']:,.2f} | "

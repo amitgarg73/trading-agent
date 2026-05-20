@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 import pandas as pd
 import ta
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from config.settings import (
     UNIVERSE, RSI_OVERSOLD, RSI_OVERBOUGHT,
     MIN_VOLUME_RATIO, MIN_PRICE, MIN_AVG_VOLUME, SCORE_THRESHOLD
@@ -16,16 +16,19 @@ from config.settings import (
 
 
 def _fetch(ticker: str) -> tuple[dict, pd.DataFrame | None]:
-    try:
-        t = yf.Ticker(ticker)
-        info = t.info
-        df = t.history(period="3mo")
-        if df.empty or len(df) < 20:
-            return {}, None
-        df.columns = [c.lower() for c in df.columns]
-        return info, df
-    except Exception:
-        return {}, None
+    for attempt in range(2):
+        try:
+            t = yf.Ticker(ticker)
+            info = t.info
+            df = t.history(period="3mo")
+            if df.empty or len(df) < 20:
+                return {}, None
+            df.columns = [c.lower() for c in df.columns]
+            return info, df
+        except Exception:
+            if attempt == 0:
+                import time; time.sleep(2)
+    return {}, None
 
 
 def _technical(ticker: str, df: pd.DataFrame) -> dict:
@@ -116,6 +119,12 @@ def _passes_filters(info: dict, price: float) -> bool:
 def _scan_ticker(ticker: str) -> dict | None:
     info, df = _fetch(ticker)
     if df is None:
+        return None
+    # Freshness check: reject if most recent data row is more than 1 trading day old.
+    # Premarket runs before today's bar exists, so allow yesterday's close (1 day lag ok).
+    # More than 1 day means yfinance returned stale/cached data — skip to avoid bad signals.
+    latest_date = df.index[-1].date() if hasattr(df.index[-1], "date") else None
+    if latest_date and latest_date < date.today() - timedelta(days=1):
         return None
     tech = _technical(ticker, df)
     price = tech["price"]

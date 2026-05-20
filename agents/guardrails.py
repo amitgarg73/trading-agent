@@ -18,13 +18,22 @@ from config.settings import DAILY_LOSS_LIMIT, PRICE_SANITY_PCT, TOTAL_CAPITAL
 
 
 def _current_price(ticker: str) -> float | None:
+    # Primary: Alpaca live quote (ask price — what you actually pay to BUY)
+    try:
+        from agents import alpaca_broker
+        prices = alpaca_broker.get_live_prices([ticker])
+        if prices.get(ticker):
+            return prices[ticker]
+    except Exception:
+        pass
+    # Fallback: yfinance 1-min intraday
     try:
         data = yf.Ticker(ticker).history(period="1d", interval="1m")
-        if data.empty:
-            return None
-        return round(float(data["Close"].iloc[-1]), 2)
+        if not data.empty:
+            return round(float(data["Close"].iloc[-1]), 2)
     except Exception:
-        return None
+        pass
+    return None
 
 
 def _today_realized_pnl() -> float:
