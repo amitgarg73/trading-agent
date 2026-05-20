@@ -885,8 +885,11 @@ elif page == "Performance":
     _selected   = st.radio("Date range", list(_range_opts.keys()), horizontal=True, index=0)
     _n_days     = _range_opts[_selected]
 
-    # ── Today's summary ──────────────────────────────────────────
-    _today_summary_rows = db.select("scan_results", filters={"scan_type": "daily_summary"}, order="date", limit=1)
+    # ── Today's summary — only show if generated today ───────────
+    _today_iso = date.today().isoformat()
+    _today_summary_rows = db.select("scan_results",
+                                    filters={"scan_type": "daily_summary", "date": _today_iso},
+                                    order="date", limit=1)
     if _today_summary_rows:
         _ts = _today_summary_rows[0]
         _tr = _ts.get("results", {})
