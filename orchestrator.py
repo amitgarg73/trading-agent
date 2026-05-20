@@ -237,6 +237,16 @@ def premarket(broker: str = "simulation"):
         c["ticker"]: {k: c[k] for k in ("above_vwap", "vwap", "today_pct_change", "rs_vs_spy") if k in c}
         for c in candidates if "above_vwap" in c
     }
+
+    # Capture halt reasons — why no trades were placed (risk/sector/guardrail rejections)
+    halt_reasons = []
+    if not approved:
+        halt_reasons = (
+            [r.get("reason") or str(r) for r in rejected] +
+            [s.get("reason") or str(s) for s in sector_blocked] +
+            guardrail_blocked
+        )
+
     db.update("scan_results", {"id": scan_row["id"]}, {
         "results": {
             **scan_row["results"],
@@ -244,6 +254,7 @@ def premarket(broker: str = "simulation"):
             "sector_blocked":    sector_blocked,
             "guardrail_blocked": guardrail_blocked,
             "vwap_signals":      vwap_signals,
+            "halt_reasons":      halt_reasons,
             "pipeline_counts": {
                 "post_blackout":      pre_filter_count,
                 "post_prefilter":     post_prefilter_count,
@@ -258,7 +269,8 @@ def premarket(broker: str = "simulation"):
     })
 
     if not approved:
-        print("        No approved trades after sector/guardrail checks.")
+        reasons_str = "; ".join(halt_reasons[:3]) if halt_reasons else "unknown"
+        print(f"        🛑 No approved trades — {reasons_str}")
         return
 
     # 4. Open positions
