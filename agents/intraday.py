@@ -5,7 +5,12 @@ Runs via GitHub Actions schedule during market hours.
 from datetime import date, datetime
 from agents.portfolio import refresh_positions, close_all_positions
 from core import db
-from config.settings import DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET
+from config.settings import (
+    DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET,
+    MAX_POSITIONS, DAILY_LOSS_LIMIT,
+    INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END,
+    STRATEGY_MIN_SCORE,
+)
 
 
 def _reconcile_with_alpaca():
@@ -86,11 +91,112 @@ def _today_realized_pnl() -> float:
     )
 
 
+def _maybe_run_intraday_scan(broker: str):
+    """
+    Run a mid-day scan+strategy+risk+open cycle once per day during the entry window.
+
+    Guards (all must pass):
+    - UTC hour in [INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END) — 11 AM–1 PM ET
+    - Not already scanned today (once per day, not every 15 min)
+    - Open position slots available (< MAX_POSITIONS)
+    - Realized P&L above daily loss limit (don't add risk on bad days)
+    - Total P&L not already at bonus target (don't add risk on exceptional days)
+    """
+    now_utc = datetime.utcnow()
+    if not (INTRADAY_SCAN_UTC_START <= now_utc.hour < INTRADAY_SCAN_UTC_END):
+        return None
+
+    today = now_utc.date().isoformat()
+
+    # Once-per-day guard
+    if db.select("scan_results", filters={"date": today, "scan_type": "intraday_scan"}):
+        return None
+
+    open_pos   = db.select("positions", filters={"status": "OPEN"})
+    open_count = len(open_pos)
+    if open_count >= MAX_POSITIONS:
+        print(f"  📊 Intraday scan skipped: {open_count}/{MAX_POSITIONS} slots full")
+        return None
+
+    realized   = _today_realized_pnl()
+    unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in open_pos)
+    total      = realized + unrealized
+
+    if realized <= DAILY_LOSS_LIMIT:
+        print(f"  ⛔ Intraday scan skipped: realized ${realized:,.2f} ≤ loss limit ${DAILY_LOSS_LIMIT:,.0f}")
+        return None
+    if total >= DAILY_BONUS_TARGET:
+        print(f"  🏆 Intraday scan skipped: exceptional day (${total:,.2f}) — protecting gains")
+        return None
+
+    available_slots = MAX_POSITIONS - open_count
+    print(f"\n  🔍 Intraday scan: {open_count}/{MAX_POSITIONS} slots used | "
+          f"realized ${realized:,.2f} | {available_slots} slot(s) available")
+
+    try:
+        from agents import market_context, strategy, risk
+        from scanner.scanner import run_scan
+        from agents.portfolio import open_positions
+
+        mkt       = market_context.run()
+        quiet_day = mkt.get("quiet_day", False)
+
+        candidates = run_scan()
+        if not candidates:
+            print("  📊 Intraday scan: no candidates found")
+            db.insert("scan_results", {"date": today, "scan_type": "intraday_scan",
+                                       "results": {"candidates": 0}})
+            return None
+
+        # Pre-filter to bullish candidates only (matches premarket logic)
+        candidates = [c for c in candidates if c.get("technical_score", 0) >= STRATEGY_MIN_SCORE]
+        if not candidates:
+            print("  📊 Intraday scan: no candidates above score threshold")
+            db.insert("scan_results", {"date": today, "scan_type": "intraday_scan",
+                                       "results": {"candidates": 0}})
+            return None
+
+        strategy_out = strategy.run(candidates, market_summary=mkt.get("summary", ""),
+                                    max_positions=available_slots)
+        trades = (strategy_out.get("trades") or [])[:available_slots]
+
+        if not trades:
+            print("  📊 Intraday scan: no trades selected by strategy")
+            db.insert("scan_results", {"date": today, "scan_type": "intraday_scan",
+                                       "results": {"candidates": len(candidates), "trades": 0}})
+            return None
+
+        strategy_out = {**strategy_out, "trades": trades}
+        risk_out     = risk.run(strategy_out, quiet_day=quiet_day)
+        approved     = risk_out.get("approved_trades") or []
+
+        if not approved:
+            print("  📊 Intraday scan: all trades rejected by risk")
+            db.insert("scan_results", {"date": today, "scan_type": "intraday_scan",
+                                       "results": {"candidates": len(candidates), "rejected": len(trades)}})
+            return None
+
+        plan   = db.insert("plans", {"date": today, "scan_type": "intraday_scan",
+                                     "status": "EXECUTED", "trade_count": len(approved)})
+        opened = open_positions(plan["id"], approved, broker=broker)
+
+        print(f"  ✅ Intraday scan: opened {len(opened)} new position(s)")
+        result = {"candidates": len(candidates), "approved": len(approved), "opened": len(opened)}
+        db.insert("scan_results", {"date": today, "scan_type": "intraday_scan", "results": result})
+        return result
+
+    except Exception as e:
+        print(f"  ⚠️  Intraday scan error: {e}")
+        return None
+
+
 def run(broker: str = "simulation") -> dict:
     now = datetime.utcnow().isoformat()
 
     if broker == "alpaca":
         _reconcile_with_alpaca()
+
+    _maybe_run_intraday_scan(broker=broker)
 
     updated = refresh_positions(broker=broker)
 

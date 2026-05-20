@@ -10,6 +10,7 @@ from core import db
 from config.settings import (
     TRAIL_PCT, LOCK_IN_TRAIL_PCT, DAILY_LOCK_IN_TARGET,
     USE_NATIVE_TRAILING_STOP, PARTIAL_PROFIT_ENABLED, PARTIAL_PROFIT_PCT,
+    TARGET_PCT,
 )
 
 
@@ -207,6 +208,12 @@ def refresh_positions(broker: str = "simulation") -> list:
                 db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
                 updated.append({**pos, "current_price": close_price,
                                 "unrealized_pnl": 0, "close_reason": close_reason})
+
+        # Breakeven lock: when Leg A hits TARGET, move Leg B stop to entry
+        for u in updated:
+            if u.get("close_reason") == "TARGET" and _is_partial_leg(u):
+                _lock_breakeven(open_pos, u, broker="alpaca")
+
         return updated
 
     # Simulation mode — yfinance price checks
@@ -280,7 +287,52 @@ def refresh_positions(broker: str = "simulation") -> list:
         updated.append({**pos, "current_price": price, "unrealized_pnl": pnl,
                         "close_reason": close_reason})
 
+    # Breakeven lock: when Leg A hits TARGET, move Leg B stop to entry
+    for u in updated:
+        if u.get("close_reason") == "TARGET" and _is_partial_leg(u):
+            _lock_breakeven(open_pos, u, broker="simulation")
+
     return updated
+
+
+def _is_partial_leg(pos: dict) -> bool:
+    """True if this position is Leg A (partial exit at ~1% target)."""
+    if not PARTIAL_PROFIT_ENABLED:
+        return False
+    partial_target = round(pos["entry_price"] * (1 + PARTIAL_PROFIT_PCT), 2)
+    return abs(pos["target_price"] - partial_target) < 0.03
+
+
+def _lock_breakeven(open_pos: list, closed_leg_a: dict, broker: str) -> None:
+    """After Leg A exits at TARGET, move Leg B's stop to entry (breakeven)."""
+    entry = closed_leg_a["entry_price"]
+    partial_target = round(entry * (1 + PARTIAL_PROFIT_PCT), 2)
+    for leg_b in open_pos:
+        if (leg_b["ticker"] == closed_leg_a["ticker"]
+                and abs(leg_b["entry_price"] - entry) < 0.02
+                and leg_b["target_price"] > partial_target
+                and leg_b.get("stop_loss", 0) < entry):   # only if stop not already at breakeven
+            db.update("positions", {"id": leg_b["id"]}, {"stop_loss": entry})
+            leg_b["stop_loss"] = entry   # update in-memory too
+            print(f"  🔒 Breakeven lock: {leg_b['ticker']} Leg B stop → ${entry:.2f}")
+
+            if broker == "alpaca":
+                from agents import alpaca_broker
+                order_id = leg_b.get("alpaca_order_id")
+                if order_id:
+                    cancelled = alpaca_broker.cancel_order(order_id)
+                    if cancelled:
+                        new_id = alpaca_broker.submit_bracket_order(
+                            ticker=leg_b["ticker"],
+                            shares=leg_b["shares"],
+                            entry_price=entry,
+                            target_price=leg_b["target_price"],
+                            stop_price=entry,
+                            action=leg_b["action"],
+                        )
+                        if new_id:
+                            db.update("positions", {"id": leg_b["id"]}, {"alpaca_order_id": new_id})
+                            print(f"        Resubmitted Leg B bracket with breakeven stop → {new_id}")
 
 
 def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list:

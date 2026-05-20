@@ -31,6 +31,8 @@ LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions 
 TRAIL_PCT                   = 0.01        # Trailing stop: close if price drops 1% from highest seen since entry
 PARTIAL_PROFIT_ENABLED      = True        # Take 50% of shares off at PARTIAL_PROFIT_PCT gain; let rest run to full target
 PARTIAL_PROFIT_PCT          = 0.01        # 1% partial exit — locks in half the position on a smaller move
+INTRADAY_SCAN_UTC_START     = 15          # 11:00 AM ET — intraday scan entry window open
+INTRADAY_SCAN_UTC_END       = 17          # 1:00 PM ET — intraday scan entry window close
 USE_NATIVE_TRAILING_STOP    = False       # trail_percent not supported in StopLossRequest bracket leg; use manual high_watermark trail
                                           # When False: manual high_watermark check every 15 min (safe default, paper OK)
                                           # Enable after 2-week paper A/B validation — P0 before real money

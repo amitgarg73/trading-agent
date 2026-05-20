@@ -211,6 +211,15 @@ def close_position(ticker: str) -> tuple[bool, Optional[float]]:
         return False, None
 
 
+def cancel_order(order_id: str) -> bool:
+    """Cancel a single open order by ID. Returns True if cancelled successfully."""
+    try:
+        _client().cancel_order_by_id(order_id)
+        return True
+    except Exception:
+        return False
+
+
 def cancel_all_orders() -> None:
     """Cancel all open orders — call before EOD close to clear pending bracket legs."""
     try:

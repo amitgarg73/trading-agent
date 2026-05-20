@@ -189,3 +189,154 @@ class TestCloseAllPositions:
             from agents.portfolio import close_all_positions
             closed = close_all_positions(reason="LOCK_IN", broker="simulation")
         assert closed[0]["realized_pnl"] == pytest.approx(60 * 1.5, abs=0.01)
+
+
+# ── Breakeven stop (partial profit) ──────────────────────────────────────────
+
+class TestBreakevenStop:
+    """
+    After Leg A (partial, 1% target) hits TARGET, Leg B's stop moves to entry.
+    Tests _is_partial_leg detection and _lock_breakeven in simulation mode.
+    """
+
+    def _make_legs(self, entry: float = 100.0):
+        """Return (leg_a, leg_b) with distinct IDs and targets."""
+        leg_a = make_position(
+            ticker="AAPL",
+            entry=entry,
+            target=round(entry * 1.01, 2),   # 1% partial target
+            stop=round(entry * 0.9933, 2),
+            shares=30,
+        )
+        leg_a["id"] = "test-leg-a"
+        leg_a["planned_trade_id"] = "test-plan-a"
+
+        leg_b = make_position(
+            ticker="AAPL",
+            entry=entry,
+            target=round(entry * 1.02, 2),   # 2% full target
+            stop=round(entry * 0.9933, 2),
+            shares=30,
+        )
+        leg_b["id"] = "test-leg-b"
+        leg_b["planned_trade_id"] = "test-plan-b"
+
+        return leg_a, leg_b
+
+    def _select_side_effect(self, open_pos):
+        return lambda table, **kw: (
+            open_pos if kw.get("filters", {}).get("status") == "OPEN"
+            else []
+        )
+
+    def _stop_loss_updates_for(self, mock_update, pos_id: str) -> list:
+        return [
+            call[0][2]
+            for call in mock_update.call_args_list
+            if call[0][0] == "positions"
+            and call[0][1].get("id") == pos_id
+            and "stop_loss" in call[0][2]
+        ]
+
+    def test_is_partial_leg_true_for_leg_a(self):
+        from agents.portfolio import _is_partial_leg
+        leg_a, _ = self._make_legs()
+        assert _is_partial_leg(leg_a) is True
+
+    def test_is_partial_leg_false_for_leg_b(self):
+        from agents.portfolio import _is_partial_leg
+        _, leg_b = self._make_legs()
+        assert _is_partial_leg(leg_b) is False
+
+    def test_is_partial_leg_false_when_disabled(self):
+        from agents.portfolio import _is_partial_leg
+        leg_a, _ = self._make_legs()
+        with patch("agents.portfolio.PARTIAL_PROFIT_ENABLED", False):
+            assert _is_partial_leg(leg_a) is False
+
+    def test_leg_a_closes_as_target_at_partial_price(self):
+        """Price = Leg A's 1% target → Leg A closes TARGET, Leg B stays open."""
+        leg_a, leg_b = self._make_legs(entry=100.0)
+        open_pos = [leg_a, leg_b]
+        price = leg_a["target_price"]  # 101.0
+
+        with patch("agents.portfolio._current_price", return_value=price), \
+             patch("core.db.select", side_effect=self._select_side_effect(open_pos)), \
+             patch("core.db.update"), \
+             patch("core.db.insert", return_value={"id": "x"}):
+            from agents.portfolio import refresh_positions
+            result = refresh_positions(broker="simulation")
+
+        leg_a_r = next(r for r in result if r["id"] == "test-leg-a")
+        leg_b_r = next(r for r in result if r["id"] == "test-leg-b")
+        assert leg_a_r["close_reason"] == "TARGET"
+        assert leg_b_r["close_reason"] is None
+
+    def test_breakeven_lock_moves_leg_b_stop_to_entry(self):
+        """When Leg A hits TARGET, Leg B stop_loss must be updated to entry price."""
+        entry = 100.0
+        leg_a, leg_b = self._make_legs(entry=entry)
+        open_pos = [leg_a, leg_b]
+        price = leg_a["target_price"]  # 101.0
+
+        with patch("agents.portfolio._current_price", return_value=price), \
+             patch("core.db.select", side_effect=self._select_side_effect(open_pos)), \
+             patch("core.db.update") as mock_update, \
+             patch("core.db.insert", return_value={"id": "x"}):
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="simulation")
+
+        updates = self._stop_loss_updates_for(mock_update, "test-leg-b")
+        assert len(updates) == 1, "Expected exactly one stop_loss update for Leg B"
+        assert updates[0]["stop_loss"] == pytest.approx(entry, abs=0.01)
+
+    def test_breakeven_lock_not_triggered_on_leg_a_stop(self):
+        """When Leg A hits STOP (not TARGET), Leg B stop must NOT move."""
+        leg_a, leg_b = self._make_legs(entry=100.0)
+        open_pos = [leg_a, leg_b]
+
+        with patch("agents.portfolio._current_price", return_value=98.0), \
+             patch("core.db.select", side_effect=self._select_side_effect(open_pos)), \
+             patch("core.db.update") as mock_update, \
+             patch("core.db.insert", return_value={"id": "x"}):
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="simulation")
+
+        updates = self._stop_loss_updates_for(mock_update, "test-leg-b")
+        assert len(updates) == 0, "Leg B stop must not change when Leg A stops out"
+
+    def test_breakeven_lock_idempotent_when_stop_already_at_entry(self):
+        """If Leg B stop is already at entry, _lock_breakeven must not re-update it."""
+        entry = 100.0
+        leg_a, leg_b = self._make_legs(entry=entry)
+        leg_b["stop_loss"] = entry  # already locked
+        open_pos = [leg_a, leg_b]
+        price = leg_a["target_price"]
+
+        with patch("agents.portfolio._current_price", return_value=price), \
+             patch("core.db.select", side_effect=self._select_side_effect(open_pos)), \
+             patch("core.db.update") as mock_update, \
+             patch("core.db.insert", return_value={"id": "x"}):
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="simulation")
+
+        updates = self._stop_loss_updates_for(mock_update, "test-leg-b")
+        assert len(updates) == 0, "Should not re-lock already locked stop"
+
+    def test_breakeven_lock_only_matches_same_ticker(self):
+        """Leg B for a different ticker must not get its stop moved."""
+        entry = 100.0
+        leg_a, leg_b = self._make_legs(entry=entry)
+        leg_b["ticker"] = "MSFT"  # different ticker
+        open_pos = [leg_a, leg_b]
+        price = leg_a["target_price"]
+
+        with patch("agents.portfolio._current_price", return_value=price), \
+             patch("core.db.select", side_effect=self._select_side_effect(open_pos)), \
+             patch("core.db.update") as mock_update, \
+             patch("core.db.insert", return_value={"id": "x"}):
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="simulation")
+
+        updates = self._stop_loss_updates_for(mock_update, "test-leg-b")
+        assert len(updates) == 0, "Cross-ticker breakeven lock must not fire"
