@@ -15,6 +15,33 @@ from config.settings import (
 )
 
 
+def _fetch_alpaca(ticker: str) -> tuple[dict, pd.DataFrame | None]:
+    """Alpaca daily bars fallback — used when yfinance is rate-limited."""
+    try:
+        import os
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        data_client = StockHistoricalDataClient(
+            api_key=os.environ.get("ALPACA_API_KEY"),
+            secret_key=os.environ.get("ALPACA_SECRET_KEY"),
+        )
+        start = datetime.utcnow() - timedelta(days=100)
+        req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Day, start=start)
+        bars = data_client.get_stock_bars(req)[ticker]
+        if not bars or len(bars) < 20:
+            return {}, None
+        df = pd.DataFrame([{
+            "open": b.open, "high": b.high, "low": b.low,
+            "close": b.close, "volume": b.volume,
+        } for b in bars], index=pd.DatetimeIndex([b.timestamp for b in bars]))
+        avg_vol = int(df["volume"].tail(20).mean())
+        info = {"averageVolume": avg_vol, "longName": ticker, "sector": "Unknown"}
+        return info, df
+    except Exception:
+        return {}, None
+
+
 def _fetch(ticker: str) -> tuple[dict, pd.DataFrame | None]:
     for attempt in range(2):
         try:
@@ -28,7 +55,8 @@ def _fetch(ticker: str) -> tuple[dict, pd.DataFrame | None]:
         except Exception:
             if attempt == 0:
                 import time; time.sleep(2)
-    return {}, None
+    # yfinance failed — fall back to Alpaca daily bars
+    return _fetch_alpaca(ticker)
 
 
 def _technical(ticker: str, df: pd.DataFrame) -> dict:
