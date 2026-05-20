@@ -77,8 +77,9 @@ rs_vs_spy: Relative strength vs SPY since the open. > 1.0 = stock outperforming 
 
 ## CONFIDENCE ASSIGNMENT GUIDE
 HIGH:   technical_score ≥ 7 AND volume_ratio > 1.8 AND at least 3 confirming signals
-MEDIUM: technical_score 4–6 OR strong on 2 of the 3 criteria above
-LOW:    technical_score 3–4 with at most 1–2 confirming signals; only select if market is favorable
+MEDIUM: technical_score 4–6 OR (technical_score 3–4 AND above_vwap=True AND rs_vs_spy ≥ 1.5)
+        → above-VWAP momentum with strong relative strength is a MEDIUM setup even on quiet days
+LOW:    technical_score 3–4 with weak or absent VWAP/RS signals
 
 ## MARKET CONTEXT SIGNALS
 futures_bias: BULLISH = index futures up pre-market → favor momentum longs.

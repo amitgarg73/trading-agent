@@ -7,7 +7,10 @@ from __future__ import annotations
 import yfinance as yf
 from datetime import date, datetime
 from core import db
-from config.settings import TRAIL_PCT, LOCK_IN_TRAIL_PCT, DAILY_LOCK_IN_TARGET, USE_NATIVE_TRAILING_STOP
+from config.settings import (
+    TRAIL_PCT, LOCK_IN_TRAIL_PCT, DAILY_LOCK_IN_TARGET,
+    USE_NATIVE_TRAILING_STOP, PARTIAL_PROFIT_ENABLED, PARTIAL_PROFIT_PCT,
+)
 
 
 def _current_price(ticker: str) -> float | None:
@@ -21,66 +24,93 @@ def _current_price(ticker: str) -> float | None:
         return None
 
 
+def _open_single_position(plan_id, trade, price, broker, leg_label=""):
+    """Insert one planned_trade + position record and optionally submit to Alpaca."""
+    ticker = trade["ticker"]
+    planned = db.insert("planned_trades", {
+        "plan_id":          plan_id,
+        "ticker":           ticker,
+        "action":           trade["action"],
+        "entry_price":      trade["entry_price"],
+        "target_price":     trade["target_price"],
+        "stop_loss":        trade["stop_loss"],
+        "position_size":    trade["position_size"],
+        "shares":           trade["shares"],
+        "estimated_profit": trade["estimated_profit"],
+        "confidence":       trade["confidence"],
+        "reasoning":        trade["reasoning"],
+        "status":           "OPEN",
+    })
+
+    alpaca_order_id = None
+    if broker == "alpaca":
+        from agents import alpaca_broker
+        try:
+            alpaca_order_id = alpaca_broker.submit_bracket_order(
+                ticker=ticker,
+                shares=trade["shares"],
+                entry_price=trade["entry_price"],
+                target_price=trade["target_price"],
+                stop_price=trade["stop_loss"],
+                action=trade["action"],
+                use_native_trail=USE_NATIVE_TRAILING_STOP,
+                trail_pct=TRAIL_PCT,
+            )
+            limit_price = round(trade["entry_price"] * 1.001, 2)
+            print(f"        Alpaca limit order: {ticker}{leg_label} @ ${limit_price} → {alpaca_order_id}")
+        except Exception as e:
+            print(f"        ⚠️  Alpaca order failed for {ticker}{leg_label}: {e}")
+
+    native_trail = broker == "alpaca" and USE_NATIVE_TRAILING_STOP
+    return db.insert("positions", {
+        "planned_trade_id":    planned["id"],
+        "ticker":              ticker,
+        "action":              trade["action"],
+        "entry_price":         price,
+        "current_price":       price,
+        "target_price":        trade["target_price"],
+        "stop_loss":           trade["stop_loss"],
+        "shares":              trade["shares"],
+        "position_size":       trade["position_size"],
+        "unrealized_pnl":      0,
+        "status":              "OPEN",
+        "alpaca_order_id":     alpaca_order_id,
+        "high_watermark":      price,
+        "native_trail_active": native_trail,
+    })
+
+
 def open_positions(plan_id: str, approved_trades: list, broker: str = "simulation") -> list:
     """Execute fills for all approved trades and write to DB."""
     opened = []
     for trade in approved_trades:
         ticker = trade["ticker"]
         price  = _current_price(ticker) or trade["entry_price"]
+        shares = trade["shares"]
 
-        planned = db.insert("planned_trades", {
-            "plan_id":          plan_id,
-            "ticker":           ticker,
-            "action":           trade["action"],
-            "entry_price":      trade["entry_price"],
-            "target_price":     trade["target_price"],
-            "stop_loss":        trade["stop_loss"],
-            "position_size":    trade["position_size"],
-            "shares":           trade["shares"],
-            "estimated_profit": trade["estimated_profit"],
-            "confidence":       trade["confidence"],
-            "reasoning":        trade["reasoning"],
-            "status":           "OPEN",
-        })
+        # Partial profit: split into two legs when shares allow
+        # Leg A (half shares, PARTIAL_PROFIT_PCT target) locks in early profit
+        # Leg B (remaining shares, full target) rides to the original 2% target
+        if PARTIAL_PROFIT_ENABLED and shares >= 4:
+            half    = shares // 2
+            rest    = shares - half
+            p_entry = trade["entry_price"]
+            p_stop  = trade["stop_loss"]
 
-        alpaca_order_id = None
-        if broker == "alpaca":
-            from agents import alpaca_broker
-            try:
-                alpaca_order_id = alpaca_broker.submit_bracket_order(
-                    ticker=ticker,
-                    shares=trade["shares"],
-                    entry_price=trade["entry_price"],
-                    target_price=trade["target_price"],
-                    stop_price=trade["stop_loss"],
-                    action=trade["action"],
-                    use_native_trail=USE_NATIVE_TRAILING_STOP,
-                    trail_pct=TRAIL_PCT,
-                )
-                limit_price = round(trade["entry_price"] * 1.001, 2)
-                print(f"        Alpaca limit order: {ticker} @ ${limit_price} → {alpaca_order_id}")
-            except Exception as e:
-                print(f"        ⚠️  Alpaca order failed for {ticker}: {e}")
+            leg_a = {**trade, "shares": half,
+                     "target_price":     round(p_entry * (1 + PARTIAL_PROFIT_PCT), 2),
+                     "position_size":    round(half * p_entry, 2),
+                     "estimated_profit": round(half * (round(p_entry * (1 + PARTIAL_PROFIT_PCT), 2) - p_entry), 2)}
+            leg_b = {**trade, "shares": rest,
+                     "position_size":    round(rest * p_entry, 2),
+                     "estimated_profit": round(rest * (trade["target_price"] - p_entry), 2)}
 
-        native_trail = broker == "alpaca" and USE_NATIVE_TRAILING_STOP
-        position = db.insert("positions", {
-            "planned_trade_id":    planned["id"],
-            "ticker":              ticker,
-            "action":              trade["action"],
-            "entry_price":         price,
-            "current_price":       price,
-            "target_price":        trade["target_price"],
-            "stop_loss":           trade["stop_loss"],
-            "shares":              trade["shares"],
-            "position_size":       trade["position_size"],
-            "unrealized_pnl":      0,
-            "status":              "OPEN",
-            "alpaca_order_id":     alpaca_order_id,
-            "high_watermark":      price,
-            "native_trail_active": native_trail,
-        })
-
-        opened.append(position)
+            pos_a = _open_single_position(plan_id, leg_a, price, broker, leg_label=" [partial]")
+            pos_b = _open_single_position(plan_id, leg_b, price, broker, leg_label=" [full]")
+            opened.extend([pos_a, pos_b])
+        else:
+            pos = _open_single_position(plan_id, trade, price, broker)
+            opened.append(pos)
 
     return opened
 

@@ -29,6 +29,8 @@ DAILY_LOCK_IN_TARGET = 716        # Tier 1: realized P&L floor — stop closing 
 DAILY_BONUS_TARGET   = 1_000     # Tier 2: realized+unrealized total — close everything, protect exceptional day
 LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions after Tier 1 (simulation only)
 TRAIL_PCT                   = 0.01        # Trailing stop: close if price drops 1% from highest seen since entry
+PARTIAL_PROFIT_ENABLED      = True        # Take 50% of shares off at PARTIAL_PROFIT_PCT gain; let rest run to full target
+PARTIAL_PROFIT_PCT          = 0.01        # 1% partial exit — locks in half the position on a smaller move
 USE_NATIVE_TRAILING_STOP    = False       # trail_percent not supported in StopLossRequest bracket leg; use manual high_watermark trail
                                           # When False: manual high_watermark check every 15 min (safe default, paper OK)
                                           # Enable after 2-week paper A/B validation — P0 before real money
