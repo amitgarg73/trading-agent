@@ -92,7 +92,7 @@ STOCK_UNIVERSE = [
     # ── Software / Cloud / AI ─────────────────────────────────────
     "PLTR", "CRWD", "SNOW", "NET", "DDOG", "MDB", "HUBS",
     "ZS", "OKTA", "PANW", "FTNT", "RPD",
-    "S", "ASAN", "BILL", "CFLT", "GTLB",
+    "S", "ASAN", "BILL", "GTLB",
     "ESTC", "DT", "DOCN", "FSLY", "CWAN", "FOUR",
     "PATH", "AI", "BBAI", "SOUN", "BRZE", "FRSH", "DOMO",
     "APP", "APLD", "IONQ", "RGTI", "QUBT", "QBTS",
@@ -136,7 +136,7 @@ STOCK_UNIVERSE = [
     "XOM", "CVX", "COP", "EOG", "OXY", "MPC", "VLO",
     "PSX", "DVN", "APA", "HAL", "SLB", "BKR",
     "NOV", "FANG", "CTRA", "SM", "MTDR", "CRGY",
-    "CHRD", "PR", "ROCC", "TALO",
+    "CHRD", "PR", "TALO",
 
     # ── Financials ────────────────────────────────────────────────
     "GS", "MS", "BAC", "WFC", "C", "BLK", "SCHW",
