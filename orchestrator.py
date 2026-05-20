@@ -164,7 +164,7 @@ def premarket(broker: str = "simulation"):
         updated = 0
         for c in candidates:
             ask = live.get(c["ticker"])
-            cur = c.get("current_price") or 0
+            cur = c.get("current_price") or c.get("price") or 0
             if ask and cur and abs(ask - cur) / cur < 0.10:
                 c["current_price"] = ask
                 updated += 1

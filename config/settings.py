@@ -27,7 +27,7 @@ DAILY_LOCK_IN_TARGET = 716        # Tier 1: realized P&L floor — stop closing 
 DAILY_BONUS_TARGET   = 1_000     # Tier 2: realized+unrealized total — close everything, protect exceptional day
 LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions after Tier 1 (simulation only)
 TRAIL_PCT                   = 0.01        # Trailing stop: close if price drops 1% from highest seen since entry
-USE_NATIVE_TRAILING_STOP    = True        # When True: Alpaca native trail_percent bracket leg (real-time, no polling gap)
+USE_NATIVE_TRAILING_STOP    = False       # trail_percent not supported in StopLossRequest bracket leg; use manual high_watermark trail
                                           # When False: manual high_watermark check every 15 min (safe default, paper OK)
                                           # Enable after 2-week paper A/B validation — P0 before real money
 POSITION_SIZE_BY_CONFIDENCE = {           # Position size mapped to Claude confidence level
@@ -64,7 +64,7 @@ SCORE_THRESHOLD      = 3          # minimum score to be a scanner candidate (abs
 #
 # NOTE: This filters to score >= STRATEGY_MIN_SCORE (positive), not abs(score).
 #   Bearish candidates (negative scores) are always excluded — correct for a BUY-only system.
-STRATEGY_MIN_SCORE   = 4          # pre-filter before Claude call: only bullish candidates with score ≥ this
+STRATEGY_MIN_SCORE   = 3          # pre-filter before Claude call: only bullish candidates with score ≥ this
 
 # Stock + ETF universe
 # Removed drags: PYPL, META, ARKK, IWM, JPM, IBM, MA, ROOT, PSA, TWLO
