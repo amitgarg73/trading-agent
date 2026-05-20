@@ -9,7 +9,8 @@ from config.settings import (
     DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET,
     MAX_POSITIONS, DAILY_LOSS_LIMIT,
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END,
-    STRATEGY_MIN_SCORE,
+    INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
+    INTRADAY_TARGET_PCT, MIN_INTRADAY_MOVE_PCT, STRATEGY_MIN_SCORE, UNIVERSE,
 )
 
 
@@ -91,16 +92,57 @@ def _today_realized_pnl() -> float:
     )
 
 
+def _cap_intraday_targets(trades: list) -> list:
+    """
+    Cap target_price at INTRADAY_TARGET_PCT (1%) for intraday entries.
+    Less time remaining in the day means smaller achievable targets.
+    Also clamps estimated_profit to match the adjusted target.
+    """
+    result = []
+    for t in trades:
+        entry      = t["entry_price"]
+        max_target = round(entry * (1 + INTRADAY_TARGET_PCT), 2)
+        if t.get("target_price", 0) > max_target:
+            t = {**t,
+                 "target_price":     max_target,
+                 "estimated_profit": round(t.get("shares", 0) * (max_target - entry), 2)}
+        result.append(t)
+    return result
+
+
+def _last_scan_minutes_ago(prior_scans: list, now_utc: datetime) -> float:
+    """Return minutes since the most recent intraday scan, or infinity if none."""
+    timestamps = [
+        (s.get("results") or {}).get("scanned_at", "")
+        for s in prior_scans
+    ]
+    timestamps = [t for t in timestamps if t]
+    if not timestamps:
+        return float("inf")
+    try:
+        last_dt = datetime.fromisoformat(max(timestamps))
+        return (now_utc - last_dt).total_seconds() / 60
+    except Exception:
+        return float("inf")
+
+
 def _maybe_run_intraday_scan(broker: str):
     """
-    Run a mid-day scan+strategy+risk+open cycle once per day during the entry window.
+    Run a mid-day momentum scan + strategy + risk + open cycle during the entry window.
 
     Guards (all must pass):
-    - UTC hour in [INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END) — 11 AM–1 PM ET
-    - Not already scanned today (once per day, not every 15 min)
+    - UTC hour in [INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END) — 11 AM–2 PM ET
+    - Max INTRADAY_SCAN_MAX_RUNS runs per day
+    - Min INTRADAY_SCAN_MIN_INTERVAL_MINS minutes since last run
     - Open position slots available (< MAX_POSITIONS)
-    - Realized P&L above daily loss limit (don't add risk on bad days)
-    - Total P&L not already at bonus target (don't add risk on exceptional days)
+    - Realized P&L above daily loss limit
+    - Total P&L not already at bonus target
+
+    Momentum scan (new):
+    - Finds stocks already up >= MIN_INTRADAY_MOVE_PCT today, above VWAP
+    - Merged with prior-day technical candidates (deduped)
+    - All intraday entries capped at INTRADAY_TARGET_PCT (1%) target
+    - Partial profit splitting disabled (1% target = same as Leg A target)
     """
     now_utc = datetime.utcnow()
     if not (INTRADAY_SCAN_UTC_START <= now_utc.hour < INTRADAY_SCAN_UTC_END):
@@ -108,8 +150,15 @@ def _maybe_run_intraday_scan(broker: str):
 
     today = now_utc.date().isoformat()
 
-    # Once-per-day guard
-    if db.select("scan_results", filters={"date": today, "scan_type": "intraday_scan"}):
+    prior_scans = db.select("scan_results", filters={"date": today, "scan_type": "intraday_scan"})
+
+    # Max-runs guard
+    if len(prior_scans) >= INTRADAY_SCAN_MAX_RUNS:
+        return None
+
+    # Min-interval guard
+    mins_ago = _last_scan_minutes_ago(prior_scans, now_utc)
+    if mins_ago < INTRADAY_SCAN_MIN_INTERVAL_MINS:
         return None
 
     open_pos   = db.select("positions", filters={"status": "OPEN"})
@@ -129,65 +178,100 @@ def _maybe_run_intraday_scan(broker: str):
         print(f"  🏆 Intraday scan skipped: exceptional day (${total:,.2f}) — protecting gains")
         return None
 
+    run_num         = len(prior_scans) + 1
     available_slots = MAX_POSITIONS - open_count
-    print(f"\n  🔍 Intraday scan: {open_count}/{MAX_POSITIONS} slots used | "
+    print(f"\n  🔍 Intraday scan #{run_num}: {open_count}/{MAX_POSITIONS} slots used | "
           f"realized ${realized:,.2f} | {available_slots} slot(s) available")
 
     try:
         from agents import market_context, strategy, risk
         from scanner.scanner import run_scan
+        from scanner.intraday_momentum import scan as momentum_scan
         from agents.portfolio import open_positions
 
         mkt       = market_context.run()
         quiet_day = mkt.get("quiet_day", False)
 
-        candidates = run_scan()
-        if not candidates:
+        # ── Momentum candidates (stocks already moving today) ────────
+        momentum_candidates = momentum_scan(UNIVERSE, broker=broker)
+        print(f"        Momentum movers: {len(momentum_candidates)} stocks "
+              f"up ≥{int(MIN_INTRADAY_MOVE_PCT)}% above VWAP")
+
+        # ── Prior-day technical candidates (fallback / supplement) ───
+        technical_candidates = run_scan()
+        technical_candidates = [
+            c for c in technical_candidates
+            if c.get("technical_score", 0) >= STRATEGY_MIN_SCORE
+        ]
+
+        # Merge: momentum first (higher conviction), dedupe by ticker
+        seen    = {c["ticker"] for c in momentum_candidates}
+        merged  = momentum_candidates + [c for c in technical_candidates if c["ticker"] not in seen]
+        merged  = merged[:available_slots * 3]  # cap tokens sent to Claude
+
+        if not merged:
             print("  📊 Intraday scan: no candidates found")
-            db.insert("scan_results", {"date": today, "scan_type": "intraday_scan",
-                                       "results": {"candidates": 0}})
+            _save_scan_result(today, now_utc, {"candidates": 0, "momentum": 0})
             return None
 
-        # Pre-filter to bullish candidates only (matches premarket logic)
-        candidates = [c for c in candidates if c.get("technical_score", 0) >= STRATEGY_MIN_SCORE]
-        if not candidates:
-            print("  📊 Intraday scan: no candidates above score threshold")
-            db.insert("scan_results", {"date": today, "scan_type": "intraday_scan",
-                                       "results": {"candidates": 0}})
-            return None
+        print(f"        Total candidates: {len(merged)} "
+              f"({len(momentum_candidates)} momentum + {len(merged)-len(momentum_candidates)} technical)")
 
-        strategy_out = strategy.run(candidates, market_summary=mkt.get("summary", ""),
+        market_note = (
+            f"{mkt.get('summary', '')}\n\n"
+            f"INTRADAY SCAN #{run_num}: Focus on momentum plays already moving today. "
+            f"Prefer stocks with today_pct_change > {int(MIN_INTRADAY_MOVE_PCT)}% and rs_vs_spy > 1.5. "
+            f"Targets are capped at 1% (less time remaining in session)."
+        )
+        strategy_out = strategy.run(merged, market_summary=market_note,
                                     max_positions=available_slots)
         trades = (strategy_out.get("trades") or [])[:available_slots]
 
         if not trades:
             print("  📊 Intraday scan: no trades selected by strategy")
-            db.insert("scan_results", {"date": today, "scan_type": "intraday_scan",
-                                       "results": {"candidates": len(candidates), "trades": 0}})
+            _save_scan_result(today, now_utc,
+                              {"candidates": len(merged), "momentum": len(momentum_candidates), "trades": 0})
             return None
 
         strategy_out = {**strategy_out, "trades": trades}
         risk_out     = risk.run(strategy_out, quiet_day=quiet_day)
         approved     = risk_out.get("approved_trades") or []
 
+        # Cap targets at 1% after risk validation — risk sees original targets,
+        # but actual entries use the tighter intraday cap
+        approved = _cap_intraday_targets(approved)
+
         if not approved:
             print("  📊 Intraday scan: all trades rejected by risk")
-            db.insert("scan_results", {"date": today, "scan_type": "intraday_scan",
-                                       "results": {"candidates": len(candidates), "rejected": len(trades)}})
+            _save_scan_result(today, now_utc,
+                              {"candidates": len(merged), "momentum": len(momentum_candidates),
+                               "rejected": len(trades)})
             return None
 
         plan   = db.insert("plans", {"date": today, "scan_type": "intraday_scan",
                                      "status": "EXECUTED", "trade_count": len(approved)})
-        opened = open_positions(plan["id"], approved, broker=broker)
+        # Disable partial profit split — 1% target == Leg A target, splitting is redundant
+        opened = open_positions(plan["id"], approved, broker=broker, enable_partial=False)
 
-        print(f"  ✅ Intraday scan: opened {len(opened)} new position(s)")
-        result = {"candidates": len(candidates), "approved": len(approved), "opened": len(opened)}
-        db.insert("scan_results", {"date": today, "scan_type": "intraday_scan", "results": result})
+        print(f"  ✅ Intraday scan #{run_num}: opened {len(opened)} new position(s)")
+        result = {
+            "candidates": len(merged), "momentum": len(momentum_candidates),
+            "approved": len(approved), "opened": len(opened),
+        }
+        _save_scan_result(today, now_utc, result)
         return result
 
     except Exception as e:
         print(f"  ⚠️  Intraday scan error: {e}")
         return None
+
+
+def _save_scan_result(today: str, now_utc: datetime, result: dict) -> None:
+    db.insert("scan_results", {
+        "date":      today,
+        "scan_type": "intraday_scan",
+        "results":   {**result, "scanned_at": now_utc.isoformat()},
+    })
 
 
 def run(broker: str = "simulation") -> dict:

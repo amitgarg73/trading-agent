@@ -81,8 +81,14 @@ def _open_single_position(plan_id, trade, price, broker, leg_label=""):
     })
 
 
-def open_positions(plan_id: str, approved_trades: list, broker: str = "simulation") -> list:
-    """Execute fills for all approved trades and write to DB."""
+def open_positions(plan_id: str, approved_trades: list, broker: str = "simulation",
+                   enable_partial: bool | None = None) -> list:
+    """
+    Execute fills for all approved trades and write to DB.
+    enable_partial: override PARTIAL_PROFIT_ENABLED (None = use config default).
+                    Pass False for intraday entries where target == PARTIAL_PROFIT_PCT.
+    """
+    use_partial = PARTIAL_PROFIT_ENABLED if enable_partial is None else enable_partial
     opened = []
     for trade in approved_trades:
         ticker = trade["ticker"]
@@ -92,7 +98,7 @@ def open_positions(plan_id: str, approved_trades: list, broker: str = "simulatio
         # Partial profit: split into two legs when shares allow
         # Leg A (half shares, PARTIAL_PROFIT_PCT target) locks in early profit
         # Leg B (remaining shares, full target) rides to the original 2% target
-        if PARTIAL_PROFIT_ENABLED and shares >= 4:
+        if use_partial and shares >= 4:
             half    = shares // 2
             rest    = shares - half
             p_entry = trade["entry_price"]

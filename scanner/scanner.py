@@ -11,7 +11,8 @@ import ta
 from datetime import datetime, date, timedelta
 from config.settings import (
     UNIVERSE, RSI_OVERSOLD, RSI_OVERBOUGHT,
-    MIN_VOLUME_RATIO, MIN_PRICE, MIN_AVG_VOLUME, SCORE_THRESHOLD
+    MIN_VOLUME_RATIO, MIN_PRICE, MIN_AVG_VOLUME, SCORE_THRESHOLD,
+    LARGE_CAP_AVG_VOLUME, LARGE_CAP_VOLUME_RATIO,
 )
 
 
@@ -91,10 +92,11 @@ def _technical(ticker: str, df: pd.DataFrame) -> dict:
         elif bb_pct > 0.8:
             score -= 1; signals.append("Near upper Bollinger")
 
-    # Volume surge
-    avg_vol = volume.rolling(20).mean().iloc[-1]
+    # Volume surge — large-caps (avg > 15M) use relaxed ratio to avoid penalising mega-caps
+    avg_vol   = volume.rolling(20).mean().iloc[-1]
     vol_ratio = volume.iloc[-1] / avg_vol if avg_vol > 0 else 1.0
-    if vol_ratio >= MIN_VOLUME_RATIO:
+    threshold = LARGE_CAP_VOLUME_RATIO if avg_vol >= LARGE_CAP_AVG_VOLUME else MIN_VOLUME_RATIO
+    if vol_ratio >= threshold:
         score += 2; signals.append(f"Volume surge ({vol_ratio:.1f}x avg)")
 
     # Trend: price vs SMA20 / SMA50

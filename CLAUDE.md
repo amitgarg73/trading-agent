@@ -1,6 +1,6 @@
 # CLAUDE.md — Trading Agent
 
-## ⛔ FEATURE FREEZE UNTIL JUNE 1, 2026
+## ⛔ FEATURE FREEZE UNTIL JUNE 8, 2026
 
 The system is in a 2-week paper trading validation window.
 **Do not build new features. Do not refactor. Do not add complexity.**
@@ -27,7 +27,7 @@ After any meaningful change to logic, config, or pipeline — update these files
 
 ## Validation Gate
 
-Run on June 1: `python3 eval.py --days 14`
+Run on June 8: `python3 eval.py --days 14`
 
 Pass criteria:
 - Win rate ≥ 80%

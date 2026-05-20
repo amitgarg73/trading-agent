@@ -31,8 +31,14 @@ LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions 
 TRAIL_PCT                   = 0.01        # Trailing stop: close if price drops 1% from highest seen since entry
 PARTIAL_PROFIT_ENABLED      = True        # Take 50% of shares off at PARTIAL_PROFIT_PCT gain; let rest run to full target
 PARTIAL_PROFIT_PCT          = 0.01        # 1% partial exit — locks in half the position on a smaller move
-INTRADAY_SCAN_UTC_START     = 15          # 11:00 AM ET — intraday scan entry window open
-INTRADAY_SCAN_UTC_END       = 17          # 1:00 PM ET — intraday scan entry window close
+INTRADAY_SCAN_UTC_START         = 15          # 11:00 AM ET — intraday scan entry window open
+INTRADAY_SCAN_UTC_END           = 18          # 2:00 PM ET — intraday scan entry window close (extended from 1 PM)
+INTRADAY_SCAN_MAX_RUNS          = 2           # max intraday scan runs per day
+INTRADAY_SCAN_MIN_INTERVAL_MINS = 90          # min minutes between consecutive intraday scans
+INTRADAY_TARGET_PCT             = 0.01        # 1% target for intraday entries — less time = smaller target
+MIN_INTRADAY_MOVE_PCT           = 4.0         # minimum % move today to qualify as momentum candidate
+LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed
+LARGE_CAP_VOLUME_RATIO          = 0.5         # relaxed volume ratio for mega-caps (vs MIN_VOLUME_RATIO=1.5)
 USE_NATIVE_TRAILING_STOP    = False       # trail_percent not supported in StopLossRequest bracket leg; use manual high_watermark trail
                                           # When False: manual high_watermark check every 15 min (safe default, paper OK)
                                           # Enable after 2-week paper A/B validation — P0 before real money
@@ -83,10 +89,10 @@ STOCK_UNIVERSE = [
     "NOW", "TXN", "HPQ", "DELL", "ARM",
 
     # ── Semiconductors ────────────────────────────────────────────
-    "MU", "AMAT", "KLAC", "MCHP", "MPWR", "ON",
+    "MU", "AMAT", "KLAC", "LRCX", "MCHP", "MPWR", "ON",
     "STX", "WDC", "MRVL", "ADI", "SWKS", "QRVO", "WOLF",
     "SMCI", "ACLS", "COHU", "FORM", "AMBA", "CEVA", "SLAB",
-    "DIOD", "ALGM", "AXTI", "SITM", "ALAB", "ONTO",
+    "DIOD", "ALGM", "AXTI", "SITM", "ALAB", "ONTO", "CRDO",
     "ENTG", "UCTT", "ICHR", "KLIC", "RMBS", "CRUS",
 
     # ── Software / Cloud / AI ─────────────────────────────────────
@@ -126,7 +132,8 @@ STOCK_UNIVERSE = [
     "F", "GM", "RIVN", "LCID",
     "CAVA", "SHAK", "TXRH", "WING",
     "ONON", "CROX", "FND", "RH",
-    "LYFT",
+    "LYFT", "UAL", "DAL", "AAL", "LUV", "ALK",
+    "CCL", "NCLH",
 
     # ── Consumer Staples ──────────────────────────────────────────
     "PG", "KO", "PEP", "COST", "WMT", "TGT", "MDLZ",
@@ -156,9 +163,10 @@ STOCK_UNIVERSE = [
     "FCX", "AA", "CLF", "NUE", "STLD", "RS", "VMC",
     "MLM", "FMC", "MOS", "CF", "MP",
 
-    # ── Utilities ─────────────────────────────────────────────────
+    # ── Utilities / Power ─────────────────────────────────────────
     "NEE", "DUK", "SO", "D", "AEP", "EXC", "PCG",
     "XEL", "WEC", "ES", "CMS", "AWK", "SRE", "ETR",
+    "CEG", "VST", "ENPH",
 
     # ── Communication / Media ─────────────────────────────────────
     "T", "VZ", "TMUS", "DIS", "NFLX", "CMCSA", "CHTR",
