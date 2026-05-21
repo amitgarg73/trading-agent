@@ -62,7 +62,8 @@ def fetch_sp500() -> list[str]:
             timeout=15,
         )
         resp.raise_for_status()
-        df = pd.read_html(resp.text)[0]
+        import io
+        df = pd.read_html(io.StringIO(resp.text))[0]
         tickers = (
             df["Symbol"]
             .str.strip()
