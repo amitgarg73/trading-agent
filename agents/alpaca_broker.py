@@ -184,22 +184,29 @@ def get_order_fill(order_id: str) -> tuple:
     For a completed bracket order, return (close_price, exit_mechanism).
     exit_mechanism: TARGET, NATIVE_TRAIL, or STOP.
     Returns (None, None) if fill data isn't available.
+
+    Classification order matters: check "trailing" before "stop" before "limit"
+    so "stop_limit" is correctly classified as STOP (not TARGET).
     """
     try:
         order = _client().get_order_by_id(order_id)
-        for leg in (order.legs or []):
+        legs = order.legs or []
+        for leg in legs:
             status_str = str(leg.status).lower()
             type_str   = str(leg.order_type).lower()
             if "filled" in status_str and leg.filled_avg_price:
-                if "limit" in type_str:
-                    mechanism = "TARGET"
-                elif "trailing" in type_str:
+                if "trailing" in type_str:
                     mechanism = "NATIVE_TRAIL"
-                else:
+                elif "stop" in type_str:
                     mechanism = "STOP"
+                else:
+                    mechanism = "TARGET"  # "limit" leg = take-profit
                 return float(leg.filled_avg_price), mechanism
-    except Exception:
-        pass
+        if legs:
+            statuses = [(str(l.order_type), str(l.status)) for l in legs]
+            print(f"        ℹ️  get_order_fill({order_id[:8]}…): no filled leg found — {statuses}")
+    except Exception as e:
+        print(f"        ⚠️  get_order_fill({order_id}): {e}")
     return None, None
 
 
