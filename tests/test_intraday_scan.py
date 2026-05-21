@@ -4,7 +4,7 @@ All external calls (DB, scanner, strategy, risk, portfolio, market_context) are 
 """
 import pytest
 from unittest.mock import patch, MagicMock
-from datetime import datetime as real_datetime, datetime
+from datetime import datetime as real_datetime, datetime, date
 from config.settings import (
     MAX_POSITIONS, DAILY_LOSS_LIMIT, DAILY_BONUS_TARGET,
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END,
@@ -22,7 +22,7 @@ def _utc_now(hour: int) -> datetime:
 
 
 def _make_closed_row(realized: float) -> dict:
-    return {"realized_pnl": realized, "closed_at": "2026-05-20T10:00:00", "close_reason": "TARGET"}
+    return {"realized_pnl": realized, "closed_at": date.today().isoformat() + "T10:00:00", "close_reason": "TARGET"}
 
 
 def _make_open_row(unrealized: float = 0.0) -> dict:

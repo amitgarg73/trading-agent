@@ -150,11 +150,11 @@ def _scan_ticker(ticker: str) -> dict | None:
     info, df = _fetch(ticker)
     if df is None:
         return None
-    # Freshness check: reject if most recent data row is more than 5 calendar days old.
-    # 5 days covers Mon premarket (last bar = Fri = 3 days) and long weekends (4 days).
+    # Freshness check: reject if most recent data row is more than 6 calendar days old.
+    # 6 days covers Thu premarket (bdate_range can snap to prior Thursday = 6 days back).
     # Anything older is genuinely stale yfinance cache — skip to avoid bad signals.
     latest_date = df.index[-1].date() if hasattr(df.index[-1], "date") else None
-    if latest_date and latest_date < date.today() - timedelta(days=5):
+    if latest_date and latest_date < date.today() - timedelta(days=6):
         return None
     tech = _technical(ticker, df)
     price = tech["price"]
