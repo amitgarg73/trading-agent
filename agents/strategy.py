@@ -151,7 +151,7 @@ def run(candidates: list[dict], market_summary: str = "", max_positions: int = M
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=3000,
+        max_tokens=4096,
         system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": _build_prompt(candidates, market_summary, max_positions)}],
         extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
