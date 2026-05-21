@@ -1,12 +1,13 @@
 """
-Universe Refresh Agent — runs weekly (Monday 8:30 AM ET).
-Screens the full static UNIVERSE (settings.py) + curated high-momentum tickers
-for liquidity + volatility, sorts by ATR%, saves to Supabase.
+Universe Refresh Agent — runs monthly (1st of each month, 8:30 AM ET).
+Fetches the live S&P 500 constituent list from Wikipedia, combines with
+non-leveraged sector ETFs, screens for liquidity + volatility, and saves
+the approved list to Supabase.
 
 Criteria:
-  price       $5 – $500
+  price       $5 – $2000
   avg volume  ≥ 500K/day (20-day)
-  ATR %       ≥ 2% (14-day ATR / price)
+  ATR %       ≥ 0.5% (14-day ATR / price) — light filter; scanner does deep filtering daily
 
 Output stored in scan_results as scan_type="universe_refresh".
 Orchestrator reads this at premarket; falls back to settings.py if stale.
@@ -18,31 +19,56 @@ import pandas as pd
 from datetime import date
 
 MIN_PRICE      = 5.0
-MAX_PRICE      = 500.0
+MAX_PRICE      = 2000.0
 MIN_AVG_VOLUME = 500_000
-MIN_ATR_PCT    = 2.0
+MIN_ATR_PCT    = 0.5
 BATCH_SIZE     = 50
 
-# Curated additions not reliably covered by index components
-CURATED = [
-    # Quantum computing
-    "IONQ", "RGTI", "QUBT", "QBTS",
-    # Crypto miners
-    "MARA", "RIOT", "CLSK", "IREN", "WULF", "CORZ", "HUT", "BITF",
-    # Space / eVTOL
-    "ASTS", "RKLB", "LUNR", "OKLO", "ACHR", "JOBY",
-    # AI / edge compute
-    "SOUN", "BBAI", "APLD", "GFAI",
-    # Biotech movers
-    "MRNA", "BNTX", "CRSP", "BEAM", "EDIT", "NVAX", "VKTX", "RXRX",
-    # Leveraged ETFs — high ATR by design
-    "SOXL", "SOXS", "TQQQ", "SQQQ", "UVXY", "LABU", "LABD",
-    # Fintech / crypto-adjacent
-    "MSTR", "COIN", "HOOD",
-    # CBRS post-IPO
-    "CBRS",
+_WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+
+# Non-leveraged ETFs to always include alongside the S&P 500 stocks
+NON_LEVERAGED_ETFS = [
+    # Broad market
+    "SPY", "QQQ", "DIA", "VTI", "VOO", "IVV",
+    # Mid / small cap
+    "MDY", "IJH", "IJR", "VB", "IWO", "IWN",
+    # Sector ETFs
+    "XLK", "XLF", "XLE", "XLV", "XLI", "XLC",
+    "XLY", "XLP", "XLB", "XLRE", "XLU",
+    # Thematic
+    "SOXX", "SMH", "HACK", "CIBR", "WCLD", "BUG",
+    "ARKG", "ARKF",
+    "GLD", "SLV", "GDX", "GDXJ", "USO", "UNG",
+    "TLT", "HYG", "LQD", "TIP",
 ]
 
+# Minimal fallback if Wikipedia is unreachable — core S&P 500 names
+_SP500_FALLBACK = [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B",
+    "AVGO", "LLY", "JPM", "V", "UNH", "XOM", "MA", "COST", "HD", "PG",
+    "JNJ", "ABBV", "BAC", "MRK", "CRM", "ORCL", "CVX", "KO", "PEP",
+    "AMD", "ADBE", "NFLX", "TMO", "CSCO", "WMT", "LIN", "ACN", "MCD",
+    "ABT", "DHR", "GE", "TXN", "PM", "NEE", "INTC", "RTX", "NOW", "HON",
+]
+
+
+def fetch_sp500() -> list[str]:
+    """Fetch current S&P 500 tickers from Wikipedia. Returns fallback list on error."""
+    try:
+        df = pd.read_html(_WIKI_URL)[0]
+        tickers = (
+            df["Symbol"]
+            .str.strip()
+            .str.replace(".", "-", regex=False)
+            .tolist()
+        )
+        if len(tickers) < 400:
+            raise ValueError(f"Only {len(tickers)} tickers — looks truncated")
+        print(f"        S&P 500: fetched {len(tickers)} tickers from Wikipedia")
+        return tickers
+    except Exception as e:
+        print(f"        ⚠️  Wikipedia fetch failed ({e}) — using fallback list ({len(_SP500_FALLBACK)} tickers)")
+        return list(_SP500_FALLBACK)
 
 
 def _screen_batch(batch: list[str]) -> tuple[list[dict], int]:
@@ -52,7 +78,6 @@ def _screen_batch(batch: list[str]) -> tuple[list[dict], int]:
         raw = yf.download(batch, period="30d", interval="1d",
                           progress=False, group_by="ticker", auto_adjust=True)
         if isinstance(raw.columns, pd.MultiIndex):
-            # multi-ticker download
             for ticker in batch:
                 try:
                     df = raw[ticker].dropna(how="all")
@@ -67,7 +92,6 @@ def _screen_batch(batch: list[str]) -> tuple[list[dict], int]:
                 except Exception:
                     failed += 1
         else:
-            # single ticker — raw IS the df
             ticker = batch[0]
             df = raw.dropna(how="all")
             result = _score(ticker, df)
@@ -91,7 +115,6 @@ def _score(ticker: str, df: pd.DataFrame) -> dict | None:
         avg_vol = float(df["volume"].tail(20).mean())
         if avg_vol < MIN_AVG_VOLUME:
             return None
-        # 14-day ATR
         high  = df["high"]
         low   = df["low"]
         close = df["close"]
@@ -114,11 +137,11 @@ def _score(ticker: str, df: pd.DataFrame) -> dict | None:
 
 
 def run() -> list[str]:
-    print("\n[ Universe Refresh ] Building screening pool...")
+    print("\n[ Universe Refresh ] Building S&P 500 screening pool...")
 
-    from config.settings import UNIVERSE as _STATIC
-    combined = list(dict.fromkeys(_STATIC + CURATED))
-    print(f"        Static universe: {len(_STATIC)} | Curated additions: {len(CURATED)} | Combined: {len(combined)}")
+    sp500  = fetch_sp500()
+    combined = list(dict.fromkeys(sp500 + NON_LEVERAGED_ETFS))
+    print(f"        S&P 500: {len(sp500)} | ETFs: {len(NON_LEVERAGED_ETFS)} | Combined: {len(combined)}")
 
     print(f"        Screening {len(combined)} tickers "
           f"(price ${MIN_PRICE}–${MAX_PRICE}, vol ≥{MIN_AVG_VOLUME:,}, ATR ≥{MIN_ATR_PCT}%)...")
@@ -135,9 +158,8 @@ def run() -> list[str]:
               f"{len(all_passed)} passing so far", end="\r")
         time.sleep(0.3)
 
-    print()  # newline after progress
+    print()
 
-    # Sort by ATR% desc — most volatile / day-tradeable first
     all_passed.sort(key=lambda x: x["atr_pct"], reverse=True)
     tickers = [s["ticker"] for s in all_passed]
 
@@ -149,15 +171,14 @@ def run() -> list[str]:
         "date":      date.today().isoformat(),
         "scan_type": "universe_refresh",
         "results": {
-            "tickers":       tickers,
-            "stats":         all_passed,
+            "tickers":        tickers,
+            "stats":          all_passed,
             "total_screened": len(combined),
-            "passed":        len(tickers),
-            "failed":        total_failed,
+            "passed":         len(tickers),
+            "failed":         total_failed,
             "sources": {
-                "sp500":    len(sp500),
-                "nasdaq100": len(ndx100),
-                "curated":  len(CURATED),
+                "sp500":  len(sp500),
+                "etfs":   len(NON_LEVERAGED_ETFS),
             },
         },
     })

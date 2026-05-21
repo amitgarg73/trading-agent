@@ -2,7 +2,7 @@ name: Universe Refresh
 
 on:
   schedule:
-    - cron: '30 12 * * 1'   # 8:30 AM ET Mondays (12:30 UTC, before 9AM premarket)
+    - cron: '30 12 1 * *'   # 8:30 AM ET on the 1st of each month (12:30 UTC)
   workflow_dispatch:         # manual trigger any time
 
 jobs:

@@ -156,7 +156,7 @@ STOCK_UNIVERSE = [
     "HON", "MMM", "EMR", "ETN", "PH", "ROK", "AME",
     "GNRC", "OTIS", "CARR", "ITW", "XYL", "KTOS", "AXON",
     "LDOS", "SAIC", "BAH", "CACI", "HII",
-    "JOBY", "ACHR", "EVTL", "SPCE", "BE",
+    "JOBY", "ACHR", "EVTL", "BE",
 
     # ── Materials ─────────────────────────────────────────────────
     "LIN", "APD", "DD", "DOW", "PPG", "SHW", "NEM",
@@ -180,8 +180,6 @@ STOCK_UNIVERSE = [
     # ── Space / Defense-adjacent ──────────────────────────────────
     "ASTS", "OKLO", "LUNR", "RKLB", "IRDM", "SPIR",
 
-    # ── Meme / High-beta retail ───────────────────────────────────
-    "GME", "AMC", "SPCE", "ARQQ",
 ]
 
 ETF_UNIVERSE = [
@@ -197,9 +195,6 @@ ETF_UNIVERSE = [
     "ARKG", "ARKF",
     "GLD", "SLV", "GDX", "GDXJ", "USO", "UNG",
     "TLT", "HYG", "LQD", "TIP",
-    # Leveraged
-    "TQQQ", "SQQQ", "UPRO", "SPXU", "SOXL", "SOXS",
-    "UVXY", "SVXY", "LABU", "LABD",
 ]
 
 UNIVERSE = STOCK_UNIVERSE + ETF_UNIVERSE
