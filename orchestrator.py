@@ -86,6 +86,16 @@ def premarket(broker: str = "simulation"):
         print(f"  ⚠️  Premarket already ran for {today_iso} — skipping duplicate run.\n")
         return
 
+    # 0a. Morning sweep — close any overnight positions before trading begins
+    if broker == "alpaca":
+        overnight = alpaca_broker.get_open_tickers()
+        if overnight:
+            print(f"  ⚠️  OVERNIGHT POSITIONS DETECTED: {overnight}")
+            print(f"  Closing before day trading begins...\n")
+            alpaca_broker.cancel_all_orders()
+            swept = alpaca_broker.close_all_positions()
+            print(f"  Swept {len(swept)} overnight position(s). These will appear in today's Alpaca equity delta.\n")
+
     # 0. Market context — volatility gate + futures signal
     mkt = market_context.run()
     if mkt["decision"] == "SKIP":
