@@ -81,14 +81,14 @@ class TestBasicMetrics:
         assert m["avg_win_rate"] == pytest.approx(70.0)
 
     def test_total_return_calculation(self):
-        # ending_capital = 101_000 → return = 1%
-        rows = [make_perf_row("2026-05-01", ending_capital=101_000)]
+        # ending_capital = 50_500 → return = 1% on $50K capital
+        rows = [make_perf_row("2026-05-01", ending_capital=50_500)]
         m = _run_metrics(rows)
         assert m["total_return"] == pytest.approx(1.0, abs=0.01)
 
     def test_ann_return_extrapolation(self):
         # 1% over 1 day → 250% annualized
-        rows = [make_perf_row("2026-05-01", ending_capital=101_000)]
+        rows = [make_perf_row("2026-05-01", ending_capital=50_500)]
         m = _run_metrics(rows)
         assert m["ann_return"] == pytest.approx(250.0, abs=1.0)
 

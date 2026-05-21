@@ -55,7 +55,7 @@ class TestValidateTrade:
 
     def test_rr_below_minimum_rejected(self):
         # entry=100, target=100.5 (0.5% gain), stop=99.5 (0.5% loss) → 1:1 R:R < 3.0
-        ok, msg = _validate_trade(make_trade(entry=100, target=100.5, stop=99.5, size=5000))
+        ok, msg = _validate_trade(make_trade(entry=100, target=100.5, stop=99.5, size=2_500))
         assert not ok
         assert "Reward:risk" in msg
 
@@ -139,22 +139,22 @@ class TestRiskRun:
         assert len(out["rejected_trades"]) == 1
 
     def test_shares_populated_on_approval(self):
-        out = run(self._make_strategy_output([make_trade(entry=100, size=6000)]))
+        out = run(self._make_strategy_output([make_trade(entry=100, size=3_000)]))
         trade = out["approved_trades"][0]
-        assert trade["shares"] == 60
+        assert trade["shares"] == 30
         assert trade["status"] == "PLANNED"
 
     def test_estimated_profit_correct(self):
-        # entry=100, target=102, shares=60 → profit = 60*(102-100) = $120
-        out = run(self._make_strategy_output([make_trade(entry=100, target=102, size=6000)]))
+        # entry=100, target=102, shares=30 → profit = 30*(102-100) = $60
+        out = run(self._make_strategy_output([make_trade(entry=100, target=102, size=3_000)]))
         trade = out["approved_trades"][0]
-        assert trade["estimated_profit"] == pytest.approx(120.0, abs=1.0)
+        assert trade["estimated_profit"] == pytest.approx(60.0, abs=1.0)
 
     def test_max_loss_correct(self):
-        # entry=100, stop=99.50, shares=60 → loss = 60*(100-99.50) = $30.00
-        out = run(self._make_strategy_output([make_trade(entry=100, stop=99.50, size=6000)]))
+        # entry=100, stop=99.50, shares=30 → loss = 30*(100-99.50) = $15.00
+        out = run(self._make_strategy_output([make_trade(entry=100, stop=99.50, size=3_000)]))
         trade = out["approved_trades"][0]
-        assert trade["max_loss"] == pytest.approx(30.0, abs=1.0)
+        assert trade["max_loss"] == pytest.approx(15.0, abs=1.0)
 
     def test_max_positions_cap(self):
         trades = [make_trade(ticker=f"T{i}") for i in range(MAX_POSITIONS + 5)]

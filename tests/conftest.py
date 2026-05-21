@@ -54,7 +54,7 @@ def make_trade(
     entry: float = 100.0,
     target: float = 102.0,   # 2% up
     stop: float = 99.50,     # 0.50% down → 4:1 R:R
-    size: int = 6_000,
+    size: int = 3_000,
     confidence: str = "MEDIUM",
     action: str = "BUY",
 ) -> dict:
@@ -115,7 +115,7 @@ def make_perf_row(
     date_str: str,
     total_pnl: float = 500.0,
     win_rate: float = 75.0,
-    ending_capital: float = 100_500.0,
+    ending_capital: float = 50_500.0,
 ) -> dict:
     return {
         "date":            date_str,
