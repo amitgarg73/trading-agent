@@ -207,8 +207,17 @@ def _maybe_run_intraday_scan(broker: str):
         mkt       = market_context.run()
         quiet_day = mkt.get("quiet_day", False)
 
+        # Tickers already traded today — don't re-enter (open or closed)
+        today_closed = db.select("positions", filters={"status": "CLOSED"})
+        traded_today = (
+            {p["ticker"] for p in open_pos if p.get("ticker")}
+            | {p["ticker"] for p in today_closed
+               if p.get("ticker") and (p.get("opened_at") or "").startswith(today)}
+        )
+
         # ── Momentum candidates (stocks already moving today) ────────
-        momentum_candidates = momentum_scan(UNIVERSE, broker=broker)
+        momentum_candidates = [c for c in momentum_scan(UNIVERSE, broker=broker)
+                               if c["ticker"] not in traded_today]
         print(f"        Momentum movers: {len(momentum_candidates)} stocks "
               f"up ≥{int(MIN_INTRADAY_MOVE_PCT)}% above VWAP")
 
@@ -217,6 +226,7 @@ def _maybe_run_intraday_scan(broker: str):
         technical_candidates = [
             c for c in technical_candidates
             if c.get("technical_score", 0) >= STRATEGY_MIN_SCORE
+            and c["ticker"] not in traded_today
         ]
 
         # Merge: momentum first (higher conviction), dedupe by ticker

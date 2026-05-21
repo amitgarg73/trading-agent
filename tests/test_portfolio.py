@@ -340,3 +340,65 @@ class TestBreakevenStop:
 
         updates = self._stop_loss_updates_for(mock_update, "test-leg-b")
         assert len(updates) == 0, "Cross-ticker breakeven lock must not fire"
+
+
+# ── Alpaca entry_price consistency ───────────────────────────────────────────
+
+class TestAlpacaEntryPrice:
+    """
+    For Alpaca broker, DB entry_price must equal trade["entry_price"] (the limit
+    order price), not the live yfinance price — otherwise stop_loss can appear
+    above entry if the stock dips between scan and execution.
+    """
+
+    def _make_trade(self, entry=100.0, target=102.0, stop=99.33):
+        return {
+            "ticker": "AAPL", "action": "BUY",
+            "entry_price": entry, "target_price": target, "stop_loss": stop,
+            "position_size": 6000, "shares": 60,
+            "estimated_profit": 120.0, "max_loss": 40.2,
+            "confidence": "HIGH", "reasoning": "test",
+        }
+
+    def test_alpaca_uses_planned_entry_not_live_price(self):
+        """DB entry_price for Alpaca == trade entry, even if live price differs."""
+        trade = self._make_trade(entry=100.0)
+        live_price = 97.0  # stock dipped below planned entry
+
+        inserted = {}
+        def capture_insert(table, data):
+            inserted.update(data)
+            return {**data, "id": "pos-1"}
+
+        import sys
+        mock_broker = MagicMock()
+        mock_broker.submit_bracket_order.return_value = "order-123"
+        with patch("agents.portfolio._current_price", return_value=live_price), \
+             patch.dict(sys.modules, {"agents.alpaca_broker": mock_broker}), \
+             patch("core.db.insert", side_effect=capture_insert):
+            from agents.portfolio import _open_single_position
+            _open_single_position("plan-1", trade, live_price, broker="alpaca")
+
+        assert inserted.get("entry_price") == 100.0, (
+            f"Alpaca entry_price should be planned entry 100.0, got {inserted.get('entry_price')}"
+        )
+        assert inserted["stop_loss"] < inserted["entry_price"], (
+            f"stop_loss {inserted['stop_loss']} must be below entry {inserted['entry_price']}"
+        )
+
+    def test_simulation_uses_live_price(self):
+        """Simulation mode should still use the live yfinance price as entry."""
+        trade = self._make_trade(entry=100.0)
+        live_price = 97.0
+
+        inserted = {}
+        def capture_insert(table, data):
+            inserted.update(data)
+            return {**data, "id": "pos-1"}
+
+        with patch("agents.portfolio._current_price", return_value=live_price), \
+             patch("core.db.insert", side_effect=capture_insert):
+            from agents.portfolio import _open_single_position
+            _open_single_position("plan-1", trade, live_price, broker="simulation")
+
+        assert inserted.get("entry_price") == live_price

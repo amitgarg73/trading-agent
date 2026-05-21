@@ -25,8 +25,8 @@ def _make_closed_row(realized: float) -> dict:
     return {"realized_pnl": realized, "closed_at": date.today().isoformat() + "T10:00:00", "close_reason": "TARGET"}
 
 
-def _make_open_row(unrealized: float = 0.0) -> dict:
-    return {"unrealized_pnl": unrealized, "status": "OPEN"}
+def _make_open_row(unrealized: float = 0.0, ticker: str = "HELD") -> dict:
+    return {"ticker": ticker, "unrealized_pnl": unrealized, "status": "OPEN"}
 
 
 def _make_prior_scan(minutes_ago: float = INTRADAY_SCAN_MIN_INTERVAL_MINS + 1) -> dict:
@@ -277,6 +277,50 @@ class TestIntradayScanPipeline:
 
         call_kwargs = mock_strategy_run.call_args[1]
         assert call_kwargs["max_positions"] == 2
+
+    def test_already_traded_tickers_excluded_from_candidates(self):
+        """Tickers with positions today (open or closed) must not appear in candidates."""
+        already_open = [{"ticker": "LUNR", "unrealized_pnl": 0, "status": "OPEN"}]
+        already_closed = [{"ticker": "SJM", "realized_pnl": 50.0,
+                           "close_reason": "TARGET", "status": "CLOSED",
+                           "opened_at": TODAY + "T10:00:00"}]  # must match mocked UTC date
+        # Both LUNR and SJM are today's tickers — only AAPL is fresh
+        momentum = [{"ticker": "LUNR", "technical_score": 7, "action": "BUY",
+                     "today_pct_change": 5.0}]
+        technical = [
+            {"ticker": "SJM",  "technical_score": 5, "action": "BUY"},
+            {"ticker": "AAPL", "technical_score": 5, "action": "BUY"},
+        ]
+
+        captured = []
+        def capture_strategy(candidates, **kw):
+            captured.extend(candidates)
+            return {"trades": [], "market_context": ""}
+
+        def db_select(table, **kw):
+            f = kw.get("filters", {})
+            if f.get("scan_type") == "intraday_scan": return []
+            if f.get("status") == "OPEN":   return already_open
+            if f.get("status") == "CLOSED": return already_closed
+            return []
+
+        with patch("agents.intraday.datetime") as mock_dt, \
+             patch("core.db.select", side_effect=db_select), \
+             patch("core.db.insert", return_value={"id": "x"}), \
+             patch("core.db.update"), \
+             patch("agents.market_context.run", return_value={"quiet_day": False, "summary": ""}), \
+             patch("scanner.intraday_momentum.scan", return_value=momentum), \
+             patch("scanner.scanner.run_scan", return_value=technical), \
+             patch("agents.strategy.run", side_effect=capture_strategy):
+            mock_dt.utcnow.return_value = _utc_now(WINDOW_HOUR)
+            mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
+            from agents.intraday import _maybe_run_intraday_scan
+            _maybe_run_intraday_scan(broker="simulation")
+
+        tickers_sent = [c["ticker"] for c in captured]
+        assert "LUNR" not in tickers_sent, "LUNR (open today) should be excluded"
+        assert "SJM"  not in tickers_sent, "SJM (closed today) should be excluded"
+        assert "AAPL" in tickers_sent,     "AAPL (fresh) should be included"
 
     def test_handles_scanner_exception_gracefully(self):
         """If scanner raises, scan must return None without crashing run()."""

@@ -5,6 +5,7 @@ from datetime import date, datetime
 from agents.portfolio import close_all_positions
 from core import db
 from config.settings import TOTAL_CAPITAL
+import yfinance as yf
 
 
 def run(broker: str = "simulation") -> dict:
@@ -76,7 +77,45 @@ def run(broker: str = "simulation") -> dict:
     }
 
     db.upsert("daily_performance", record, on_conflict="date")
+
+    _print_unfilled_analysis(today_closed)
+
     return record
+
+
+def _print_unfilled_analysis(today_closed: list) -> None:
+    """For UNFILLED positions, check if target would have been hit intraday."""
+    unfilled = [p for p in today_closed if p.get("close_reason") == "UNFILLED"]
+    if not unfilled:
+        return
+
+    # Dedupe by ticker (partial splits create two rows per ticker)
+    seen = set()
+    unique = []
+    for p in unfilled:
+        if p["ticker"] not in seen:
+            seen.add(p["ticker"])
+            unique.append(p)
+
+    print(f"\n  📋 UNFILLED order analysis ({len(unique)} ticker(s)):")
+    for p in unique:
+        ticker = p["ticker"]
+        target = p.get("target_price")
+        stop   = p.get("stop_loss")
+        entry  = p.get("entry_price")
+        try:
+            data = yf.Ticker(ticker).history(period="1d", interval="5m")
+            if data.empty or target is None:
+                print(f"     {ticker:6s}  no intraday data available")
+                continue
+            intraday_high = round(float(data["High"].max()), 2)
+            intraday_low  = round(float(data["Low"].min()), 2)
+            would_hit_target = intraday_high >= target
+            would_hit_stop   = intraday_low  <= stop if stop else False
+            outcome = "✅ TARGET would hit" if would_hit_target else ("🔴 STOP would hit" if would_hit_stop else "➖ Neither hit")
+            print(f"     {ticker:6s}  entry ${entry}  target ${target}  day high ${intraday_high}  →  {outcome}")
+        except Exception as e:
+            print(f"     {ticker:6s}  analysis failed: {e}")
 
 
 if __name__ == "__main__":

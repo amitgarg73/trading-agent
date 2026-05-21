@@ -63,12 +63,16 @@ def _open_single_position(plan_id, trade, price, broker, leg_label=""):
             print(f"        ⚠️  Alpaca order failed for {ticker}{leg_label}: {e}")
 
     native_trail = broker == "alpaca" and USE_NATIVE_TRAILING_STOP
+    # For Alpaca, the limit order fills at the planned entry price — use that so
+    # stop/target remain consistent with what risk validated. Live price is only
+    # correct for simulation (immediate yfinance fill).
+    db_entry = trade["entry_price"] if broker == "alpaca" else price
     return db.insert("positions", {
         "planned_trade_id":    planned["id"],
         "ticker":              ticker,
         "action":              trade["action"],
-        "entry_price":         price,
-        "current_price":       price,
+        "entry_price":         db_entry,
+        "current_price":       db_entry,
         "target_price":        trade["target_price"],
         "stop_loss":           trade["stop_loss"],
         "shares":              trade["shares"],
@@ -76,7 +80,7 @@ def _open_single_position(plan_id, trade, price, broker, leg_label=""):
         "unrealized_pnl":      0,
         "status":              "OPEN",
         "alpaca_order_id":     alpaca_order_id,
-        "high_watermark":      price,
+        "high_watermark":      db_entry,
         "native_trail_active": native_trail,
     })
 
