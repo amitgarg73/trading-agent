@@ -125,7 +125,7 @@ Five independent layers, applied in sequence:
 | **News Filter** | Earnings-day surprises, negative catalyst stocks |
 | **Risk Agent** | R:R below floor, position size out of bounds, stop too wide |
 | **Sector Guard** | > 3 positions in any single sector |
-| **Guardrails** | Duplicates, price sanity (>5% from market), daily loss limit (-$300) |
+| **Guardrails** | Duplicates, price sanity (>5% from market), daily loss limit (-$500 net P&L) |
 
 ### 5.1 Quiet Day Mode
 
@@ -153,7 +153,7 @@ Triggered when Fear & Greed Index < 35.
 | `TRAIL_PCT` | 1% | Trailing stop from high watermark |
 | `DAILY_LOCK_IN_TARGET` | $716 | Tier 1: let winners ride |
 | `DAILY_BONUS_TARGET` | $1,000 | Tier 2: close everything |
-| `DAILY_LOSS_LIMIT` | -$300 | Stop trading if realized P&L drops below |
+| `DAILY_LOSS_LIMIT` | -$500 | Pause new entries if net P&L (realized + unrealized) drops below (1% of capital) |
 | `MAX_POSITIONS` | 15 | Max concurrent positions |
 | `MAX_PER_SECTOR` | 3 | Sector concentration cap |
 | `SCORE_THRESHOLD` | 3 | Minimum scanner score (absolute value) |
@@ -166,8 +166,9 @@ Triggered when Fear & Greed Index < 35.
 
 **~665 tickers** (dynamic + static merged):
 
-- **Static (~430):** Curated list across mega-cap tech, semiconductors, software/AI, fintech, biotech, energy, financials, industrials, ETFs (sector, leveraged, thematic)
-- **Dynamic (~200–250):** Top ATR movers refreshed weekly via `universe_refresh` agent. Sorted by volatility, prepended to static list.
+- **S&P 500 (~503):** Live list fetched from Wikipedia monthly via `universe_refresh`; written to `config/sp500_tickers.json` as fallback. Ensures quality floor (market cap, float, liquidity minimums).
+- **Non-leveraged ETFs (41):** Sector, broad market, and thematic ETFs; no leveraged or inverse ETFs.
+- **Dynamic:** Top ATR movers from the S&P 500 pool, refreshed monthly. Sorted by volatility, prepended to static list.
 
 Merge strategy: dynamic first (highest ATR movers lead), static appended, deduplicated. Ensures broad coverage while surfacing active names.
 
@@ -193,6 +194,8 @@ Alpaca Paper Trading
 
 Supabase
   → positions, planned_trades, trade_plans, scan_results, daily_performance
+  → daily_runs: one row per scan event (premarket run_number=0, intraday 1-6)
+  → positions.run_id FK → daily_runs.id (links each position to its scan)
   → scan_results used as premarket run lock (duplicate prevention)
 
 Streamlit Dashboard
