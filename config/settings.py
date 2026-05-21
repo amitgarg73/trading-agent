@@ -31,10 +31,10 @@ LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions 
 TRAIL_PCT                   = 0.01        # Trailing stop: close if price drops 1% from highest seen since entry
 PARTIAL_PROFIT_ENABLED      = True        # Take 50% of shares off at PARTIAL_PROFIT_PCT gain; let rest run to full target
 PARTIAL_PROFIT_PCT          = 0.01        # 1% partial exit — locks in half the position on a smaller move
-INTRADAY_SCAN_UTC_START         = 15          # 11:00 AM ET
+INTRADAY_SCAN_UTC_START         = 14          # 10:00 AM ET (after premarket finishes)
 INTRADAY_SCAN_UTC_END           = 20          # buffer past 3:00 PM ET
-INTRADAY_SCAN_MAX_RUNS          = 3           # 11 AM, 1 PM, 3 PM ET
-INTRADAY_SCAN_MIN_INTERVAL_MINS = 120         # 2hrs apart
+INTRADAY_SCAN_MAX_RUNS          = 6           # hourly: 10 AM, 11 AM, 12 PM, 1 PM, 2 PM, 3 PM ET
+INTRADAY_SCAN_MIN_INTERVAL_MINS = 55          # ~1 hr apart (55 min absorbs GH Actions delay)
 INTRADAY_TARGET_PCT             = 0.01        # 1% target for intraday entries — less time = smaller target
 MIN_INTRADAY_MOVE_PCT           = 4.0         # minimum % move today to qualify as momentum candidate
 LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed
