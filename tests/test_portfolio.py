@@ -370,12 +370,10 @@ class TestAlpacaEntryPrice:
             inserted.update(data)
             return {**data, "id": "pos-1"}
 
-        import sys
-        mock_broker = MagicMock()
-        mock_broker.submit_bracket_order.return_value = "order-123"
         with patch("agents.portfolio._current_price", return_value=live_price), \
-             patch.dict(sys.modules, {"agents.alpaca_broker": mock_broker}), \
-             patch("core.db.insert", side_effect=capture_insert):
+             patch("agents.alpaca_broker.submit_bracket_order", return_value="order-123"), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update"):
             from agents.portfolio import _open_single_position
             _open_single_position("plan-1", trade, live_price, broker="alpaca")
 
@@ -402,3 +400,130 @@ class TestAlpacaEntryPrice:
             _open_single_position("plan-1", trade, live_price, broker="simulation")
 
         assert inserted.get("entry_price") == live_price
+
+
+# ── Fix 1: race-condition guard ───────────────────────────────────────────────
+
+class TestRaceConditionGuard:
+    """
+    refresh_positions (Alpaca) must not close a position as STOP/$0 when the
+    bracket fill isn't visible yet — i.e. position just opened and get_order_fill
+    returns (None, None).  It should leave the position OPEN for the next cycle.
+    After 120 s the fallback close behaviour is restored.
+    """
+
+    def _make_alpaca_pos(self, opened_at: str, order_id: str = "ord-abc") -> dict:
+        pos = make_position(ticker="AAPL", entry=100.0, shares=30)
+        pos["alpaca_order_id"]  = order_id
+        pos["opened_at"]        = opened_at
+        pos["native_trail_active"] = False
+        return pos
+
+    @patch("agents.alpaca_broker.get_order_fill", return_value=(None, None))
+    @patch("agents.alpaca_broker.get_open_tickers", return_value=set())   # gone from Alpaca
+    @patch("core.db.update")
+    @patch("core.db.select")
+    def test_new_position_left_open_when_fill_missing(
+            self, mock_select, mock_update, mock_tickers, mock_fill):
+        """Position opened 5s ago + no fill data → stays OPEN, no DB close written."""
+        from datetime import datetime, timedelta
+        opened_at = (datetime.utcnow() - timedelta(seconds=5)).isoformat()
+        pos = self._make_alpaca_pos(opened_at)
+        mock_select.side_effect = lambda table, **kw: (
+            [pos] if kw.get("filters", {}).get("status") == "OPEN" else []
+        )
+
+        from agents.portfolio import refresh_positions
+        result = refresh_positions(broker="alpaca")
+
+        # position should be in result with no close_reason
+        assert any(r.get("close_reason") is None for r in result)
+        # DB must not have been updated to CLOSED
+        for call in mock_update.call_args_list:
+            assert call[0][2].get("status") != "CLOSED", \
+                "Should not mark position CLOSED during race-condition window"
+
+    @patch("agents.alpaca_broker.get_order_fill", return_value=(None, None))
+    @patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+    @patch("core.db.update")
+    @patch("core.db.select")
+    def test_old_position_closed_with_fallback_when_fill_missing(
+            self, mock_select, mock_update, mock_tickers, mock_fill):
+        """Position opened 300s ago + no fill data → fallback close still fires."""
+        from datetime import datetime, timedelta
+        opened_at = (datetime.utcnow() - timedelta(seconds=300)).isoformat()
+        pos = self._make_alpaca_pos(opened_at)
+        mock_select.side_effect = lambda table, **kw: (
+            [pos] if kw.get("filters", {}).get("status") == "OPEN" else []
+        )
+
+        from agents.portfolio import refresh_positions
+        refresh_positions(broker="alpaca")
+
+        closed_calls = [c for c in mock_update.call_args_list
+                        if c[0][0] == "positions" and c[0][2].get("status") == "CLOSED"]
+        assert len(closed_calls) == 1, "Old position with no fill should still be closed"
+
+
+# ── Fix 2: phantom position guard ────────────────────────────────────────────
+
+class TestPhantomPositionGuard:
+    """
+    _open_single_position must not write a positions row to the DB when the
+    Alpaca bracket order submission fails.  The planned_trade should be marked
+    CANCELLED and the function must return None.
+    """
+
+    def _make_trade(self):
+        return {
+            "ticker": "AAPL", "action": "BUY",
+            "entry_price": 100.0, "target_price": 102.0, "stop_loss": 99.33,
+            "position_size": 6000, "shares": 60,
+            "estimated_profit": 120.0, "max_loss": 40.2,
+            "confidence": "HIGH", "reasoning": "test",
+        }
+
+    def test_no_db_insert_when_order_fails(self):
+        """If submit_bracket_order raises, positions row must NOT be written."""
+        inserts = []
+        updates = []
+
+        def capture_insert(table, data):
+            inserts.append((table, data))
+            return {**data, "id": f"fake-{table}"}
+
+        def capture_update(table, match, data):
+            updates.append((table, data))
+
+        with patch("agents.alpaca_broker.submit_bracket_order",
+                   side_effect=RuntimeError("order rejected")), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update", side_effect=capture_update), \
+             patch("agents.portfolio._current_price", return_value=100.0):
+            from agents.portfolio import _open_single_position
+            result = _open_single_position("plan-1", self._make_trade(), 100.0, broker="alpaca")
+
+        assert result is None, "Must return None when order fails"
+        position_inserts = [t for t, _ in inserts if t == "positions"]
+        assert len(position_inserts) == 0, "Must not insert phantom position row"
+        cancelled = [d for _, d in updates if d.get("status") == "CANCELLED"]
+        assert len(cancelled) == 1, "planned_trade must be marked CANCELLED"
+
+    def test_position_inserted_when_order_succeeds(self):
+        """Happy path: order succeeds → position row IS written and returned."""
+        inserts = []
+
+        def capture_insert(table, data):
+            inserts.append((table, data))
+            return {**data, "id": f"fake-{table}"}
+
+        with patch("agents.alpaca_broker.submit_bracket_order", return_value="order-xyz"), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update"), \
+             patch("agents.portfolio._current_price", return_value=100.0):
+            from agents.portfolio import _open_single_position
+            result = _open_single_position("plan-1", self._make_trade(), 100.0, broker="alpaca")
+
+        assert result is not None, "Must return the inserted position"
+        position_inserts = [t for t, _ in inserts if t == "positions"]
+        assert len(position_inserts) == 1, "Must insert exactly one position row"

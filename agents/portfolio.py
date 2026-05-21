@@ -61,6 +61,13 @@ def _open_single_position(plan_id, trade, price, broker, leg_label=""):
         except Exception as e:
             print(f"        ⚠️  Alpaca order failed for {ticker}{leg_label}: {e}")
 
+    # Don't write a phantom position if order submission failed.
+    # Mark the planned_trade CANCELLED so it's excluded from P&L reports.
+    if broker == "alpaca" and alpaca_order_id is None:
+        print(f"        ⚠️  No order confirmed for {ticker}{leg_label} — skipping DB insert")
+        db.update("planned_trades", {"id": planned["id"]}, {"status": "CANCELLED"})
+        return None
+
     native_trail = broker == "alpaca" and USE_NATIVE_TRAILING_STOP
     # For Alpaca, the limit order fills at the planned entry price — use that so
     # stop/target remain consistent with what risk validated. Live price is only
@@ -117,10 +124,11 @@ def open_positions(plan_id: str, approved_trades: list, broker: str = "simulatio
 
             pos_a = _open_single_position(plan_id, leg_a, price, broker, leg_label=" [partial]")
             pos_b = _open_single_position(plan_id, leg_b, price, broker, leg_label=" [full]")
-            opened.extend([pos_a, pos_b])
+            opened.extend(p for p in [pos_a, pos_b] if p is not None)
         else:
             pos = _open_single_position(plan_id, trade, price, broker)
-            opened.append(pos)
+            if pos is not None:
+                opened.append(pos)
 
     return opened
 
@@ -193,6 +201,20 @@ def refresh_positions(broker: str = "simulation") -> list:
                 close_price, exit_mechanism = None, "CLOSED"
                 if order_id:
                     close_price, exit_mechanism = alpaca_broker.get_order_fill(order_id)
+
+                # Race-condition guard: market bracket fill may not be visible in
+                # Alpaca API within the same GH Actions run that submitted the order.
+                # Leave OPEN — the next cycle (15 min later) has confirmed fill status.
+                if close_price is None and order_id:
+                    try:
+                        age_s = (datetime.utcnow() -
+                                 datetime.fromisoformat((pos.get("opened_at") or "")[:19])
+                                 ).total_seconds()
+                        if age_s < 120:
+                            updated.append({**pos, "close_reason": None})
+                            continue
+                    except Exception:
+                        pass
 
                 close_price    = close_price    or pos.get("current_price") or pos["entry_price"]
                 exit_mechanism = exit_mechanism or "CLOSED"
