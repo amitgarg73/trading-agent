@@ -133,11 +133,10 @@ def submit_bracket_order(
     Entry is a limit order at entry_price + 0.1% buffer for fill probability on liquid stocks.
     Returns the Alpaca parent order ID.
     """
-    from alpaca.trading.requests import LimitOrderRequest, TakeProfitRequest, StopLossRequest
+    from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
     from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
-    side        = OrderSide.BUY if action == "BUY" else OrderSide.SELL
-    limit_price = round(entry_price * 1.001, 2)
+    side = OrderSide.BUY if action == "BUY" else OrderSide.SELL
 
     if use_native_trail:
         stop_loss_req = StopLossRequest(trail_percent=round(trail_pct * 100, 4))
@@ -145,17 +144,20 @@ def submit_bracket_order(
     else:
         stop_loss_req = StopLossRequest(stop_price=round(stop_price, 2))
 
-    req = LimitOrderRequest(
+    # Market entry guarantees fill on momentum stocks already in motion.
+    # Limit entries at current price routinely go unfilled when the stock
+    # keeps running past the limit without pulling back.
+    req = MarketOrderRequest(
         symbol=ticker,
         qty=shares,
         side=side,
         time_in_force=TimeInForce.DAY,
-        limit_price=limit_price,
         order_class=OrderClass.BRACKET,
         take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
         stop_loss=stop_loss_req,
     )
     order = _client().submit_order(req)
+    print(f"        Market order: {ticker} {shares} shares → {order.id}")
     return str(order.id)
 
 

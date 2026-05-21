@@ -57,8 +57,7 @@ def _open_single_position(plan_id, trade, price, broker, leg_label=""):
                 use_native_trail=USE_NATIVE_TRAILING_STOP,
                 trail_pct=TRAIL_PCT,
             )
-            limit_price = round(trade["entry_price"] * 1.001, 2)
-            print(f"        Alpaca limit order: {ticker}{leg_label} @ ${limit_price} → {alpaca_order_id}")
+            print(f"        Alpaca order placed: {ticker}{leg_label} → {alpaca_order_id}")
         except Exception as e:
             print(f"        ⚠️  Alpaca order failed for {ticker}{leg_label}: {e}")
 
