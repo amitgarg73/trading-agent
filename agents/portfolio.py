@@ -25,7 +25,7 @@ def _current_price(ticker: str) -> float | None:
         return None
 
 
-def _open_single_position(plan_id, trade, price, broker, leg_label=""):
+def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=None):
     """Insert one planned_trade + position record and optionally submit to Alpaca."""
     ticker = trade["ticker"]
     planned = db.insert("planned_trades", {
@@ -88,11 +88,12 @@ def _open_single_position(plan_id, trade, price, broker, leg_label=""):
         "alpaca_order_id":     alpaca_order_id,
         "high_watermark":      db_entry,
         "native_trail_active": native_trail,
+        "run_id":              run_id,
     })
 
 
 def open_positions(plan_id: str, approved_trades: list, broker: str = "simulation",
-                   enable_partial: bool | None = None) -> list:
+                   enable_partial: bool | None = None, run_id: str | None = None) -> list:
     """
     Execute fills for all approved trades and write to DB.
     enable_partial: override PARTIAL_PROFIT_ENABLED (None = use config default).
@@ -122,11 +123,11 @@ def open_positions(plan_id: str, approved_trades: list, broker: str = "simulatio
                      "position_size":    round(rest * p_entry, 2),
                      "estimated_profit": round(rest * (trade["target_price"] - p_entry), 2)}
 
-            pos_a = _open_single_position(plan_id, leg_a, price, broker, leg_label=" [partial]")
-            pos_b = _open_single_position(plan_id, leg_b, price, broker, leg_label=" [full]")
+            pos_a = _open_single_position(plan_id, leg_a, price, broker, leg_label=" [partial]", run_id=run_id)
+            pos_b = _open_single_position(plan_id, leg_b, price, broker, leg_label=" [full]", run_id=run_id)
             opened.extend(p for p in [pos_a, pos_b] if p is not None)
         else:
-            pos = _open_single_position(plan_id, trade, price, broker)
+            pos = _open_single_position(plan_id, trade, price, broker, run_id=run_id)
             if pos is not None:
                 opened.append(pos)
 

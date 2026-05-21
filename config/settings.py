@@ -23,7 +23,8 @@ QUIET_DAY_MIN_REWARD_RISK  = 2.0   # relaxed R:R on quiet days (Fear&Greed < 35)
 QUIET_DAY_FG_THRESHOLD     = 35    # Fear&Greed below this = quiet day
 TARGET_PCT           = 0.02       # 2% profit target per trade (lowered from 3% — more achievable intraday move)
 MAX_PER_SECTOR       = 3          # V2d: max positions in any single sector
-DAILY_LOSS_LIMIT     = -300       # V5: stop trading if today's realized P&L drops below this
+DAILY_LOSS_PCT       = 0.01       # 1% of capital — daily net loss limit (realized + unrealized)
+DAILY_LOSS_LIMIT     = -(TOTAL_CAPITAL * DAILY_LOSS_PCT)  # -$500 at $50K capital
 PRICE_SANITY_PCT     = 0.05       # V5: reject if entry price is >5% from current market price
 DAILY_LOCK_IN_TARGET = 716        # Tier 1: realized P&L floor — stop closing positions, let winners ride
 DAILY_BONUS_TARGET   = 1_000     # Tier 2: realized+unrealized total — close everything, protect exceptional day

@@ -11,6 +11,7 @@ from config.settings import (
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END,
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
     INTRADAY_TARGET_PCT, MIN_INTRADAY_MOVE_PCT, STRATEGY_MIN_SCORE, UNIVERSE,
+    TOTAL_CAPITAL,
 )
 
 
@@ -175,8 +176,9 @@ def _maybe_run_intraday_scan(broker: str):
     unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in open_pos)
     total      = realized + unrealized
 
-    if realized <= DAILY_LOSS_LIMIT:
-        print(f"  ⛔ Intraday scan skipped: realized ${realized:,.2f} ≤ loss limit ${DAILY_LOSS_LIMIT:,.0f}")
+    if total <= DAILY_LOSS_LIMIT:
+        print(f"  ⛔ Intraday scan skipped: net P&L ${total:,.2f} ≤ loss limit ${DAILY_LOSS_LIMIT:,.0f} "
+              f"(1% of ${TOTAL_CAPITAL:,}). Resumes when net P&L recovers.")
         return None
     if total >= DAILY_BONUS_TARGET:
         print(f"  🏆 Intraday scan skipped: exceptional day (${total:,.2f}) — protecting gains")
@@ -269,8 +271,17 @@ def _maybe_run_intraday_scan(broker: str):
 
         existing = db.select("trade_plans", filters={"date": today})
         plan     = existing[0] if existing else db.insert("trade_plans", {"date": today, "status": "EXECUTED"})
+
+        run_row = db.insert("daily_runs", {
+            "date":       today,
+            "run_type":   "intraday",
+            "run_number": run_num,
+            "started_at": now_utc.isoformat(),
+        })
         # Disable partial profit split — 1% target == Leg A target, splitting is redundant
-        opened = open_positions(plan["id"], approved, broker=broker, enable_partial=False)
+        opened = open_positions(plan["id"], approved, broker=broker, enable_partial=False,
+                                run_id=run_row["id"])
+        db.update("daily_runs", {"id": run_row["id"]}, {"positions_opened": len(opened)})
 
         print(f"  ✅ Intraday scan #{run_num}: opened {len(opened)} new position(s)")
         result = {
