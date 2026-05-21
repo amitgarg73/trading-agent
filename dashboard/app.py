@@ -1001,8 +1001,30 @@ elif page == "Performance":
     ev   = _compute_metrics(perf_rows=df.to_dict("records")) or {}
     days = len(df)
 
+    # ── Simple daily history table (always shown) ─────────────────
+    _daily_rows = []
+    for _, _dr in df.sort_values("date", ascending=False).iterrows():
+        _wr = _dr.get("win_rate", 0) or 0
+        _bp = _dr.get("best_trade_pnl", 0) or 0
+        _wp = _dr.get("worst_trade_pnl", 0) or 0
+        _daily_rows.append({
+            "Date":   _dr["date"],
+            "P&L":    fmt_pnl(_dr.get("total_pnl", 0) or 0),
+            "Trades": int(_dr.get("total_trades", 0) or 0),
+            "Win %":  f"{_wr:.0f}%",
+            "Best":   f"{_dr['best_trade_ticker']} +${_bp:,.0f}" if _dr.get("best_trade_ticker") else "—",
+            "Worst":  f"{_dr['worst_trade_ticker']} ${_wp:,.0f}" if _dr.get("worst_trade_ticker") else "—",
+        })
+    if _daily_rows:
+        st.dataframe(pd.DataFrame(_daily_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
     # ── Agent Scorecard ───────────────────────────────────────────
-    if ev:
+    if ev and days < 5:
+        st.info(f"📊 **Scorecard needs ≥ 5 trading days** — {days} day{'s' if days != 1 else ''} recorded so far. Grades and averages will be meaningful once there's more data.")
+
+    elif ev:
         grade_label = {"A": "Excellent", "B": "Good", "C": "Mediocre", "D": "Poor"}.get(ev.get("grade", ""), "")
 
         with st.expander(f"Agent Scorecard — {days} trading day{'s' if days != 1 else ''} of data ({_selected}) · Grade **{ev.get('grade','?')}** ({grade_label})", expanded=True):
@@ -1117,35 +1139,21 @@ elif page == "Performance":
 
             st.markdown("---")
 
-            # ── Score metrics ─────────────────────────────────────────
-            st.markdown("#### Score Breakdown")
-            sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
-            ps = ev.get("pnl_score", 0)
-            ws = ev.get("winday_score", 0)
-            rs = ev.get("winrate_score", 0)
-            sc1.metric("Score", f"{ev.get('score', 0):.0f} / 100",
-                       help=f"Composite 0–100 score across 3 dimensions:\n"
-                            f"• P&L vs target: {ps:.0f}/40 pts (avg daily P&L ÷ ${DAILY_PROFIT_TARGET:,} target × 40)\n"
-                            f"• Win day rate: {ws:.0f}/30 pts (profitable days ÷ total days × 30)\n"
-                            f"• Trade win rate: {rs:.0f}/30 pts (% of trades that won × 30)\n"
-                            f"Grade: A ≥80, B ≥60, C ≥40, D <40")
+            # ── Key metrics ───────────────────────────────────────
+            st.markdown("#### Key Metrics")
+            sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+            _total_pnl_window = df["total_pnl"].sum()
+            sc1.metric("Total P&L", fmt_pnl(_total_pnl_window),
+                       help=f"Cumulative realized P&L over the {days}-day window.")
             sc2.metric("Avg Daily P&L", f"${ev.get('avg_daily_pnl', 0):,.0f}",
                        delta=f"target ${DAILY_PROFIT_TARGET:,}",
-                       help=f"Average realized P&L per trading day over the {days}-day eval window. Target: ${DAILY_PROFIT_TARGET:,}/day.")
+                       help=f"Average realized P&L per trading day. Target: ${DAILY_PROFIT_TARGET:,}/day.")
             sc3.metric("Win Days", f"{win_days} / {days}",
-                       help="Days where total realized P&L was positive. Target: ≥80% of days profitable (consistent execution).")
+                       help="Days where total realized P&L was positive. Target: ≥80%.")
             sc4.metric("Trade Win Rate", f"{ev.get('avg_win_rate', 0):.1f}%",
-                       help="Average % of individual trades (not days) that closed in profit. "
-                            "At 3:1 reward:risk you only need 25% to break even. Target: ≥60%.")
+                       help="% of individual trades that closed in profit. Break-even at 3:1 R:R = 25%.")
             sc5.metric("Actual R:R", f"{ev.get('actual_rr', 0):.2f}x",
-                       help="Reward:Risk ratio = avg winning trade ÷ avg losing trade (absolute values). "
-                            "3.0x means your wins are 3× bigger than your losses on average. "
-                            "Target: ≥3.0x. Below 2.0x means stops may be too tight or targets too far.")
-            sc6.metric("Ann. Return", f"{ev.get('ann_return', 0):+.0f}%",
-                       help=f"Extrapolates the {days}-day return to a full 250-day trading year. "
-                            f"Treat as directional — it stabilizes with more data. >50% = exceptional, >20% = strong.")
-
-            st.caption(f"Score components: P&L {ps:.0f}/40 pts · Win days {ws:.0f}/30 pts · Win rate {rs:.0f}/30 pts")
+                       help="Avg winning trade ÷ avg losing trade. Target: ≥3.0x.")
 
             st.markdown("---")
 
