@@ -13,10 +13,16 @@ Output stored in scan_results as scan_type="universe_refresh".
 Orchestrator reads this at premarket; falls back to settings.py if stale.
 """
 from __future__ import annotations
+import io
+import json
 import time
+from pathlib import Path
+import requests
 import yfinance as yf
 import pandas as pd
 from datetime import date
+
+_FALLBACK_FILE = Path(__file__).parent.parent / "config" / "sp500_tickers.json"
 
 MIN_PRICE      = 5.0
 MAX_PRICE      = 2000.0
@@ -53,16 +59,19 @@ _SP500_FALLBACK = [
 
 
 def fetch_sp500() -> list[str]:
-    """Fetch current S&P 500 tickers from Wikipedia. Returns fallback list on error."""
+    """
+    Fetch current S&P 500 tickers from Wikipedia.
+    On success, writes tickers to config/sp500_tickers.json (auto-updates the fallback).
+    On failure, loads from that file; falls back to the hardcoded _SP500_FALLBACK if the
+    file is also missing or stale.
+    """
     try:
-        import requests
         resp = requests.get(
             _WIKI_URL,
             headers={"User-Agent": "Mozilla/5.0 (compatible; trading-agent/1.0)"},
             timeout=15,
         )
         resp.raise_for_status()
-        import io
         df = pd.read_html(io.StringIO(resp.text))[0]
         tickers = (
             df["Symbol"]
@@ -72,10 +81,24 @@ def fetch_sp500() -> list[str]:
         )
         if len(tickers) < 400:
             raise ValueError(f"Only {len(tickers)} tickers — looks truncated")
+        # Persist for future fallback
+        try:
+            _FALLBACK_FILE.write_text(json.dumps(tickers, indent=2))
+        except Exception:
+            pass  # non-fatal — best-effort write
         print(f"        S&P 500: fetched {len(tickers)} tickers from Wikipedia")
         return tickers
     except Exception as e:
-        print(f"        ⚠️  Wikipedia fetch failed ({e}) — using fallback list ({len(_SP500_FALLBACK)} tickers)")
+        # Load from the last-known-good file if available
+        if _FALLBACK_FILE.exists():
+            try:
+                tickers = json.loads(_FALLBACK_FILE.read_text())
+                if len(tickers) >= 400:
+                    print(f"        ⚠️  Wikipedia fetch failed ({e}) — loaded {len(tickers)} tickers from fallback file")
+                    return tickers
+            except Exception:
+                pass
+        print(f"        ⚠️  Wikipedia fetch failed ({e}) — using hardcoded fallback ({len(_SP500_FALLBACK)} tickers)")
         return list(_SP500_FALLBACK)
 
 
