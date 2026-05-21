@@ -146,6 +146,57 @@ def _vwap_legend():
         )
 
 
+def _show_runs_table(run_date: str, open_positions: list, closed_positions: list):
+    """Render per-run P&L breakdown table. Silently skips if daily_runs table doesn't exist yet."""
+    try:
+        runs = db.select("daily_runs", filters={"date": run_date})
+    except Exception:
+        return
+    if not runs:
+        return
+
+    runs.sort(key=lambda r: r.get("run_number", 0))
+    st.subheader("📊 Runs Today")
+
+    run_rows = []
+    for run in runs:
+        run_id    = run["id"]
+        rp_open   = [p for p in open_positions   if p.get("run_id") == run_id]
+        rp_closed = [p for p in closed_positions  if p.get("run_id") == run_id]
+        r_real    = sum(p.get("realized_pnl", 0) or 0 for p in rp_closed)
+        r_unreal  = sum(p.get("unrealized_pnl", 0) or 0 for p in rp_open)
+        r_anticip = sum(
+            round((float(p.get("target_price") or 0) - float(p.get("entry_price") or 0))
+                  * int(p.get("shares") or 0), 2)
+            for p in rp_open
+        )
+        r_net = r_real + r_unreal
+
+        started = run.get("started_at") or ""
+        try:
+            started_str = datetime.fromisoformat(started.replace("Z", "+00:00")).strftime("%H:%M UTC")
+        except Exception:
+            started_str = "—"
+
+        run_label = "Premarket" if run.get("run_type") == "premarket" else f"Intraday #{run.get('run_number')}"
+
+        run_rows.append({
+            "Run":         run_label,
+            "Started":     started_str,
+            "# Opened":    run.get("positions_opened", 0),
+            "Realized":    fmt_pnl(r_real)      if rp_closed              else "—",
+            "Unrealized":  fmt_pnl(r_unreal)    if rp_open                else "—",
+            "Anticipated": f"${r_anticip:,.0f}" if rp_open and r_anticip  else "—",
+            "Net P&L":     fmt_pnl(r_net)       if (rp_open or rp_closed) else "—",
+        })
+
+    st.dataframe(pd.DataFrame(run_rows), use_container_width=True, hide_index=True)
+
+    legacy = [p for p in open_positions + closed_positions if not p.get("run_id")]
+    if legacy:
+        st.caption(f"ℹ️ {len(legacy)} position(s) have no run assigned (opened before run tracking).")
+
+
 # ── SUMMARY ───────────────────────────────────────────────────────
 if page == "Summary":
     today = date.today().isoformat()
@@ -297,6 +348,9 @@ if page == "Summary":
             "LOCK_IN": "🎯 Day Locked",
         }
         return label_map.get(reason, f"⚪ {reason.title()}"), pnl
+
+    # ── Runs Today ────────────────────────────────────────────────
+    _show_runs_table(run_date, open_pos, run_closed)
 
     st.divider()
 
