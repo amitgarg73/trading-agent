@@ -10,6 +10,7 @@ import numpy as np
 from datetime import date, datetime, timedelta
 from typing import Optional
 from unittest.mock import MagicMock, patch
+from config.settings import POSITION_SIZE_BY_CONFIDENCE, TOTAL_CAPITAL
 
 
 # ── Price DataFrame factory ─────────────────────────────────────────────────
@@ -54,7 +55,7 @@ def make_trade(
     entry: float = 100.0,
     target: float = 102.0,   # 2% up
     stop: float = 99.50,     # 0.50% down → 4:1 R:R
-    size: int = 3_000,
+    size: int = POSITION_SIZE_BY_CONFIDENCE["MEDIUM"],
     confidence: str = "MEDIUM",
     action: str = "BUY",
 ) -> dict:
@@ -115,7 +116,7 @@ def make_perf_row(
     date_str: str,
     total_pnl: float = 500.0,
     win_rate: float = 75.0,
-    ending_capital: float = 50_500.0,
+    ending_capital: float = TOTAL_CAPITAL * 1.01,
 ) -> dict:
     return {
         "date":            date_str,
