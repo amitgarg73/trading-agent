@@ -393,7 +393,7 @@ if page == "Summary":
             )
         st.markdown("")
     else:
-        st.caption("No open positions right now.")
+        st.markdown("No open positions right now.")
 
     st.divider()
 
@@ -441,64 +441,12 @@ if page == "Summary":
                     unsafe_allow_html=True
                 )
     elif deduped_plan:
-        st.caption("No trades executed yet today.")
+        st.markdown("No trades executed yet today.")
     else:
-        st.caption("No trade plan yet.")
+        st.markdown("No trade plan yet.")
 
     st.divider()
 
-    # ── Trade Heatmap ─────────────────────────────────────────────
-    st.subheader("🗺️ Trade Heatmap — P&L by Stock")
-    all_heatmap_trades = executed_plan if executed_plan else trades
-    if all_heatmap_trades:
-        hm_labels, hm_pnl, hm_size, hm_text, hm_hover = [], [], [], [], []
-        for t in all_heatmap_trades:
-            status_label, pnl_val = trade_status(t["id"])
-            ticker = t["ticker"]
-            company = COMPANY_NAMES.get(ticker, ticker)
-            hm_labels.append(ticker)
-            hm_pnl.append(pnl_val)
-            hm_size.append(t.get("position_size", 5000))
-            hm_text.append(f"{ticker}<br>{fmt_pnl(pnl_val)}")
-            hm_hover.append(
-                f"<b>{ticker}</b> — {company}<br>"
-                f"Status: {status_label}<br>"
-                f"P&L: {fmt_pnl(pnl_val)}<br>"
-                f"Entry: ${t['entry_price']:.2f} → Target: ${t['target_price']:.2f}"
-            )
-
-        max_abs = max((abs(v) for v in hm_pnl), default=1) or 1
-        fig_hm = go.Figure(go.Treemap(
-            labels=hm_labels,
-            parents=[""] * len(hm_labels),
-            values=hm_size,
-            text=hm_text,
-            hovertemplate="%{customdata}<extra></extra>",
-            customdata=hm_hover,
-            textinfo="text",
-            marker=dict(
-                colors=hm_pnl,
-                colorscale=[
-                    [0.0,  "#c0392b"],
-                    [0.45, "#e74c3c"],
-                    [0.5,  "#95a5a6"],
-                    [0.55, "#27ae60"],
-                    [1.0,  "#1e8449"],
-                ],
-                cmid=0,
-                showscale=True,
-                colorbar=dict(title="P&L ($)", thickness=12),
-            ),
-        ))
-        fig_hm.update_layout(
-            height=380,
-            margin=dict(l=0, r=0, t=10, b=0),
-            paper_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(fig_hm, width="stretch")
-        st.caption("Block size = position size. Color = P&L (green = profit, red = loss, gray = pending/flat).")
-    else:
-        st.info("No trades to display yet.")
 
 
 # ── TODAY WORKFLOW ─────────────────────────────────────────────────
@@ -889,6 +837,54 @@ elif page == "Today":
 
     if not open_pos and not run_closed:
         st.info("No positions yet.")
+
+    # ── Position Heatmap ──────────────────────────────────────────
+    all_today_pos = open_pos + run_closed
+    if all_today_pos:
+        st.divider()
+        st.subheader("🗺️ Position Heatmap")
+        hm_labels, hm_pnl, hm_size, hm_text, hm_hover = [], [], [], [], []
+        for pos in all_today_pos:
+            ticker   = pos["ticker"]
+            name     = COMPANY_NAMES.get(ticker, "")
+            pos_size = float(pos.get("position_size") or 1)
+            pnl      = (float(pos.get("unrealized_pnl") or 0) if pos["status"] == "OPEN"
+                        else float(pos.get("realized_pnl") or 0))
+            reason   = pos.get("close_reason") or "OPEN"
+            hm_labels.append(ticker)
+            hm_size.append(max(pos_size, 1))
+            hm_pnl.append(pnl)
+            hm_text.append(f"{ticker}<br>{fmt_pnl(pnl)}")
+            hm_hover.append(
+                f"<b>{ticker}</b> — {name}<br>"
+                f"Status: {reason}<br>P&L: {fmt_pnl(pnl)}"
+            )
+        fig_hm = go.Figure(go.Treemap(
+            labels=hm_labels,
+            parents=[""] * len(hm_labels),
+            values=hm_size,
+            text=hm_text,
+            hovertemplate="%{customdata}<extra></extra>",
+            customdata=hm_hover,
+            textinfo="text",
+            marker=dict(
+                colors=hm_pnl,
+                colorscale=[
+                    [0.0, "#c0392b"], [0.45, "#e74c3c"],
+                    [0.5,  "#95a5a6"],
+                    [0.55, "#27ae60"], [1.0,  "#1e8449"],
+                ],
+                cmid=0, showscale=True,
+                colorbar=dict(title="P&L ($)", thickness=12),
+            ),
+        ))
+        fig_hm.update_layout(
+            height=320,
+            margin=dict(l=0, r=0, t=10, b=0),
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_hm, use_container_width=True)
+        st.caption("Block size = position size. Color = P&L (green = profit, red = loss, gray = flat).")
 
 
 # ── POSITIONS ─────────────────────────────────────────────────────
