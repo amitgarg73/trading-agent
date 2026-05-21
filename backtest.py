@@ -2,11 +2,13 @@
 Backtest — simulates what the trading agent would have done over a historical window.
 Uses real historical price data. No Claude API calls — top scanner scores proxy strategy selection.
 
-Runs TWO simulations automatically:
-  1. Baseline — no gates, trades every day, max top_n positions
-  2. V2-gated — applies VIX, Fear & Greed, futures, and economic calendar gates
+Runs THREE simulations automatically:
+  1. Baseline      — no gates, fixed % targets (Stop=0.67%, Target=2%)
+  2. V2-fixed%     — V2 gates (VIX + F&G + Futures + Calendar) + fixed % targets
+  3. ATR-Dynamic   — V2 gates + ATR-based targets (0.75×ATR target, 0.25×ATR stop, 3:1 R:R)
 
-The comparison shows directly whether the intelligence layer adds value.
+The three-way comparison validates: (a) whether gates add value and (b) whether ATR-based
+targets outperform fixed % targets by adapting to each stock's actual volatility.
 
 Usage:
   python3 backtest.py --days 30 --top 15
@@ -26,8 +28,12 @@ from config.settings import (
     TOTAL_CAPITAL, MAX_POSITION_PCT, MAX_POSITIONS, DAILY_PROFIT_TARGET
 )
 
-STOP_PCT   = 0.01
-TARGET_PCT = 0.03
+STOP_PCT   = 0.0067   # 0.67% — matches live MAX_LOSS_PER_TRADE
+TARGET_PCT = 0.02     # 2.0%  — matches live TARGET_PCT
+
+# ATR-dynamic variant multipliers (3:1 R:R by construction)
+ATR_TARGET_MULT = 0.75
+ATR_STOP_MULT   = 0.25
 
 # ── Economic calendar (same as market_context.py) ─────────────────────────────
 FOMC_DATES = {
@@ -284,8 +290,82 @@ def simulate_day(day, scored_candidates, position_count, capital):
     return day_pnl, trades
 
 
+def compute_atr(df: pd.DataFrame, as_of_idx: int, window: int = 14) -> float:
+    """14-day ATR in dollar terms, using only data strictly before as_of_idx (no lookahead)."""
+    sub = df.iloc[max(0, as_of_idx - window - 5):as_of_idx]
+    if len(sub) < window + 1:
+        return 0.0
+    high  = sub["High"]
+    low   = sub["Low"]
+    close = sub["Close"]
+    prev  = close.shift(1)
+    tr    = pd.concat([(high - low), (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+    atr   = tr.rolling(window).mean().iloc[-1]
+    return float(atr) if pd.notna(atr) else 0.0
+
+
+def simulate_day_atr(day, scored_candidates, position_count, capital):
+    """ATR-dynamic simulation: target = entry + 0.75×ATR, stop = entry - 0.25×ATR (3:1 R:R)."""
+    selected = scored_candidates[:position_count]
+    if not selected:
+        return 0.0, []
+
+    position_size = min(capital * MAX_POSITION_PCT, capital / max(len(selected), 1))
+    day_pnl = 0.0
+    trades  = []
+
+    for ticker, score, entry_price, idx, df in selected:
+        dates = df.index.date
+        day_idx = next((i for i, d in enumerate(dates) if d == day), None)
+        if day_idx is None:
+            continue
+
+        atr = compute_atr(df, day_idx)
+        if atr <= 0:
+            continue
+        price_prev = float(df["Close"].iloc[day_idx - 1]) if day_idx > 0 else entry_price
+        if price_prev > 0 and atr / price_prev > 0.12:
+            continue  # skip extreme outliers (>12% ATR = penny-stock noise)
+
+        open_price  = float(df["Open"].iloc[day_idx])
+        high_price  = float(df["High"].iloc[day_idx])
+        low_price   = float(df["Low"].iloc[day_idx])
+        close_price = float(df["Close"].iloc[day_idx])
+
+        entry  = open_price
+        target = entry + ATR_TARGET_MULT * atr
+        stop   = entry - ATR_STOP_MULT   * atr
+        shares = int(position_size / entry)
+        if shares == 0:
+            continue
+
+        if high_price >= target:
+            exit_price   = target
+            close_reason = "TARGET"
+            win          = True
+        elif low_price <= stop:
+            exit_price   = stop
+            close_reason = "STOP"
+            win          = False
+        else:
+            exit_price   = close_price
+            close_reason = "EOD"
+            win          = exit_price > entry
+
+        pnl = (exit_price - entry) * shares
+        day_pnl += pnl
+        trades.append({
+            "ticker": ticker, "score": score, "entry": round(entry, 2),
+            "exit": round(exit_price, 2), "shares": shares,
+            "pnl": round(pnl, 2), "close_reason": close_reason, "win": win,
+        })
+
+    return day_pnl, trades
+
+
 def run_simulation(label, trading_days, scored_per_day, top_n,
-                   vix_hist, futures_hist, fg_hist, use_gates=False):
+                   vix_hist, futures_hist, fg_hist, use_gates=False,
+                   sim_fn=None):
     """Run one full simulation pass. Returns summary dict."""
     capital       = float(TOTAL_CAPITAL)
     daily_results = []
@@ -317,7 +397,8 @@ def run_simulation(label, trading_days, scored_per_day, top_n,
             decision    = "GO"
             reasons     = []
 
-        day_pnl, trades = simulate_day(day, candidates, effective_n, capital)
+        _sim = sim_fn if sim_fn is not None else simulate_day
+        day_pnl, trades = _sim(day, candidates, effective_n, capital)
         capital += day_pnl
 
         gate_tag = ""
@@ -407,9 +488,9 @@ def run_simulation(label, trading_days, scored_per_day, top_n,
     }
 
 
-def generate_chart(baseline: dict, v2: dict, vix_hist: dict,
+def generate_chart(baseline: dict, v2: dict, atr_v2: dict, vix_hist: dict,
                    trading_days: list, label: str) -> str:
-    """Generate a 2-panel chart: cumulative capital + daily return % with VIX risk overlay."""
+    """Generate a 2-panel chart: cumulative capital (3 lines) + daily return % with VIX overlay."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -419,16 +500,19 @@ def generate_chart(baseline: dict, v2: dict, vix_hist: dict,
     dates       = [d.strftime("%Y-%m-%d") for d in trading_days]
     b_results   = {r["date"]: r for r in baseline["daily_results"]}
     v2_results  = {r["date"]: r for r in v2["daily_results"]}
+    atr_results = {r["date"]: r for r in atr_v2["daily_results"]}
 
     # Build per-day series
-    b_capital, v2_capital = [TOTAL_CAPITAL], [TOTAL_CAPITAL]
+    b_capital, v2_capital, atr_capital = [TOTAL_CAPITAL], [TOTAL_CAPITAL], [TOTAL_CAPITAL]
     v2_daily_pct, vix_vals, gate_colors = [], [], []
 
     for d in dates:
-        b_pnl  = b_results.get(d, {}).get("pnl", 0)
-        v2_pnl = v2_results.get(d, {}).get("pnl", 0)
+        b_pnl   = b_results.get(d, {}).get("pnl", 0)
+        v2_pnl  = v2_results.get(d, {}).get("pnl", 0)
+        atr_pnl = atr_results.get(d, {}).get("pnl", 0)
         b_capital.append(b_capital[-1] + b_pnl)
         v2_capital.append(v2_capital[-1] + v2_pnl)
+        atr_capital.append(atr_capital[-1] + atr_pnl)
         ret_pct = v2_pnl / (v2_capital[-2] or TOTAL_CAPITAL) * 100
         v2_daily_pct.append(ret_pct)
         vix_vals.append(vix_hist.get(d))
@@ -439,8 +523,9 @@ def generate_chart(baseline: dict, v2: dict, vix_hist: dict,
             "#2ecc71"
         )
 
-    b_capital  = b_capital[1:]
-    v2_capital = v2_capital[1:]
+    b_capital   = b_capital[1:]
+    v2_capital  = v2_capital[1:]
+    atr_capital = atr_capital[1:]
 
     fig = plt.figure(figsize=(14, 9), facecolor="#1a1a2e")
     fig.suptitle(f"Trading Agent Backtest — {label}", color="white",
@@ -451,17 +536,19 @@ def generate_chart(baseline: dict, v2: dict, vix_hist: dict,
     # ── Panel 1: Cumulative capital ───────────────────────────────────────────
     ax1 = fig.add_subplot(gs[0])
     ax1.set_facecolor("#16213e")
-    ax1.plot(dates, b_capital,  color="#7f8c8d", linewidth=1.2, linestyle="--",
+    ax1.plot(dates, b_capital,   color="#7f8c8d", linewidth=1.2, linestyle="--",
              label="Baseline (no gates)", alpha=0.7)
-    ax1.plot(dates, v2_capital, color="#3498db", linewidth=2.0,
-             label="V2-Gated", zorder=3)
+    ax1.plot(dates, v2_capital,  color="#3498db", linewidth=2.0,
+             label="V2-Gated (fixed %)", zorder=3)
+    ax1.plot(dates, atr_capital, color="#f1c40f", linewidth=2.0,
+             label="ATR-Dynamic (V2-gated)", zorder=4, linestyle="-.")
     ax1.axhline(TOTAL_CAPITAL, color="#555", linewidth=0.8, linestyle=":")
-    ax1.fill_between(dates, TOTAL_CAPITAL, v2_capital,
-                     where=[c >= TOTAL_CAPITAL for c in v2_capital],
-                     alpha=0.15, color="#2ecc71")
-    ax1.fill_between(dates, TOTAL_CAPITAL, v2_capital,
-                     where=[c < TOTAL_CAPITAL for c in v2_capital],
-                     alpha=0.15, color="#e74c3c")
+    ax1.fill_between(dates, TOTAL_CAPITAL, atr_capital,
+                     where=[c >= TOTAL_CAPITAL for c in atr_capital],
+                     alpha=0.10, color="#f1c40f")
+    ax1.fill_between(dates, TOTAL_CAPITAL, atr_capital,
+                     where=[c < TOTAL_CAPITAL for c in atr_capital],
+                     alpha=0.10, color="#e74c3c")
     ax1.set_ylabel("Portfolio Value ($)", color="white", fontsize=9)
     ax1.tick_params(colors="white", labelsize=7)
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"${x:,.0f}"))
@@ -543,11 +630,11 @@ def run_backtest(days: int = 30, top_n: int = 15, start_date=None, end_date=None
     else:
         label = f"last {days} trading days"
 
-    print(f"\n{'='*60}")
+    print(f"\n{'='*70}")
     print(f"  BACKTEST — {label}  |  top {top_n} per day")
-    print(f"  Capital: ${TOTAL_CAPITAL:,}  |  Stop: {STOP_PCT*100:.1f}%  "
-          f"Target: {TARGET_PCT*100:.1f}%")
-    print(f"{'='*60}\n")
+    print(f"  Capital: ${TOTAL_CAPITAL:,}  |  Fixed: Stop={STOP_PCT*100:.2f}% Target={TARGET_PCT*100:.1f}%  "
+          f"|  ATR: {ATR_STOP_MULT}×ATR stop / {ATR_TARGET_MULT}×ATR target")
+    print(f"{'='*70}\n")
 
     trading_days = get_trading_days(days, start_date, end_date)
     data_start   = trading_days[0] - timedelta(days=120)  # extra lookback for indicators
@@ -607,74 +694,78 @@ def run_backtest(days: int = 30, top_n: int = 15, start_date=None, end_date=None
         scored.sort(key=lambda x: -x[1])
         scored_per_day[day_str] = scored
 
-    # ── Run both simulations ───────────────────────────────────────────────────
+    # ── Run three simulations ─────────────────────────────────────────────────
     baseline = run_simulation(
-        "BASELINE (no intelligence gates)", trading_days, scored_per_day,
-        top_n, vix_hist, futures_hist, fg_hist, use_gates=False
+        "BASELINE (no intelligence gates, fixed %)", trading_days, scored_per_day,
+        top_n, vix_hist, futures_hist, fg_hist, use_gates=False, sim_fn=simulate_day
     )
     v2 = run_simulation(
-        "V2-GATED (VIX + Fear & Greed + Futures + Economic Calendar)",
+        "V2-GATED fixed % (VIX + Fear & Greed + Futures + Economic Calendar)",
         trading_days, scored_per_day,
-        top_n, vix_hist, futures_hist, fg_hist, use_gates=True
+        top_n, vix_hist, futures_hist, fg_hist, use_gates=True, sim_fn=simulate_day
+    )
+    atr_v2 = run_simulation(
+        "ATR-DYNAMIC V2-GATED (0.75×ATR target, 0.25×ATR stop, 3:1 R:R)",
+        trading_days, scored_per_day,
+        top_n, vix_hist, futures_hist, fg_hist, use_gates=True, sim_fn=simulate_day_atr
     )
 
     # ── Comparison ────────────────────────────────────────────────────────────
-    print(f"\n{'='*60}")
+    print(f"\n{'='*70}")
     print(f"  COMPARISON")
-    print(f"{'='*60}")
-    print(f"  {'Metric':<22} {'Baseline':>12} {'V2-Gated':>12} {'Delta':>10}")
-    print(f"  {'─'*58}")
+    print(f"{'='*70}")
+    print(f"  {'Metric':<22} {'Baseline':>12} {'V2-Fixed%':>12} {'ATR-Dynamic':>13}")
+    print(f"  {'─'*62}")
 
-    def row(label, b, v, fmt="{:+,.0f}", suffix=""):
-        delta = v - b
-        print(f"  {label:<22} {fmt.format(b):>12}{suffix} "
-              f"{fmt.format(v):>12}{suffix} {fmt.format(delta):>10}{suffix}")
+    def row(lbl, b, v, a, fmt="{:+,.0f}", suffix=""):
+        print(f"  {lbl:<22} {fmt.format(b):>12}{suffix} "
+              f"{fmt.format(v):>12}{suffix} {fmt.format(a):>13}{suffix}")
 
-    row("Total P&L ($)",      baseline["total_pnl"],  v2["total_pnl"])
-    row("Avg daily P&L ($)",  baseline["avg_daily"],   v2["avg_daily"])
-    row("Win days",           baseline["win_days"],    v2["win_days"],    fmt="{:,.0f}", suffix="")
-    row("Win rate (%)",       baseline["win_rate"],    v2["win_rate"],    fmt="{:+.1f}", suffix="%")
-    row("Reward:risk",        baseline["rr"],          v2["rr"],          fmt="{:+.2f}", suffix="x")
-    row("Annualized (%)",     baseline["annualized"],  v2["annualized"],  fmt="{:+.1f}", suffix="%")
+    row("Total P&L ($)",     baseline["total_pnl"],  v2["total_pnl"],  atr_v2["total_pnl"])
+    row("Avg daily P&L ($)", baseline["avg_daily"],   v2["avg_daily"],  atr_v2["avg_daily"])
+    row("Win days",          baseline["win_days"],    v2["win_days"],   atr_v2["win_days"],   fmt="{:,.0f}")
+    row("Win rate (%)",      baseline["win_rate"],    v2["win_rate"],   atr_v2["win_rate"],   fmt="{:+.1f}", suffix="%")
+    row("Reward:risk",       baseline["rr"],          v2["rr"],         atr_v2["rr"],         fmt="{:+.2f}", suffix="x")
+    row("Annualized (%)",    baseline["annualized"],  v2["annualized"], atr_v2["annualized"], fmt="{:+.1f}", suffix="%")
 
-    print(f"\n  Grade:   Baseline → {baseline['grade']}   V2-Gated → {v2['grade']}")
-    print(f"  Skip days avoided (V2): {v2['skip_days']}  "
-          f"|  Caution days reduced: {v2['caution_days']}")
+    print(f"\n  Grades:  Baseline → {baseline['grade']}   "
+          f"V2-Fixed% → {v2['grade']}   ATR-Dynamic → {atr_v2['grade']}")
+    print(f"  Skip days (V2): {v2['skip_days']}  |  Caution days: {v2['caution_days']}")
 
-    pnl_delta = v2["total_pnl"] - baseline["total_pnl"]
-    verdict = ("V2 gates IMPROVED performance" if pnl_delta > 0
-               else "V2 gates REDUCED performance (gates were over-cautious)")
-    print(f"\n  Verdict: {verdict}  (${abs(pnl_delta):,.0f} difference)")
+    atr_delta = atr_v2["total_pnl"] - v2["total_pnl"]
+    atr_verdict = ("ATR targets IMPROVED over fixed %" if atr_delta > 0
+                   else "ATR targets UNDERPERFORMED fixed % (fixed % was better for this period)")
+    print(f"\n  ATR verdict: {atr_verdict}  (${abs(atr_delta):,.0f} difference vs V2-Fixed%)")
 
-    # Top tickers (V2)
-    print(f"\n  Top 5 tickers (V2-gated):")
-    for ticker, pnl, n in v2["top_tickers"]:
+    # Top tickers (ATR-Dynamic)
+    print(f"\n  Top 5 tickers (ATR-Dynamic):")
+    for ticker, pnl, n in atr_v2["top_tickers"]:
         print(f"    {ticker:6s}  ${pnl:+,.2f}  ({n} trades)")
-    print(f"\n  Worst 5 tickers (V2-gated):")
-    for ticker, pnl, n in v2["worst_tickers"]:
+    print(f"\n  Worst 5 tickers (ATR-Dynamic):")
+    for ticker, pnl, n in atr_v2["worst_tickers"]:
         print(f"    {ticker:6s}  ${pnl:+,.2f}  ({n} trades)")
 
     # ── Index comparison ──────────────────────────────────────────────────────
-    print(f"\n{'='*60}")
-    print(f"  VS. MARKET INDEXES (same window, $100K buy-and-hold)")
-    print(f"{'='*60}")
+    print(f"\n{'='*70}")
+    print(f"  VS. MARKET INDEXES (same window, ${TOTAL_CAPITAL:,} buy-and-hold)")
+    print(f"{'='*70}")
     idx_returns = fetch_index_returns(trading_days[0], trading_days[-1])
     if idx_returns:
-        print(f"  {'Index':<22} {'Return':>10} {'P&L on $100K':>16}")
+        print(f"  {'Index':<22} {'Return':>10} {'P&L on capital':>16}")
         print(f"  {'─'*50}")
         for name, d in idx_returns.items():
             print(f"  {name:<22} {d['pct']:>+9.1f}%  ${d['pnl']:>+14,.0f}")
         print(f"  {'─'*50}")
-        print(f"  {'Agent (V2-gated)':<22} {'':>10}  ${v2['total_pnl']:>+14,.0f}  "
-              f"({v2['annualized']:+.1f}% ann.)")
+        print(f"  {'Agent (ATR-Dynamic)':<22} {'':>10}  ${atr_v2['total_pnl']:>+14,.0f}  "
+              f"({atr_v2['annualized']:+.1f}% ann.)")
         best_idx = max(idx_returns.values(), key=lambda x: x["pnl"])
-        alpha = v2["total_pnl"] - best_idx["pnl"]
+        alpha = atr_v2["total_pnl"] - best_idx["pnl"]
         print(f"\n  Alpha vs best index: ${alpha:+,.0f}")
     else:
         print("  (Index data unavailable for this period)")
 
     # ── Chart ─────────────────────────────────────────────────────────────────
-    chart_file = generate_chart(baseline, v2, vix_hist, trading_days, label)
+    chart_file = generate_chart(baseline, v2, atr_v2, vix_hist, trading_days, label)
     print(f"\n  Chart saved → {chart_file}")
 
     print(f"\n{'='*60}\n")

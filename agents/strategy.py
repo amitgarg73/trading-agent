@@ -9,7 +9,7 @@ stays in the user message and is never cached.
 import json
 import re
 import anthropic
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from config.settings import (
     ANTHROPIC_API_KEY, TOTAL_CAPITAL, DAILY_PROFIT_TARGET,
     MAX_POSITIONS, MAX_POSITION_PCT, MIN_POSITION_PCT,
@@ -35,8 +35,9 @@ Always respond with valid JSON only — no markdown, no text outside the JSON ob
     HIGH confidence   → ${_sizes['HIGH']:,} per position
     MEDIUM confidence → ${_sizes['MEDIUM']:,} per position
     LOW confidence    → ${_sizes['LOW']:,} per position
-- Profit target: exactly {TARGET_PCT*100:.0f}% above entry (hard rule — target_price = round(entry * {1+TARGET_PCT}, 2))
-- Stop loss: exactly {MAX_LOSS_PER_TRADE*100:.0f}% below entry (hard rule — stop_loss = round(entry * {1-MAX_LOSS_PER_TRADE}, 2))
+- Profit target: 0.75 × ATR above entry — adapts to each stock's actual volatility
+- Stop loss: 0.25 × ATR below entry — 3:1 reward:risk guaranteed by construction
+- ATR = 14-day Average True Range provided per candidate (atr field, dollar value)
 - Minimum reward:risk ratio: {MIN_REWARD_RISK}:1
 - Action: BUY only — no shorting
 - No overnight holds — all positions closed by market close
@@ -92,18 +93,29 @@ news_context: earnings-day tickers are already removed upstream. Use headlines t
               avoid negative-catalyst stocks and favor positive-catalyst names.
 
 ## HARD CALCULATION RULES
-- target_price  = round(entry_price * {1+TARGET_PCT}, 2)
-- stop_loss     = round(entry_price * {1-MAX_LOSS_PER_TRADE}, 2)
+- target_price  = round(entry_price + 0.75 * atr, 2)
+- stop_loss     = round(entry_price - 0.25 * atr, 2)
 - shares        = int(position_size / entry_price)
 - estimated_profit = round(shares * (target_price - entry_price), 2)
 - max_loss         = round(shares * (entry_price - stop_loss), 2)
-- reward_risk      = round(estimated_profit / max_loss, 2)   # must be ≥ {MIN_REWARD_RISK}
+- reward_risk      = round(estimated_profit / max_loss, 2)   # will be ≈3.0 by construction
+- If atr is missing for a candidate, skip it — do not substitute a fixed %
+
+## TIME-OF-DAY SELECTION RULES
+The current ET time is provided in the user message. Adjust selectivity based on it:
+- Before 10:30 AM: opening volatility — prefer confirmed breakouts, avoid mean-reversion
+- 10:30 AM–1:00 PM: prime window — all setup types valid, full position count allowed
+- 1:00–2:30 PM: lunch lull — reduce count to top 3-5 convictions only
+- After 2:30 PM: late session — select only if ATR target is ≤50% of typical daily range; a stock
+  that hasn't started moving by 2:30 PM is unlikely to hit a full ATR target before close
+- After 3:00 PM: do not enter new positions — insufficient time to reach target
 
 ## COMMON MISTAKES TO AVOID
-- Setting target or stop at arbitrary prices — always use the formulas above
+- Using fixed % for targets/stops — always use the ATR-based formulas; skip if atr is null
 - Selecting > max_positions trades (the user message tells you today's max)
 - Assigning HIGH confidence to scores < 5 or without volume confirmation
 - Returning text outside the JSON object — response must be pure JSON
+- Entering near market close (after 3:00 PM ET) — flag time risk in reasoning if entering late
 
 ## REQUIRED RESPONSE FORMAT
 {{
@@ -133,8 +145,11 @@ news_context: earnings-day tickers are already removed upstream. Use headlines t
 
 def _build_prompt(candidates: list[dict], market_summary: str, max_positions: int) -> str:
     """Dynamic portion only — date, market conditions, and live candidate data."""
-    today = datetime.now().strftime("%A %B %d, %Y")
-    return f"""Today is {today}. Select up to {max_positions} trades from the candidates below.
+    now_utc = datetime.now(timezone.utc)
+    now_et  = now_utc + timedelta(hours=-4)  # EDT (UTC-4); adjust to -5 in EST
+    today   = now_et.strftime("%A %B %d, %Y")
+    time_et = now_et.strftime("%H:%M ET")
+    return f"""Today is {today}. Current time: {time_et}.
 
 PRE-MARKET CONDITIONS:
 {market_summary}
@@ -142,6 +157,7 @@ PRE-MARKET CONDITIONS:
 CANDIDATES (sorted by signal strength, {len(candidates)} total):
 {json.dumps(candidates, indent=2, default=str)}
 
+Select up to {max_positions} trades. Apply TIME-OF-DAY rules from the system prompt.
 Return your JSON response now."""
 
 
