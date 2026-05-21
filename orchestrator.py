@@ -352,7 +352,7 @@ def intraday(broker: str = "simulation"):
           f"Unrealized P&L: ${result['unrealized_pnl']:,.2f} | "
           f"Closed this check: {result['just_closed']}")
     for c in result.get("closed_details", []):
-        icon = "✅" if c["realized_pnl"] > 0 else "🔴"
+        icon = "✅" if (c["realized_pnl"] or 0) > 0 else "🔴"
         print(f"  {icon} {c['ticker']} closed ({c['reason']}): ${c['realized_pnl']:,.2f}")
 
 
