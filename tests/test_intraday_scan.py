@@ -346,3 +346,75 @@ class TestIntradayScanPipeline:
             result = _maybe_run_intraday_scan(broker="simulation")
 
         assert result is None
+
+
+# ── _reconcile_with_alpaca tests ─────────────────────────────────────────────
+
+def _make_open_position(ticker="AAPL", order_id="order-1"):
+    return {"id": "pos-1", "ticker": ticker, "entry_price": 100.0,
+            "shares": 10, "alpaca_order_id": order_id, "status": "OPEN"}
+
+
+def _make_alpaca_order(symbol, side, status, submitted_at="2026-05-21T15:00:00"):
+    o = MagicMock()
+    o.symbol = symbol
+    o.side = side
+    o.status = status
+    o.filled_at = submitted_at
+    o.submitted_at = submitted_at
+    return o
+
+
+@patch("core.db.update")
+@patch("core.db.select")
+@patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+@patch("agents.alpaca_broker._client")
+def test_reconcile_filled_buy_not_marked_unfilled(mock_client, mock_tickers, mock_select, mock_update):
+    """Entry filled (buy=filled) but position gone from Alpaca → NOT UNFILLED.
+    portfolio.refresh_positions() resolves the exit — don't preempt it."""
+    from agents.intraday import _reconcile_with_alpaca
+
+    mock_select.return_value = [_make_open_position("AAPL")]
+    filled_buy = _make_alpaca_order("AAPL", side="buy", status="filled")
+    mock_client.return_value.get_orders.return_value = [filled_buy]
+
+    _reconcile_with_alpaca()
+
+    mock_update.assert_not_called()
+
+
+@patch("core.db.update")
+@patch("core.db.select")
+@patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+@patch("agents.alpaca_broker._client")
+def test_reconcile_pending_buy_not_marked_unfilled(mock_client, mock_tickers, mock_select, mock_update):
+    """Buy order in flight → leave OPEN, don't mark UNFILLED."""
+    from agents.intraday import _reconcile_with_alpaca
+
+    mock_select.return_value = [_make_open_position("TSLA")]
+    pending_buy = _make_alpaca_order("TSLA", side="buy", status="accepted")
+    mock_client.return_value.get_orders.return_value = [pending_buy]
+
+    _reconcile_with_alpaca()
+
+    mock_update.assert_not_called()
+
+
+@patch("core.db.update")
+@patch("core.db.select")
+@patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+@patch("agents.alpaca_broker._client")
+def test_reconcile_no_buy_order_marked_unfilled(mock_client, mock_tickers, mock_select, mock_update):
+    """No buy order found → entry never executed → UNFILLED."""
+    from agents.intraday import _reconcile_with_alpaca
+
+    mock_select.return_value = [_make_open_position("NVDA")]
+    mock_client.return_value.get_orders.return_value = []
+
+    _reconcile_with_alpaca()
+
+    mock_update.assert_called_once()
+    kwargs = mock_update.call_args[0][2]
+    assert kwargs["close_reason"] == "UNFILLED"
+    assert kwargs["exit_mechanism"] == "UNFILLED"
+    assert kwargs["realized_pnl"] == 0
