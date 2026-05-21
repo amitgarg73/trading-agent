@@ -55,7 +55,14 @@ _SP500_FALLBACK = [
 def fetch_sp500() -> list[str]:
     """Fetch current S&P 500 tickers from Wikipedia. Returns fallback list on error."""
     try:
-        df = pd.read_html(_WIKI_URL)[0]
+        import requests
+        resp = requests.get(
+            _WIKI_URL,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; trading-agent/1.0)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        df = pd.read_html(resp.text)[0]
         tickers = (
             df["Symbol"]
             .str.strip()
