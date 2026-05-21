@@ -4,8 +4,8 @@ on:
   schedule:
     # All times UTC (EDT = UTC-4)
     - cron: '0 14 * * 1-5'        # 10:00 AM ET — premarket scan (after spreads stabilize)
-    - cron: '0,15,30,45 14-19 * * 1-5'  # Every 15 min 10:00-3:45 PM ET — intraday
-    - cron: '30 20 * * 1-5'       # 4:30 PM ET — EOD
+    - cron: '0,15,30 14-19 * * 1-5'     # Every 15 min 10:00-3:30 PM ET — intraday (stop at 3:30 PM)
+    - cron: '55 19 * * 1-5'             # 3:55 PM ET — EOD (before market close at 4:00 PM)
   workflow_dispatch:
     inputs:
       mode:
@@ -49,11 +49,11 @@ jobs:
             TIME=$((HOUR * 60 + MIN))
             # Use windows, not exact minutes — GitHub scheduler can fire 5-15 min late
             # Premarket window: 14:00-14:29 UTC (10:00-10:29 AM ET) — 30 min buffer for late firing
-            # EOD window:       20:30-23:59 UTC (4:30+ PM ET)
+            # EOD window:       19:55-23:59 UTC (3:55+ PM ET) — runs before 4 PM market close
             # Intraday:         everything else (including 14:30+ UTC = 10:30 AM ET onward)
             if [ $TIME -ge 840 ] && [ $TIME -lt 870 ]; then
               echo "mode=premarket" >> $GITHUB_OUTPUT
-            elif [ $TIME -ge 1230 ]; then
+            elif [ $TIME -ge 1195 ]; then
               echo "mode=eod" >> $GITHUB_OUTPUT
             else
               echo "mode=intraday" >> $GITHUB_OUTPUT
