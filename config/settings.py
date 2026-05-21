@@ -31,10 +31,10 @@ LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions 
 TRAIL_PCT                   = 0.01        # Trailing stop: close if price drops 1% from highest seen since entry
 PARTIAL_PROFIT_ENABLED      = True        # Take 50% of shares off at PARTIAL_PROFIT_PCT gain; let rest run to full target
 PARTIAL_PROFIT_PCT          = 0.01        # 1% partial exit — locks in half the position on a smaller move
-INTRADAY_SCAN_UTC_START         = 15          # 11:00 AM ET — intraday scan entry window open
-INTRADAY_SCAN_UTC_END           = 18          # 2:00 PM ET — intraday scan entry window close (extended from 1 PM)
-INTRADAY_SCAN_MAX_RUNS          = 2           # max intraday scan runs per day
-INTRADAY_SCAN_MIN_INTERVAL_MINS = 90          # min minutes between consecutive intraday scans
+INTRADAY_SCAN_UTC_START         = 15          # 11:00 AM ET
+INTRADAY_SCAN_UTC_END           = 20          # buffer past 3:00 PM ET
+INTRADAY_SCAN_MAX_RUNS          = 3           # 11 AM, 1 PM, 3 PM ET
+INTRADAY_SCAN_MIN_INTERVAL_MINS = 120         # 2hrs apart
 INTRADAY_TARGET_PCT             = 0.01        # 1% target for intraday entries — less time = smaller target
 MIN_INTRADAY_MOVE_PCT           = 4.0         # minimum % move today to qualify as momentum candidate
 LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed
@@ -51,10 +51,10 @@ POSITION_SIZE_BY_CONFIDENCE = {           # Position size mapped to Claude confi
 # Scanner thresholds
 RSI_OVERSOLD         = 35
 RSI_OVERBOUGHT       = 65
-MIN_VOLUME_RATIO     = 1.5        # vs 20-day avg
+MIN_VOLUME_RATIO     = 0.3        # vs 20-day avg
 MIN_PRICE            = 5.0
 MIN_AVG_VOLUME       = 1_000_000  # liquidity floor — raised from 500K to 1M to reduce spread/slippage on smaller tickers
-SCORE_THRESHOLD      = 3          # minimum score to be a scanner candidate (absolute value)
+SCORE_THRESHOLD      = 1          # minimum score to be a scanner candidate (absolute value)
 
 # Strategy pre-filter — applied in orchestrator BEFORE the Claude API call.
 #
