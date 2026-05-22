@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.12 · **Updated:** 2026-05-20
+**Version:** v5.13 · **Updated:** 2026-05-22
 
 ---
 
@@ -57,7 +57,7 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 
 ### 3.2 Intraday — Every 15 min, 10:00 AM–3:45 PM ET
 
-- **Reconcile:** Detects positions closed by Alpaca bracket (stop/target fired). Records real exit price and P&L.
+- **Reconcile:** Detects positions closed by Alpaca bracket (stop/target fired). Records real exit price and P&L. `_reconcile_with_alpaca()` in `agents/intraday.py` now fetches with `limit=500` and `after=today_start` to prevent UNFILLED misclassification on busy days where 40+ bracket orders previously exceeded the old 100-order API limit.
 - **Refresh:** Syncs current price and unrealized P&L for open positions.
 - **Lock-in logic:** Tier 1 ($716 realized) — let winners ride. Tier 2 ($1,000 total) — close everything.
 
@@ -226,3 +226,62 @@ Streamlit Dashboard
 |----------|---------|
 | P0 | P&L reconciliation: Alpaca `account.equity` as source of truth + friction breakdown |
 | P1 | Intraday trade entries: second scan at 12:30 PM, momentum-only, guardrailed by open position count and daily P&L |
+
+---
+
+## 11. Strategy B — Overview
+
+Strategy B is a companion live paper-trading system operating in parallel on the same Alpaca paper account. It uses a fundamentally different selection philosophy: instead of scanning 600+ tickers broadly, it maintains a curated behavioral pool of ~150 blue chip stocks and narrows to 8–10 daily elite picks using real-time signals.
+
+**Repo:** `trading-agent-b/` (separate GitHub repository, independent deployment)
+
+**Core idea:** Pre-qualify stocks through behavioral scoring before Claude ever sees them. Every candidate Claude receives in Strategy B has a `rolling_score` — a 7-day track record of how well that specific stock's behavior has matched this strategy's setup requirements.
+
+### 11.1 A vs B Comparison
+
+| Dimension | Strategy A | Strategy B |
+|-----------|-----------|-----------|
+| **Universe** | 600+ tickers (S&P 500 + ETFs) | ~150 blue chip large caps (Pool 1 → Pool 3) |
+| **Daily candidates** | All scored tickers (20–60 after filter) | 8–10 Pool 3 daily elite picks |
+| **Capital** | $100,000 | $50,000 |
+| **Position sizes** | $7K / $6K / $5K (HIGH/MED/LOW) | $3.5K / $3K / $2.5K (HIGH/MED/LOW) |
+| **Profit target** | +2% (premarket and intraday) | +2% premarket · +1% intraday entries |
+| **Stop loss** | −0.67% | −0.67% |
+| **R:R floor** | 3.0 (normal) / 2.0 (quiet day) | 2.0 (always) |
+| **Max positions** | 15 | 10 |
+| **Claude model** | claude-sonnet-4-6 | claude-opus-4-7 |
+| **Candidate context** | RSI, MACD, BB, volume, VWAP, RS vs SPY | All of A + `pool`, `rolling_score`, `rs_vs_sector`, `atr_ratio`, `signal_type` |
+| **Pool system** | None | 3-tier: Pool 1 (universe) → Pool 2 (behavioral shortlist) → Pool 3 (daily picks) |
+| **Intraday scan** | Full pipeline, any scored ticker | Pool 3 movers only, SPY gate, max 6 runs, 90 min interval |
+| **EOD scoring** | Daily performance summary | Pool Scorer: scores each Pool 3 stock, promotes/demotes between pools |
+| **ML scorer** | XGBoost P(hit +2%), AUC 0.78 | None in Phase 1 (pool behavioral score is the equivalent) |
+
+---
+
+## 12. Shared Infrastructure
+
+Both strategies share the same underlying infrastructure with clear separation by convention.
+
+### 12.1 Supabase
+
+Same Supabase project (same credentials, same PostgreSQL instance). Strategy A uses unprefixed tables (`positions`, `trade_plans`, `planned_trades`, `daily_performance`, `daily_runs`, `scan_results`). Strategy B uses `b_` prefixed tables (`b_positions`, `b_trade_plans`, `b_planned_trades`, `b_daily_performance`, `b_daily_runs`, `b_pools`, `b_stock_scores`).
+
+**Dashboard** queries both schemas: the Streamlit dashboard includes tabs for both strategies and can display side-by-side P&L comparisons.
+
+### 12.2 Alpaca
+
+Same Alpaca paper trading account. All Strategy B orders are tagged with `strategy=b` at order placement. This enables per-strategy P&L reconciliation from Alpaca order history. When deploying to a real-money account, the tag convention allows clean separation without account duplication.
+
+### 12.3 External Cron (cron-job.org)
+
+Both strategies use cron-job.org to fire `workflow_dispatch` events on GitHub Actions. GitHub Actions' built-in cron scheduler can lag 5–15 minutes on busy runners, which is unacceptable for premarket and intraday timing. cron-job.org fires on time and GitHub Actions runs the actual workload.
+
+**Current schedules (UTC):**
+- Intraday: `0,15,30 14-19` (Strategy A every 15 min) / `0,30 14-20` (Strategy B every 30 min)
+- EOD: `55 19` (both strategies, staggered by 5 min to avoid runner contention)
+
+**Important:** Any change to GitHub Actions YAML schedule times must also update the corresponding cron-job.org configuration. The two are not linked — they must be kept in sync manually.
+
+### 12.4 GitHub Actions Structure
+
+Both repositories use the same 3-mode workflow pattern: `premarket`, `intraday`, `eod`. The `mode` input is passed as a workflow dispatch parameter and cron-job.org fires each mode independently at the correct scheduled time. The orchestrator reads `mode` and routes to the appropriate function (`orchestrator.premarket()`, `orchestrator.intraday()`, `orchestrator.eod()`).
