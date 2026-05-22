@@ -22,7 +22,7 @@ class TestFreshnessCheck:
     def _check_freshness(self, df):
         from datetime import timedelta
         latest_date = df.index[-1].date() if hasattr(df.index[-1], "date") else None
-        return latest_date is None or latest_date >= date.today() - timedelta(days=6)
+        return latest_date is None or latest_date >= date.today() - timedelta(days=7)
 
     def test_yesterday_data_is_fresh(self):
         df = make_price_df(last_date=date.today() - timedelta(days=1))
@@ -41,8 +41,8 @@ class TestFreshnessCheck:
         df = make_price_df(last_date=date.today() - timedelta(days=5))
         assert self._check_freshness(df)
 
-    def test_7_days_old_is_stale(self):
-        df = make_stale_price_df(days_old=7)
+    def test_8_days_old_is_stale(self):
+        df = make_stale_price_df(days_old=8)
         assert not self._check_freshness(df)
 
     def test_10_days_old_is_stale(self):

@@ -5,19 +5,20 @@ Tests for daily_runs integration:
 - run_id threading to open_positions
 """
 from unittest.mock import patch, MagicMock, call
-from datetime import datetime as real_datetime
+from datetime import datetime as real_datetime, date as real_date
 from config.settings import (
     DAILY_LOSS_LIMIT, DAILY_BONUS_TARGET,
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_MAX_RUNS,
     INTRADAY_SCAN_MIN_INTERVAL_MINS,
 )
 
-TODAY = "2026-05-21"
+TODAY = real_date.today().isoformat()
 WINDOW_HOUR = INTRADAY_SCAN_UTC_START
 
 
 def _utc_now(hour: int = WINDOW_HOUR):
-    return real_datetime(2026, 5, 21, hour, 30, 0)
+    today = real_date.today()
+    return real_datetime(today.year, today.month, today.day, hour, 30, 0)
 
 
 def _make_closed_row(realized: float) -> dict:

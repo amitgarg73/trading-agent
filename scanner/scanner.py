@@ -155,7 +155,7 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
     # 6 days covers Thu premarket (bdate_range can snap to prior Thursday = 6 days back).
     # Anything older is genuinely stale yfinance cache — skip to avoid bad signals.
     latest_date = df.index[-1].date() if hasattr(df.index[-1], "date") else None
-    if latest_date and latest_date < date.today() - timedelta(days=6):
+    if latest_date and latest_date < date.today() - timedelta(days=7):
         return None
     tech = _technical(ticker, df, skip_volume_surge=skip_volume_surge)
     price = tech["price"]
