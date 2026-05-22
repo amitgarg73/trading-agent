@@ -10,7 +10,7 @@ from core import db
 from config.settings import (
     TRAIL_PCT, LOCK_IN_TRAIL_PCT, DAILY_LOCK_IN_TARGET,
     USE_NATIVE_TRAILING_STOP, PARTIAL_PROFIT_ENABLED, PARTIAL_PROFIT_PCT,
-    TARGET_PCT,
+    TARGET_PCT, PRICE_SANITY_PCT,
 )
 
 
@@ -43,16 +43,39 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
         "status":           "OPEN",
     })
 
-    alpaca_order_id = None
+    alpaca_order_id  = None
+    effective_entry  = trade["entry_price"]
+    effective_stop   = trade["stop_loss"]
+    effective_target = trade["target_price"]
+
     if broker == "alpaca":
         from agents import alpaca_broker
         try:
+            # Anchor stop/target to the live price at submission time, not the
+            # (potentially stale) scanner price.  When a stock reverses 2-4%
+            # between scan and execution, a stop calculated from the scan price
+            # ends up above the fill price and fires the bracket immediately.
+            live = alpaca_broker.get_live_prices([ticker])
+            live_px = live.get(ticker)
+            if live_px and live_px > 0 and trade["entry_price"] > 0:
+                deviation = abs(live_px - trade["entry_price"]) / trade["entry_price"]
+                if deviation > PRICE_SANITY_PCT:
+                    print(f"        ⚠️ Price drift: {ticker} plan={trade['entry_price']:.2f} "
+                          f"live={live_px:.2f} ({deviation*100:.1f}%) — skipping")
+                    db.update("planned_trades", {"id": planned["id"]}, {"status": "CANCELLED"})
+                    return None
+                stop_pct         = (trade["entry_price"] - trade["stop_loss"])   / trade["entry_price"]
+                target_pct       = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]
+                effective_entry  = live_px
+                effective_stop   = round(live_px * (1 - stop_pct),   2)
+                effective_target = round(live_px * (1 + target_pct), 2)
+
             alpaca_order_id = alpaca_broker.submit_bracket_order(
                 ticker=ticker,
                 shares=trade["shares"],
-                entry_price=trade["entry_price"],
-                target_price=trade["target_price"],
-                stop_price=trade["stop_loss"],
+                entry_price=effective_entry,
+                target_price=effective_target,
+                stop_price=effective_stop,
                 action=trade["action"],
                 use_native_trail=USE_NATIVE_TRAILING_STOP,
                 trail_pct=TRAIL_PCT,
@@ -69,18 +92,15 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
         return None
 
     native_trail = broker == "alpaca" and USE_NATIVE_TRAILING_STOP
-    # For Alpaca, the limit order fills at the planned entry price — use that so
-    # stop/target remain consistent with what risk validated. Live price is only
-    # correct for simulation (immediate yfinance fill).
-    db_entry = trade["entry_price"] if broker == "alpaca" else price
+    db_entry = effective_entry if broker == "alpaca" else price
     return db.insert("positions", {
         "planned_trade_id":    planned["id"],
         "ticker":              ticker,
         "action":              trade["action"],
         "entry_price":         db_entry,
         "current_price":       db_entry,
-        "target_price":        trade["target_price"],
-        "stop_loss":           trade["stop_loss"],
+        "target_price":        effective_target,
+        "stop_loss":           effective_stop,
         "shares":              trade["shares"],
         "position_size":       trade["position_size"],
         "unrealized_pnl":      0,

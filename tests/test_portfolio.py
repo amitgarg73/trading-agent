@@ -342,13 +342,14 @@ class TestBreakevenStop:
         assert len(updates) == 0, "Cross-ticker breakeven lock must not fire"
 
 
-# ── Alpaca entry_price consistency ───────────────────────────────────────────
+# ── Live-price recalculation (inverted stop prevention) ──────────────────────
 
-class TestAlpacaEntryPrice:
+class TestLivePriceRecalculation:
     """
-    For Alpaca broker, DB entry_price must equal trade["entry_price"] (the limit
-    order price), not the live yfinance price — otherwise stop_loss can appear
-    above entry if the stock dips between scan and execution.
+    _open_single_position must anchor stop/target to the live price at submission
+    time, not the stale scanner price.  A stock that reverses 3% between scan and
+    execution would otherwise produce stop > fill price, firing the bracket
+    immediately and booking a guaranteed loss.
     """
 
     def _make_trade(self, entry=100.0, target=102.0, stop=99.33):
@@ -360,10 +361,10 @@ class TestAlpacaEntryPrice:
             "confidence": "HIGH", "reasoning": "test",
         }
 
-    def test_alpaca_uses_planned_entry_not_live_price(self):
-        """DB entry_price for Alpaca == trade entry, even if live price differs."""
-        trade = self._make_trade(entry=100.0)
-        live_price = 97.0  # stock dipped below planned entry
+    def test_stop_target_recalculated_from_live_price(self):
+        """When live price differs within sanity threshold, stop/target anchor to live price."""
+        trade = self._make_trade(entry=100.0, target=102.0, stop=99.33)
+        live_price = 97.0  # stock dipped 3% — within 5% sanity threshold
 
         inserted = {}
         def capture_insert(table, data):
@@ -371,21 +372,71 @@ class TestAlpacaEntryPrice:
             return {**data, "id": "pos-1"}
 
         with patch("agents.portfolio._current_price", return_value=live_price), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": live_price}), \
              patch("agents.alpaca_broker.submit_bracket_order", return_value="order-123"), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"):
             from agents.portfolio import _open_single_position
             _open_single_position("plan-1", trade, live_price, broker="alpaca")
 
-        assert inserted.get("entry_price") == 100.0, (
-            f"Alpaca entry_price should be planned entry 100.0, got {inserted.get('entry_price')}"
-        )
-        assert inserted["stop_loss"] < inserted["entry_price"], (
-            f"stop_loss {inserted['stop_loss']} must be below entry {inserted['entry_price']}"
-        )
+        assert inserted.get("entry_price") == pytest.approx(97.0, abs=0.01)
+        assert inserted["stop_loss"] < inserted["entry_price"], "stop must be below entry"
+        # Stop % should be preserved: 0.67% below live price
+        expected_stop = round(97.0 * (1 - 0.0067), 2)
+        assert inserted["stop_loss"] == pytest.approx(expected_stop, abs=0.02)
+
+    def test_price_drift_beyond_sanity_skips_trade(self):
+        """When live price deviates >PRICE_SANITY_PCT from plan, trade is skipped."""
+        trade = self._make_trade(entry=100.0)
+        live_price = 94.0  # 6% drift — exceeds PRICE_SANITY_PCT=5%
+
+        inserts, updates = [], []
+
+        with patch("agents.portfolio._current_price", return_value=live_price), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": live_price}), \
+             patch("agents.alpaca_broker.submit_bracket_order") as mock_submit, \
+             patch("core.db.insert", side_effect=lambda t, d: (inserts.append(t), {**d, "id": "x"})[1]), \
+             patch("core.db.update", side_effect=lambda t, m, d: updates.append(d)):
+            from agents.portfolio import _open_single_position
+            result = _open_single_position("plan-1", trade, live_price, broker="alpaca")
+
+        assert result is None, "Must return None when price drift exceeds sanity threshold"
+        mock_submit.assert_not_called()
+        position_inserts = [t for t in inserts if t == "positions"]
+        assert len(position_inserts) == 0
+        cancelled = [d for d in updates if d.get("status") == "CANCELLED"]
+        assert len(cancelled) == 1
+
+    def test_inverted_stop_prevented_on_reversal(self):
+        """A 3% reversal within sanity threshold must still produce stop < entry."""
+        trade = self._make_trade(entry=100.0, target=102.0, stop=99.33)
+        live_price = 97.5  # reversed but within 5% threshold
+
+        inserted = {}
+        def capture_insert(table, data):
+            inserted.update(data)
+            return {**data, "id": "pos-1"}
+
+        submitted = {}
+        def capture_submit(**kwargs):
+            submitted.update(kwargs)
+            return "order-xyz"
+
+        with patch("agents.portfolio._current_price", return_value=live_price), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": live_price}), \
+             patch("agents.alpaca_broker.submit_bracket_order", side_effect=capture_submit), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update"):
+            from agents.portfolio import _open_single_position
+            _open_single_position("plan-1", trade, live_price, broker="alpaca")
+
+        assert submitted.get("stop_price", 999) < live_price, \
+            f"stop {submitted.get('stop_price')} must be below live price {live_price}"
+        assert submitted.get("target_price", 0) > live_price, \
+            f"target {submitted.get('target_price')} must be above live price {live_price}"
 
     def test_simulation_uses_live_price(self):
-        """Simulation mode should still use the live yfinance price as entry."""
+        """Simulation mode uses the live yfinance price as entry (no Alpaca calls)."""
         trade = self._make_trade(entry=100.0)
         live_price = 97.0
 
@@ -497,6 +548,7 @@ class TestPhantomPositionGuard:
 
         with patch("agents.alpaca_broker.submit_bracket_order",
                    side_effect=RuntimeError("order rejected")), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": 100.0}), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update", side_effect=capture_update), \
              patch("agents.portfolio._current_price", return_value=100.0):
@@ -518,6 +570,7 @@ class TestPhantomPositionGuard:
             return {**data, "id": f"fake-{table}"}
 
         with patch("agents.alpaca_broker.submit_bracket_order", return_value="order-xyz"), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": 100.0}), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"), \
              patch("agents.portfolio._current_price", return_value=100.0):
