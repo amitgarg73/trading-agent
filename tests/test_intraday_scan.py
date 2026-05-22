@@ -419,3 +419,43 @@ def test_reconcile_no_buy_order_marked_unfilled(mock_client, mock_tickers, mock_
     assert kwargs["close_reason"] == "UNFILLED"
     assert kwargs["exit_mechanism"] == "UNFILLED"
     assert kwargs["realized_pnl"] == 0
+
+
+@patch("core.db.update")
+@patch("core.db.select")
+@patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+@patch("agents.alpaca_broker._client")
+def test_reconcile_order_fetch_uses_limit_500(mock_client, mock_tickers, mock_select, mock_update):
+    """_reconcile_with_alpaca must fetch orders with limit >= 500 to avoid missing orders on busy days."""
+    from agents.intraday import _reconcile_with_alpaca
+
+    # Provide one open position — function returns early if list is empty, never reaching get_orders
+    mock_select.return_value = [_make_open_position("AAPL")]
+    mock_client.return_value.get_orders.return_value = []
+
+    _reconcile_with_alpaca()
+
+    call_args = mock_client.return_value.get_orders.call_args[0][0]
+    assert call_args.limit >= 500, (
+        f"Expected order fetch limit >= 500 to avoid UNFILLED misclassification on busy days, got {call_args.limit}"
+    )
+
+
+@patch("core.db.update")
+@patch("core.db.select")
+@patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+@patch("agents.alpaca_broker._client")
+def test_reconcile_order_fetch_uses_after_date(mock_client, mock_tickers, mock_select, mock_update):
+    """_reconcile_with_alpaca must use after=today_start to filter orders at API level."""
+    from agents.intraday import _reconcile_with_alpaca
+    from datetime import datetime
+
+    # Provide one open position — function returns early if list is empty, never reaching get_orders
+    mock_select.return_value = [_make_open_position("AAPL")]
+    mock_client.return_value.get_orders.return_value = []
+
+    _reconcile_with_alpaca()
+
+    call_args = mock_client.return_value.get_orders.call_args[0][0]
+    assert call_args.after is not None, "GetOrdersRequest must include after=today_start to avoid fetching prior-day orders"
+    assert isinstance(call_args.after, datetime), "after must be a datetime object"
