@@ -129,7 +129,7 @@ def premarket(broker: str = "simulation"):
     # 1. Scan
     print("[ 1/4 ] Running market scan...")
     universe = load_universe()
-    candidates = run_scan(universe=universe)
+    candidates = run_scan(universe=universe, skip_volume_surge=(mode == "premarket"))
     print(f"        Found {len(candidates)} candidates")
 
     if not candidates:

@@ -60,7 +60,7 @@ def _fetch(ticker: str) -> tuple[dict, pd.DataFrame | None]:
     return _fetch_alpaca(ticker)
 
 
-def _technical(ticker: str, df: pd.DataFrame) -> dict:
+def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False) -> dict:
     close  = df["close"]
     volume = df["volume"]
     signals = []
@@ -92,11 +92,11 @@ def _technical(ticker: str, df: pd.DataFrame) -> dict:
         elif bb_pct > 0.8:
             score -= 1; signals.append("Near upper Bollinger")
 
-    # Volume surge — large-caps (avg > 15M) use relaxed ratio to avoid penalising mega-caps
+    # Volume surge — skipped at premarket (partial day vs full-day avg is meaningless at open)
     avg_vol   = volume.rolling(20).mean().iloc[-1]
     vol_ratio = volume.iloc[-1] / avg_vol if avg_vol > 0 else 1.0
     threshold = LARGE_CAP_VOLUME_RATIO if avg_vol >= LARGE_CAP_AVG_VOLUME else MIN_VOLUME_RATIO
-    if vol_ratio >= threshold:
+    if not skip_volume_surge and vol_ratio >= threshold:
         score += 2; signals.append(f"Volume surge ({vol_ratio:.1f}x avg)")
 
     # Trend: price vs SMA20 / SMA50
@@ -147,7 +147,7 @@ def _passes_filters(info: dict, price: float) -> bool:
     return price >= MIN_PRICE and avg_vol >= MIN_AVG_VOLUME
 
 
-def _scan_ticker(ticker: str) -> dict | None:
+def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
     info, df = _fetch(ticker)
     if df is None:
         return None
@@ -157,7 +157,7 @@ def _scan_ticker(ticker: str) -> dict | None:
     latest_date = df.index[-1].date() if hasattr(df.index[-1], "date") else None
     if latest_date and latest_date < date.today() - timedelta(days=6):
         return None
-    tech = _technical(ticker, df)
+    tech = _technical(ticker, df, skip_volume_surge=skip_volume_surge)
     price = tech["price"]
     if not _passes_filters(info, price):
         return None
@@ -190,11 +190,11 @@ def _scan_ticker(ticker: str) -> dict | None:
     }
 
 
-def run_scan(universe=None) -> list[dict]:
+def run_scan(universe=None, skip_volume_surge: bool = False) -> list[dict]:
     tickers = universe if universe is not None else UNIVERSE
     candidates = []
     with ThreadPoolExecutor(max_workers=20) as executor:
-        futs = {executor.submit(_scan_ticker, t): t for t in tickers}
+        futs = {executor.submit(_scan_ticker, t, skip_volume_surge): t for t in tickers}
         for fut in as_completed(futs):
             result = fut.result()
             if result is not None:
