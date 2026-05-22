@@ -102,15 +102,44 @@ def get_intraday_signals(tickers: list[str]) -> dict[str, dict]:
             vwap, open_px, price = float(vwap), float(open_px), float(price)
             today_pct  = (price - open_px) / open_px if open_px > 0 else 0.0
             rs_vs_spy  = round(today_pct / spy_pct, 2) if spy_pct and spy_pct != 0 else None
+            today_vol = int(getattr(snap.daily_bar, "volume", 0) or 0)
             signals[ticker] = {
                 "above_vwap":       price > vwap,
                 "vwap":             round(vwap, 2),
                 "today_pct_change": round(today_pct * 100, 2),
                 "rs_vs_spy":        rs_vs_spy,
+                "today_volume":     today_vol,
             }
         return signals
     except Exception as e:
         print(f"        ⚠️  Intraday signals fetch failed: {e}")
+        return {}
+
+
+def get_avg_daily_volumes(tickers: list[str], days: int = 20) -> dict[str, float]:
+    """Return {ticker: avg_daily_volume} over the past N trading days. Used for vol_ratio filtering."""
+    if not tickers:
+        return {}
+    try:
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        from datetime import date, timedelta
+        req = StockBarsRequest(
+            symbol_or_symbols=tickers,
+            timeframe=TimeFrame.Day,
+            start=date.today() - timedelta(days=days + 14),  # buffer for weekends/holidays
+            end=date.today() - timedelta(days=1),
+        )
+        bars = _dclient().get_stock_bars(req)
+        result = {}
+        for ticker in tickers:
+            ticker_bars = bars.get(ticker) or []
+            recent = list(ticker_bars)[-days:]
+            if recent:
+                result[ticker] = sum(float(b.volume) for b in recent) / len(recent)
+        return result
+    except Exception as e:
+        print(f"        ⚠️  Avg volume fetch failed: {e}")
         return {}
 
 

@@ -11,7 +11,7 @@ technical candidates.
 """
 from __future__ import annotations
 from config.settings import (
-    MIN_INTRADAY_MOVE_PCT, STRATEGY_MIN_SCORE,
+    MIN_INTRADAY_MOVE_PCT, MIN_INTRADAY_VOLUME_RATIO, STRATEGY_MIN_SCORE,
     LARGE_CAP_AVG_VOLUME, LARGE_CAP_VOLUME_RATIO, MIN_VOLUME_RATIO,
 )
 
@@ -40,11 +40,14 @@ def scan_alpaca(universe: list[str]) -> list[dict]:
     signals = alpaca_broker.get_intraday_signals(universe)
     live    = alpaca_broker.get_live_prices(list(signals.keys()))
 
+    # Fetch 20-day avg volumes to compute vol_ratio for each candidate
+    avg_volumes = alpaca_broker.get_avg_daily_volumes(list(signals.keys()))
+
     candidates = []
     for ticker, sig in signals.items():
-        pct       = sig.get("today_pct_change") or 0
+        pct        = sig.get("today_pct_change") or 0
         above_vwap = sig.get("above_vwap", False)
-        rs        = sig.get("rs_vs_spy")
+        rs         = sig.get("rs_vs_spy")
 
         if pct < MIN_INTRADAY_MOVE_PCT:
             continue
@@ -52,6 +55,12 @@ def scan_alpaca(universe: list[str]) -> list[dict]:
             continue  # too extended — likely a blow-off or binary event, skip
         if not above_vwap:
             continue  # move not confirmed by VWAP structure
+
+        avg_vol   = avg_volumes.get(ticker) or 0
+        today_vol = sig.get("today_volume") or 0
+        vol_ratio = round(today_vol / avg_vol, 2) if avg_vol > 0 else 0
+        if vol_ratio < MIN_INTRADAY_VOLUME_RATIO:
+            continue  # low volume = noise, not real momentum
 
         score = _momentum_score(pct, rs)
         price = live.get(ticker) or sig.get("vwap") or 0
@@ -66,8 +75,8 @@ def scan_alpaca(universe: list[str]) -> list[dict]:
             "today_pct_change":  pct,
             "rs_vs_spy":         rs,
             "vwap":              sig.get("vwap"),
-            "rsi":               50,          # unknown intraday, use neutral
-            "volume_ratio":      rs or 1.0,   # proxy — RS is a better signal anyway
+            "rsi":               50,
+            "volume_ratio":      vol_ratio,
             "signal_type":       "INTRADAY_MOMENTUM",
         })
 
@@ -84,6 +93,7 @@ def scan_simulation(universe: list[str]) -> list[dict]:
     import yfinance as yf
     import math
 
+    import pandas as pd
     BATCH = 50  # yfinance bulk download batch size
     candidates = []
 
@@ -92,7 +102,7 @@ def scan_simulation(universe: list[str]) -> list[dict]:
         try:
             data = yf.download(
                 " ".join(batch),
-                period="1d",
+                period="5d",   # 5 days gives prior-day avg volume for vol_ratio
                 interval="5m",
                 group_by="ticker",
                 auto_adjust=True,
@@ -112,10 +122,19 @@ def scan_simulation(universe: list[str]) -> list[dict]:
                 if df is None or df.empty:
                     continue
 
-                open_px    = float(df["Open"].iloc[0])
-                current    = float(df["Close"].iloc[-1])
-                vwap_proxy = float(df["Close"].mean())  # simple avg as VWAP proxy
-                vol_today  = int(df["Volume"].sum())
+                # Separate today's bars from prior days
+                tz       = df.index.tz
+                today_dt = pd.Timestamp.now(tz=tz).date() if tz else pd.Timestamp.now().date()
+                today_df = df[df.index.date == today_dt]
+                prior_df = df[df.index.date < today_dt]
+
+                if today_df.empty:
+                    continue
+
+                open_px    = float(today_df["Open"].iloc[0])
+                current    = float(today_df["Close"].iloc[-1])
+                vwap_proxy = float(today_df["Close"].mean())
+                vol_today  = int(today_df["Volume"].sum())
 
                 if open_px <= 0:
                     continue
@@ -124,7 +143,18 @@ def scan_simulation(universe: list[str]) -> list[dict]:
                 if pct < MIN_INTRADAY_MOVE_PCT or pct > 30:
                     continue
                 if current < vwap_proxy:
-                    continue  # below VWAP proxy — skip
+                    continue
+
+                # Vol ratio vs prior days' average daily volume
+                if not prior_df.empty:
+                    prior_daily = prior_df.groupby(prior_df.index.date)["Volume"].sum()
+                    avg_vol     = float(prior_daily.mean())
+                    vol_ratio   = round(vol_today / avg_vol, 2) if avg_vol > 0 else 0
+                else:
+                    vol_ratio = 0
+
+                if vol_ratio < MIN_INTRADAY_VOLUME_RATIO:
+                    continue  # low volume = noise, not real momentum
 
                 score = _momentum_score(pct, None)
                 candidates.append({
@@ -138,7 +168,7 @@ def scan_simulation(universe: list[str]) -> list[dict]:
                     "rs_vs_spy":        None,
                     "vwap":             round(vwap_proxy, 2),
                     "rsi":              50,
-                    "volume_ratio":     1.0,
+                    "volume_ratio":     vol_ratio,
                     "signal_type":      "INTRADAY_MOMENTUM",
                 })
             except Exception:
