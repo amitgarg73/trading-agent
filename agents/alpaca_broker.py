@@ -73,7 +73,9 @@ def get_intraday_signals(tickers: list[str]) -> dict[str, dict]:
     """
     if not tickers:
         return {}
-    all_tickers = list(set(tickers + ["SPY"]))
+    # Alpaca rejects symbols with dashes (e.g. BRK-B) — filter before batch call
+    clean = [t for t in tickers if "-" not in t]
+    all_tickers = list(set(clean + ["SPY"]))
     try:
         from alpaca.data.requests import StockSnapshotRequest
         req       = StockSnapshotRequest(symbol_or_symbols=all_tickers)
