@@ -355,7 +355,8 @@ def _make_open_position(ticker="AAPL", order_id="order-1"):
             "shares": 10, "alpaca_order_id": order_id, "status": "OPEN"}
 
 
-def _make_alpaca_order(symbol, side, status, submitted_at="2026-05-21T15:00:00"):
+def _make_alpaca_order(symbol, side, status, submitted_at=None):
+    submitted_at = submitted_at or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
     o = MagicMock()
     o.symbol = symbol
     o.side = side
