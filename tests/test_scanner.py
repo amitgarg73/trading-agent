@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from tests.conftest import make_price_df, make_stale_price_df
 from config.settings import (
     RSI_OVERSOLD, RSI_OVERBOUGHT, MIN_VOLUME_RATIO, MIN_PRICE,
-    MIN_AVG_VOLUME, SCORE_THRESHOLD,
+    MIN_AVG_VOLUME, SCORE_THRESHOLD, MAX_INTRADAY_RANGE_PCT,
 )
 
 
@@ -213,3 +213,85 @@ class TestRunScan:
             result = run_scan(universe=["A", "B", "C"])
         scores = [abs(r["technical_score"]) for r in result]
         assert scores == sorted(scores, reverse=True)
+
+
+# ── Intraday range (ATR) filter ───────────────────────────────────────────────
+
+def _make_volatile_df(intraday_range_pct: float, days: int = 60) -> pd.DataFrame:
+    """
+    Construct a price DataFrame where (High - Low) / Open averages the given %.
+    Used to test the intraday volatility filter without calling yfinance.
+    """
+    df = make_price_df(days=days)
+    # Force high and low so H-L/O == intraday_range_pct on every bar
+    opens  = df["close"].shift(1).fillna(df["close"])
+    df = df.copy()
+    df["open"]  = opens
+    df["high"]  = opens * (1 + intraday_range_pct / 100)
+    df["low"]   = opens * (1 - intraday_range_pct / 100)
+    return df
+
+
+class TestIntradayRangeMetric:
+    """_technical() must compute intraday_range_pct from the OHLCV data."""
+
+    def test_intraday_range_pct_present_in_output(self):
+        df = make_price_df()
+        from scanner.scanner import _technical
+        tech = _technical("TEST", df)
+        assert "intraday_range_pct" in tech
+        assert isinstance(tech["intraday_range_pct"], float)
+
+    def test_high_volatility_df_has_high_range(self):
+        df = _make_volatile_df(intraday_range_pct=10.0)
+        from scanner.scanner import _technical
+        tech = _technical("RGTI", df)
+        assert tech["intraday_range_pct"] > MAX_INTRADAY_RANGE_PCT
+
+    def test_low_volatility_df_has_low_range(self):
+        df = _make_volatile_df(intraday_range_pct=2.0)
+        from scanner.scanner import _technical
+        tech = _technical("AAPL", df)
+        assert tech["intraday_range_pct"] <= MAX_INTRADAY_RANGE_PCT
+
+
+class TestIntradayRangeFilter:
+    """_scan_ticker() must return None for stocks whose intraday range exceeds MAX_INTRADAY_RANGE_PCT."""
+
+    def _run_scan_ticker(self, intraday_range_pct: float):
+        """Run _scan_ticker with a synthetic df wired to produce the given intraday range."""
+        df = _make_volatile_df(intraday_range_pct=intraday_range_pct)
+        info = {"averageVolume": 5_000_000, "longName": "Test", "sector": "Tech"}
+
+        with patch("scanner.scanner._fetch", return_value=(info, df)), \
+             patch("scanner.scanner._technical", return_value={
+                 "technical_score": 6, "signals": [], "rsi": 55.0,
+                 "macd_hist": 0.1, "bb_pct": 0.5, "volume_ratio": 2.0,
+                 "atr": 1.0, "atr_pct": 1.0,
+                 "intraday_range_pct": intraday_range_pct,
+                 "range_52w_pct": 0.5, "dist_sma20": 0.01, "dist_sma50": 0.02,
+                 "mom1": 0.01, "mom5": 0.02, "sma20": 100.0, "price": 100.0,
+             }):
+            from scanner.scanner import _scan_ticker
+            return _scan_ticker("TEST")
+
+    def test_low_intraday_range_passes(self):
+        result = self._run_scan_ticker(intraday_range_pct=2.0)
+        assert result is not None, "Low-volatility stock must pass the filter"
+
+    def test_high_intraday_range_blocked(self):
+        result = self._run_scan_ticker(intraday_range_pct=10.0)
+        assert result is None, "High-volatility stock must be filtered out"
+
+    def test_exactly_at_threshold_passes(self):
+        result = self._run_scan_ticker(intraday_range_pct=MAX_INTRADAY_RANGE_PCT)
+        assert result is not None, "Stock at exactly the threshold must pass (> not >=)"
+
+    def test_just_above_threshold_blocked(self):
+        result = self._run_scan_ticker(intraday_range_pct=MAX_INTRADAY_RANGE_PCT + 0.1)
+        assert result is None
+
+    def test_intraday_range_pct_in_returned_candidate(self):
+        result = self._run_scan_ticker(intraday_range_pct=2.0)
+        assert result is not None
+        assert "intraday_range_pct" in result

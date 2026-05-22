@@ -12,7 +12,7 @@ from datetime import datetime, date, timedelta
 from config.settings import (
     UNIVERSE, RSI_OVERSOLD, RSI_OVERBOUGHT,
     MIN_VOLUME_RATIO, MIN_PRICE, MIN_AVG_VOLUME, SCORE_THRESHOLD,
-    LARGE_CAP_AVG_VOLUME, LARGE_CAP_VOLUME_RATIO,
+    LARGE_CAP_AVG_VOLUME, LARGE_CAP_VOLUME_RATIO, MAX_INTRADAY_RANGE_PCT,
 )
 
 
@@ -113,6 +113,12 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False) -
     atr = ta.volatility.AverageTrueRange(df["high"], df["low"], close, 14).average_true_range().iloc[-1]
     atr_pct = (atr / price * 100) if price > 0 else 0
 
+    # Intraday range: avg (High - Low) / Open over the last 14 bars.
+    # Unlike ATR this excludes overnight gaps — directly measures how much the
+    # stock oscillates within a single trading day vs our stop+target corridor.
+    intraday_ranges = ((df["high"] - df["low"]) / df["open"] * 100).replace([float("inf"), float("-inf")], pd.NA).dropna()
+    intraday_range_pct = round(float(intraday_ranges.tail(14).mean()), 2) if not intraday_ranges.empty else 0.0
+
     # 52-week position
     high52 = close.rolling(252).max().iloc[-1] if len(df) >= 252 else close.max()
     low52  = close.rolling(252).min().iloc[-1] if len(df) >= 252 else close.min()
@@ -132,6 +138,7 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False) -
         "volume_ratio": round(vol_ratio, 2),
         "atr": round(float(atr), 2) if pd.notna(atr) else None,
         "atr_pct": round(atr_pct, 2),
+        "intraday_range_pct": intraday_range_pct,
         "range_52w_pct": round(range_pct, 3),
         "dist_sma20": dist_sma20,
         "dist_sma50": dist_sma50,
@@ -163,6 +170,11 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
         return None
     if abs(tech["technical_score"]) < SCORE_THRESHOLD:
         return None
+    # Intraday volatility filter: skip stocks whose typical H-L swing is so wide
+    # that a 0.67% stop gets hit by noise before the 1% target is reached.
+    # Threshold = 5% → blocks quantum, crypto, leveraged ETFs; keeps blue chips.
+    if tech["intraday_range_pct"] > MAX_INTRADAY_RANGE_PCT:
+        return None
     return {
         "ticker": ticker,
         "name": info.get("longName", ticker),
@@ -180,6 +192,7 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
         "volume_ratio": tech["volume_ratio"],
         "atr": tech["atr"],
         "atr_pct": tech["atr_pct"],
+        "intraday_range_pct": tech["intraday_range_pct"],
         "range_52w_pct": tech["range_52w_pct"],
         "dist_sma20": tech["dist_sma20"],
         "dist_sma50": tech["dist_sma50"],

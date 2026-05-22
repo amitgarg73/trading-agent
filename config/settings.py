@@ -39,6 +39,7 @@ INTRADAY_SCAN_MIN_INTERVAL_MINS = 55          # ~1 hr apart (55 min absorbs GH A
 INTRADAY_TARGET_PCT             = 0.01        # 1% target for intraday entries — less time = smaller target
 MIN_INTRADAY_MOVE_PCT           = 4.0         # minimum % move today to qualify as momentum candidate
 MIN_INTRADAY_VOLUME_RATIO       = 0.3         # minimum volume ratio for intraday entries — blocks illiquid noise
+MAX_INTRADAY_RANGE_PCT          = 5.0         # block stocks where avg(H-L)/Open > 5% — too volatile for 0.67% stop
 LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed
 LARGE_CAP_VOLUME_RATIO          = 0.5         # relaxed volume ratio for mega-caps (vs MIN_VOLUME_RATIO=1.5)
 USE_NATIVE_TRAILING_STOP    = False       # trail_percent not supported in StopLossRequest bracket leg; use manual high_watermark trail
