@@ -28,7 +28,7 @@ def _current_price(ticker: str) -> float | None:
 def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=None):
     """Insert one planned_trade + position record and optionally submit to Alpaca."""
     ticker = trade["ticker"]
-    planned = db.insert("planned_trades", {
+    planned_row = {
         "plan_id":          plan_id,
         "ticker":           ticker,
         "action":           trade["action"],
@@ -41,7 +41,22 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
         "confidence":       trade["confidence"],
         "reasoning":        trade["reasoning"],
         "status":           "OPEN",
-    })
+    }
+    # Persist scanner signals when available (requires migration 002).
+    if trade.get("_technical_score") is not None:
+        planned_row["technical_score"] = trade["_technical_score"]
+        planned_row["rsi"]             = trade["_rsi"]
+        planned_row["volume_ratio"]    = trade["_volume_ratio"]
+        planned_row["scanner_signals"] = trade["_scanner_signals"]
+    try:
+        planned = db.insert("planned_trades", planned_row)
+    except Exception:
+        # Columns not yet migrated — fall back without signals
+        planned_row.pop("technical_score", None)
+        planned_row.pop("rsi", None)
+        planned_row.pop("volume_ratio", None)
+        planned_row.pop("scanner_signals", None)
+        planned = db.insert("planned_trades", planned_row)
 
     alpaca_order_id  = None
     effective_entry  = trade["entry_price"]

@@ -317,6 +317,15 @@ def premarket(broker: str = "simulation"):
         return
 
     # 4. Open positions
+    # Enrich approved trades with scanner signals for persistence in planned_trades.
+    signal_lookup = {c["ticker"]: c for c in candidates}
+    for t in approved:
+        sig = signal_lookup.get(t["ticker"], {})
+        t["_technical_score"] = sig.get("technical_score")
+        t["_rsi"]             = sig.get("rsi")
+        t["_volume_ratio"]    = sig.get("volume_ratio")
+        t["_scanner_signals"] = sig.get("signals", [])
+
     mode_label = "Alpaca paper" if broker == "alpaca" else "simulated"
     print(f"[ 4/4 ] Opening {mode_label} positions...")
     existing = db.select("trade_plans", filters={"date": date.today().isoformat()})
