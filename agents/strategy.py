@@ -35,9 +35,8 @@ Always respond with valid JSON only — no markdown, no text outside the JSON ob
     HIGH confidence   → ${_sizes['HIGH']:,} per position
     MEDIUM confidence → ${_sizes['MEDIUM']:,} per position
     LOW confidence    → ${_sizes['LOW']:,} per position
-- Profit target: 0.75 × ATR above entry — adapts to each stock's actual volatility
-- Stop loss: 0.25 × ATR below entry — 3:1 reward:risk guaranteed by construction
-- ATR = 14-day Average True Range provided per candidate (atr field, dollar value)
+- Profit target: exactly {TARGET_PCT*100:.0f}% above entry (hard rule — target_price = round(entry * {1+TARGET_PCT}, 2))
+- Stop loss: exactly {MAX_LOSS_PER_TRADE*100:.2f}% below entry (hard rule — stop_loss = round(entry * {1-MAX_LOSS_PER_TRADE}, 2))
 - Minimum reward:risk ratio: {MIN_REWARD_RISK}:1
 - Action: BUY only — no shorting
 - No overnight holds — all positions closed by market close
@@ -93,13 +92,13 @@ news_context: earnings-day tickers are already removed upstream. Use headlines t
               avoid negative-catalyst stocks and favor positive-catalyst names.
 
 ## HARD CALCULATION RULES
-- target_price  = round(entry_price + 0.75 * atr, 2)
-- stop_loss     = round(entry_price - 0.25 * atr, 2)
+- target_price  = round(entry_price * {1+TARGET_PCT}, 2)
+- stop_loss     = round(entry_price * {1-MAX_LOSS_PER_TRADE}, 2)
 - shares        = int(position_size / entry_price)
 - estimated_profit = round(shares * (target_price - entry_price), 2)
 - max_loss         = round(shares * (entry_price - stop_loss), 2)
-- reward_risk      = round(estimated_profit / max_loss, 2)   # will be ≈3.0 by construction
-- If atr is missing for a candidate, skip it — do not substitute a fixed %
+- reward_risk      = round(estimated_profit / max_loss, 2)   # must be ≥ {MIN_REWARD_RISK}
+- Use atr_pct as context: if atr_pct < 1.5, the 2% target needs a large daily move — only select if signals are very strong
 
 ## TIME-OF-DAY SELECTION RULES
 The current ET time is provided in the user message. Adjust selectivity based on it:
@@ -111,7 +110,7 @@ The current ET time is provided in the user message. Adjust selectivity based on
 - After 3:00 PM: do not enter new positions — insufficient time to reach target
 
 ## COMMON MISTAKES TO AVOID
-- Using fixed % for targets/stops — always use the ATR-based formulas; skip if atr is null
+- Setting target or stop at arbitrary prices — always use the formulas above
 - Selecting > max_positions trades (the user message tells you today's max)
 - Assigning HIGH confidence to scores < 5 or without volume confirmation
 - Returning text outside the JSON object — response must be pure JSON
