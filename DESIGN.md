@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.16 · **Updated:** 2026-05-23
+**Version:** v5.17 · **Updated:** 2026-05-23
 
 ---
 
@@ -85,12 +85,12 @@ Confidence is assigned by Claude based on technical score, VWAP position, and re
 
 ```
 entry_price    = current ask price (Alpaca) or scanner close price
-target_price   = round(entry * 1.025, 2)         # +2.5% ceiling (limit order on Leg B)
+target_price   = round(entry * 1.04, 2)          # +4% ceiling (limit order on Leg B)
 stop_loss      = round(entry * 0.9933, 2)         # -0.67% stop
 partial_target = round(entry * 1.01, 2)           # +1% partial exit (Leg A)
 ```
 
-Reward:Risk = 2.5% / 0.67% = **3.73 ≈ 3.7:1** (normal days)  
+Reward:Risk = 4% / 0.67% = **6.0:1** ceiling R:R (trail exits earlier in practice)  
 Reward:Risk floor on quiet days = **2:1** (Fear & Greed < 35)
 
 ### 4.3 Partial Profit Design
@@ -98,7 +98,7 @@ Reward:Risk floor on quiet days = **2:1** (Fear & Greed < 35)
 Each trade opens as **two bracket orders**:
 
 - **Leg A** — half the shares, target = +1%. Locks in profit on smaller moves.
-- **Leg B** — remaining shares, target = +2.5% ceiling. Rides the full move with native trailing stop.
+- **Leg B** — remaining shares, target = +4% ceiling. Rides the full move with native trailing stop.
 - Both legs share the same stop price.
 
 **Why:** Converts all-or-nothing bracket outcomes into graduated P&L. On quiet days where large moves are rare, Leg A frequently hits while Leg B trails out positive — net positive vs. net zero under the old design.
@@ -159,7 +159,7 @@ Triggered when Fear & Greed Index < 35.
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
 | `TOTAL_CAPITAL` | $50,000 | Simulated account size |
-| `TARGET_PCT` | 2.5% | Ceiling limit order on Leg B — only fills if momentum pushes through |
+| `TARGET_PCT` | 4% | Ceiling limit order on Leg B — only fills on straight-line momentum runs; trail exits earlier in most trades |
 | `MAX_LOSS_PER_TRADE` | 0.67% | Stop loss depth |
 | `MIN_REWARD_RISK` | 2.9 | Normal day R:R floor |
 | `QUIET_DAY_MIN_REWARD_RISK` | 2.0 | Quiet day R:R floor |
