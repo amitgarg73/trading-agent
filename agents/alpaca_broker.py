@@ -8,8 +8,10 @@ ALPACA_PAPER defaults to "true" — set to "false" only for live trading.
 """
 from __future__ import annotations
 import os
+from datetime import datetime
 from typing import Optional
 from dotenv import load_dotenv
+from config.settings import STRATEGY_TAG
 
 load_dotenv()
 
@@ -35,6 +37,12 @@ def _dclient():
         from alpaca.data import StockHistoricalDataClient
         _data_client = StockHistoricalDataClient(_API_KEY, _SECRET)
     return _data_client
+
+
+def _order_id(ticker: str) -> str:
+    """Unique client order ID with strategy tag for per-strategy order filtering."""
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    return f"strat{STRATEGY_TAG}_{ticker}_{ts}"
 
 
 def get_live_prices(tickers: list[str]) -> dict[str, float]:
@@ -184,6 +192,7 @@ def submit_bracket_order(
         order_class=OrderClass.BRACKET,
         take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
         stop_loss=stop_loss_req,
+        client_order_id=_order_id(ticker),
     )
     order = _client().submit_order(req)
     print(f"        Market order: {ticker} {shares} shares → {order.id}")

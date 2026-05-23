@@ -47,6 +47,7 @@ MAX_INTRADAY_RANGE_PCT          = 5.0         # block stocks where avg(H-L)/Open
 MAX_SPREAD_PCT                  = 0.005       # 0.5% max bid-ask spread — wider eats into the 0.67% stop
 MAX_PREMARKET_GAP_PCT           = 0.08        # 8% max pre-market gap — already too extended to hit 2.5% more
 MAX_ATR_PCT                     = 5.0         # skip stocks with ATR% > this — ATR sizer would produce R:R < 1
+STRATEGY_TAG                    = "a"         # prefix on every Alpaca client_order_id — enables per-strategy order filtering
 LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed
 LARGE_CAP_VOLUME_RATIO          = 0.5         # relaxed volume ratio for mega-caps (vs MIN_VOLUME_RATIO=1.5)
 USE_NATIVE_TRAILING_STOP    = True        # Alpaca tracks peak in real-time, fires immediately on 1% reversal — no 15-min polling gap

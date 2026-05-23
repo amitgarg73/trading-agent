@@ -146,3 +146,86 @@ def test_submit_bracket_order_returns_none_on_timeout(mock_client):
 
     assert order_id is None
     assert fill_price is None
+
+
+@patch("agents.alpaca_broker._client")
+def test_submit_bracket_order_sets_strategy_tag(mock_client):
+    """Bracket order must include client_order_id with strata_ prefix for per-strategy reconciliation."""
+    order = MagicMock()
+    order.id = "ord-tag"
+    mock_client.return_value.submit_order.return_value = order
+
+    filled = MagicMock()
+    filled.status = "filled"
+    filled.filled_avg_price = 150.0
+    mock_client.return_value.get_order_by_id.return_value = filled
+
+    from agents.alpaca_broker import submit_bracket_order
+    with patch("time.sleep"):
+        submit_bracket_order("AAPL", 10, 150.0, 156.0, 149.0)
+
+    call_kwargs = mock_client.return_value.submit_order.call_args[0][0]
+    assert hasattr(call_kwargs, "client_order_id")
+    assert str(call_kwargs.client_order_id).startswith("strata_")
+
+
+# ── _alpaca_order_pnl reconciliation ────────────────────────────────────────
+
+def _make_alpaca_order(order_id, cid, filled_price, filled_qty, legs=None):
+    o = MagicMock()
+    o.id = order_id
+    o.client_order_id = cid
+    o.side = "buy"
+    o.filled_avg_price = filled_price
+    o.filled_qty = filled_qty
+    o.legs = legs or []
+    return o
+
+
+def _make_exit_leg(status, filled_price):
+    leg = MagicMock()
+    leg.status = status
+    leg.filled_avg_price = filled_price
+    leg.filled_qty = None
+    return leg
+
+
+@patch("agents.alpaca_broker._client")
+def test_alpaca_order_pnl_bracket_exit(mock_client):
+    """Bracket exit: P&L computed from entry fill × qty + exit leg fill."""
+    buy = _make_alpaca_order("ord-1", "strata_AAPL_20260523120000", 150.0, 20,
+                             legs=[_make_exit_leg("filled", 153.0)])
+    mock_client.return_value.get_orders.return_value = [buy]
+
+    from agents.performance import _alpaca_order_pnl
+    pnl, note = _alpaca_order_pnl("strata_", [])
+
+    assert pnl == pytest.approx((153.0 - 150.0) * 20, abs=0.01)
+    assert "1b" in note
+
+
+@patch("agents.alpaca_broker._client")
+def test_alpaca_order_pnl_manual_close_fallback(mock_client):
+    """Manual close: no filled bracket leg → falls back to DB realized_pnl."""
+    buy = _make_alpaca_order("ord-2", "strata_MSFT_20260523130000", 300.0, 10, legs=[])
+    mock_client.return_value.get_orders.return_value = [buy]
+
+    real_closed = [{"alpaca_order_id": "ord-2", "realized_pnl": 85.0}]
+    from agents.performance import _alpaca_order_pnl
+    pnl, note = _alpaca_order_pnl("strata_", real_closed)
+
+    assert pnl == pytest.approx(85.0, abs=0.01)
+    assert "1m" in note
+
+
+@patch("agents.alpaca_broker._client")
+def test_alpaca_order_pnl_no_tagged_orders(mock_client):
+    """No tagged orders returns (None, reason) — reconciliation skipped."""
+    untagged = _make_alpaca_order("ord-3", "other_AAPL_ts", 100.0, 5)
+    mock_client.return_value.get_orders.return_value = [untagged]
+
+    from agents.performance import _alpaca_order_pnl
+    pnl, note = _alpaca_order_pnl("strata_", [])
+
+    assert pnl is None
+    assert "no tagged" in note

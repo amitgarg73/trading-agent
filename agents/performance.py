@@ -1,11 +1,82 @@
 """
 Performance Agent: runs EOD, closes all positions, writes daily P&L record.
 """
+from __future__ import annotations
 from datetime import date, datetime
 from agents.portfolio import close_all_positions
 from core import db
-from config.settings import TOTAL_CAPITAL
+from config.settings import TOTAL_CAPITAL, STRATEGY_TAG
 import yfinance as yf
+
+
+def _alpaca_order_pnl(tag_prefix: str, real_closed: list) -> tuple[float | None, str]:
+    """
+    Compute per-strategy realized P&L from today's tagged Alpaca bracket orders.
+    For bracket exits (target/stop fired by Alpaca): uses actual entry + exit fill prices.
+    For manual closes (EOD/lock-in, where bracket legs are cancelled): falls back to DB realized_pnl.
+    Returns (pnl, status_note) or (None, reason) if no tagged orders found.
+    """
+    from agents import alpaca_broker
+    from alpaca.trading.requests import GetOrdersRequest
+    from alpaca.trading.enums import QueryOrderStatus
+    from datetime import time as _t, timezone
+
+    today_start = datetime.combine(date.today(), _t.min).replace(tzinfo=timezone.utc)
+
+    try:
+        all_orders = alpaca_broker._client().get_orders(GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED,
+            after=today_start,
+            limit=500,
+        ))
+    except Exception as e:
+        return None, f"order fetch failed: {e}"
+
+    tagged_buys = [
+        o for o in all_orders
+        if str(o.client_order_id or "").startswith(tag_prefix)
+        and str(o.side).lower() == "buy"
+        and o.filled_avg_price
+    ]
+
+    if not tagged_buys:
+        return None, "no tagged orders found"
+
+    db_by_order_id = {
+        p.get("alpaca_order_id"): p
+        for p in real_closed
+        if p.get("alpaca_order_id")
+    }
+
+    total = 0.0
+    bracket_exits = 0
+    manual_fallbacks = 0
+
+    for o in tagged_buys:
+        entry_fill = float(o.filled_avg_price)
+        qty = float(o.filled_qty or 0)
+        if qty == 0:
+            continue
+
+        # Bracket exit leg (target or stop fired by Alpaca)
+        exit_fill = None
+        for leg in (o.legs or []):
+            if str(leg.status).lower() in ("filled", "partially_filled") and leg.filled_avg_price:
+                exit_fill = float(leg.filled_avg_price)
+                break
+
+        if exit_fill is not None:
+            total += (exit_fill - entry_fill) * qty
+            bracket_exits += 1
+        else:
+            # Manual close — bracket legs cancelled; use DB realized_pnl as fallback
+            db_pos = db_by_order_id.get(str(o.id))
+            if db_pos and db_pos.get("realized_pnl") is not None:
+                total += float(db_pos["realized_pnl"])
+                manual_fallbacks += 1
+
+    note = f"{bracket_exits}b/{manual_fallbacks}m/{len(tagged_buys)} orders"
+    return round(total, 2), note
 
 
 def run(broker: str = "simulation") -> dict:
@@ -44,7 +115,7 @@ def run(broker: str = "simulation") -> dict:
     starting_capital = prev_day[0]["ending_capital"] if prev_day else TOTAL_CAPITAL
     ending_capital   = round(starting_capital + total_pnl, 2)
 
-    # Alpaca equity reconciliation — fetch ground-truth equity from broker
+    # Alpaca reconciliation — per-strategy P&L from tagged bracket orders
     alpaca_equity  = None
     friction_gap   = None
     friction_breakdown = None
@@ -53,11 +124,18 @@ def run(broker: str = "simulation") -> dict:
             from agents import alpaca_broker
             account = alpaca_broker._client().get_account()
             alpaca_equity = round(float(account.equity), 2)
-            friction_gap  = round(alpaca_equity - ending_capital, 2)
-            gap_sign = "+" if friction_gap >= 0 else ""
-            print(f"  💰 Alpaca equity: ${alpaca_equity:,.2f} | Our calc: ${ending_capital:,.2f} | Gap: {gap_sign}${friction_gap:,.2f}")
+            print(f"  💰 Alpaca account equity: ${alpaca_equity:,.2f} (combined A+B — informational)")
         except Exception as e:
             print(f"  ⚠️  Alpaca equity fetch failed: {e}")
+
+        tag_prefix = f"strat{STRATEGY_TAG}_"
+        alpaca_pnl, note = _alpaca_order_pnl(tag_prefix, real_closed)
+        if alpaca_pnl is not None:
+            friction_gap = round(alpaca_pnl - total_pnl, 2)
+            gap_sign = "+" if friction_gap >= 0 else ""
+            print(f"  📊 Strategy {STRATEGY_TAG.upper()} order P&L: ${alpaca_pnl:,.2f} | Our calc: ${total_pnl:,.2f} | Gap: {gap_sign}${friction_gap:,.2f} ({note})")
+        else:
+            print(f"  📊 Order reconciliation: {note}")
 
         fills = [
             p for p in real_closed
