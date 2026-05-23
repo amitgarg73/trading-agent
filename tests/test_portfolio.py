@@ -341,6 +341,29 @@ class TestBreakevenStop:
         updates = self._stop_loss_updates_for(mock_update, "test-leg-b")
         assert len(updates) == 0, "Cross-ticker breakeven lock must not fire"
 
+    def test_breakeven_lock_alpaca_resubmits_with_native_trail(self):
+        """In Alpaca mode, breakeven lock resubmit must pass use_native_trail=True and trail_pct."""
+        from unittest.mock import patch, MagicMock
+        from agents.portfolio import _lock_breakeven
+        from config.settings import USE_NATIVE_TRAILING_STOP, TRAIL_PCT
+
+        entry = 100.0
+        leg_a, leg_b = self._make_legs(entry=entry)
+        leg_b["alpaca_order_id"] = "old-bracket-id"
+        leg_b["stop_loss"] = entry - 1  # below entry — lock not yet applied
+
+        with patch("agents.portfolio.db.update") as mock_update, \
+             patch("agents.alpaca_broker.cancel_order", return_value=True) as mock_cancel, \
+             patch("agents.alpaca_broker.submit_bracket_order", return_value="new-bracket-id") as mock_submit:
+            _lock_breakeven([leg_b], leg_a, broker="alpaca")
+
+        mock_submit.assert_called_once()
+        _, kwargs = mock_submit.call_args
+        assert kwargs.get("use_native_trail") == USE_NATIVE_TRAILING_STOP, \
+            "use_native_trail must be passed to resubmitted bracket"
+        assert kwargs.get("trail_pct") == TRAIL_PCT, \
+            "trail_pct must be passed to resubmitted bracket"
+
 
 # ── Live-price recalculation (inverted stop prevention) ──────────────────────
 
