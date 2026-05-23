@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.13 · **Updated:** 2026-05-22
+**Version:** v5.14 · **Updated:** 2026-05-23
 
 ---
 
@@ -42,10 +42,10 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 
 | Step | What Happens |
 |------|-------------|
-| **0. Market Context** | Fetches VIX, Fear & Greed, US futures, intl markets, economic calendar. Sets `max_positions` and `quiet_day` flag. Skips trading if futures down >1.5%. |
-| **1. Scan** | Scores 600+ tickers on RSI, MACD, Bollinger Bands, volume ratio, SMA20/50 trend. Returns candidates with \|score\| ≥ 3. |
-| **1.5 News Filter** | Removes earnings-day tickers (blackout). Adds news sentiment context. |
-| **1.75 Pre-filter** | Drops bearish candidates (score < 3). Reduces Claude input tokens by ~60%. |
+| **0. Market Context** | Fetches VIX, Fear & Greed, US futures, intl markets, economic calendar, and sector rotation (11 sector ETFs ranked by today's return). Sets `max_positions` and `quiet_day` flag. Skips trading if futures down >1.5%. |
+| **1. Scan** | Scores ~450 tickers on RSI, MACD, Bollinger Bands, volume ratio, SMA20/50 trend, breakout freshness. Applies bid-ask spread filter (>0.5% → skip), pre-market gap filter (abs(gap) >8% → skip), and intraday range filter (avg H-L/O >5% → skip). Enriches passing candidates with ORB and intraday VWAP signals from 5-min bars. Returns candidates with \|score\| ≥ 4. |
+| **1.5 News Filter** | Removes earnings-day tickers (today or tomorrow blackout). Adds news sentiment context. |
+| **1.75 Pre-filter** | Drops bearish candidates (score < 5). Reduces Claude input tokens by ~60%. |
 | **1.76 ML Scoring** | Predicts P(stock hits +2% intraday). Re-ranks candidates by ML score. |
 | **1.8 Live Prices** | Refreshes entry prices from Alpaca ask quotes (Alpaca mode only). |
 | **1.85 VWAP Signals** | Enriches candidates with VWAP position, today's % change, RS vs SPY. |
@@ -75,9 +75,9 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 
 | Confidence | Size | Trigger |
 |------------|------|---------|
-| HIGH | $7,000 | Score ≥ 7, volume ratio > 1.8, 3+ signals |
-| MEDIUM | $6,000 | Score 4–6 OR (score 3–4 + above VWAP + RS ≥ 1.5) |
-| LOW | $5,000 | Score 3–4, weak VWAP/RS |
+| HIGH | $3,500 | Score ≥ 7, volume ratio > 1.8, 3+ signals |
+| MEDIUM | $3,000 | Score 5–6 OR (score 4–5 + above VWAP + RS ≥ 1.5) |
+| LOW | $2,500 | Score 4–5, weak VWAP/RS |
 
 Confidence is assigned by Claude based on technical score, VWAP position, and relative strength vs SPY.
 
@@ -143,10 +143,10 @@ Triggered when Fear & Greed Index < 35.
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| `TOTAL_CAPITAL` | $100,000 | Simulated account size |
-| `TARGET_PCT` | 2% | Profit target per trade |
+| `TOTAL_CAPITAL` | $50,000 | Simulated account size |
+| `TARGET_PCT` | 2.5% | Profit target per trade |
 | `MAX_LOSS_PER_TRADE` | 0.67% | Stop loss depth |
-| `MIN_REWARD_RISK` | 3.0 | Normal day R:R floor |
+| `MIN_REWARD_RISK` | 2.9 | Normal day R:R floor |
 | `QUIET_DAY_MIN_REWARD_RISK` | 2.0 | Quiet day R:R floor |
 | `QUIET_DAY_FG_THRESHOLD` | 35 | Fear & Greed threshold for quiet day |
 | `PARTIAL_PROFIT_PCT` | 1% | Partial exit target (Leg A) |
@@ -156,21 +156,25 @@ Triggered when Fear & Greed Index < 35.
 | `DAILY_LOSS_LIMIT` | -$500 | Pause new entries if net P&L (realized + unrealized) drops below (1% of capital) |
 | `MAX_POSITIONS` | 15 | Max concurrent positions |
 | `MAX_PER_SECTOR` | 3 | Sector concentration cap |
-| `SCORE_THRESHOLD` | 3 | Minimum scanner score (absolute value) |
-| `STRATEGY_MIN_SCORE` | 3 | Pre-filter before Claude call (bullish only) |
+| `SCORE_THRESHOLD` | 4 | Minimum scanner score (absolute value) — raised from 1 to cut noise |
+| `STRATEGY_MIN_SCORE` | 5 | Pre-filter before Claude call (bullish only, score ≥ 5) |
 | `MIN_AVG_VOLUME` | 1,000,000 | Liquidity floor |
+| `MAX_SPREAD_PCT` | 0.5% | Bid-ask spread cap — wider spreads erode the 0.67% stop |
+| `MAX_PREMARKET_GAP_PCT` | 8% | Pre-market gap cap — stocks already extended >8% can't reach 2.5% more |
+| `MAX_INTRADAY_RANGE_PCT` | 5% | Avg daily H-L range cap — prevents stop-noise on hyper-volatile names |
+| `LARGE_CAP_AVG_VOLUME` | 15,000,000 | Volume above which the ratio threshold is relaxed for mega-caps |
 
 ---
 
 ## 7. Universe
 
-**~665 tickers** (dynamic + static merged):
+**~450 tickers** (dynamic + static merged):
 
-- **S&P 500 (~503):** Live list fetched from Wikipedia monthly via `universe_refresh`; written to `config/sp500_tickers.json` as fallback. Ensures quality floor (market cap, float, liquidity minimums).
+- **Large-cap stocks (~410):** Curated across mega-cap tech, semiconductors, software/AI, fintech, biotech, consumer, energy, financials, industrials, materials, utilities, and communication sectors. Junk tickers removed: crypto miners (MARA, RIOT, HUT, etc.), speculative quantum plays (RGTI, QUBT, QBTS), and small-cap biotech with insufficient liquidity. IONQ and RXRX retained (portfolio holdings).
 - **Non-leveraged ETFs (41):** Sector, broad market, and thematic ETFs; no leveraged or inverse ETFs.
 - **Dynamic:** Top ATR movers from the S&P 500 pool, refreshed monthly. Sorted by volatility, prepended to static list.
 
-Merge strategy: dynamic first (highest ATR movers lead), static appended, deduplicated. Ensures broad coverage while surfacing active names.
+Merge strategy: dynamic first (highest ATR movers lead), static appended, deduplicated. Ensures broad coverage while surfacing active names. Universe quality floor raised in 2026-05 to reduce noise from ultra-volatile tickers that trigger stop-noise before the 2.5% target is reached.
 
 ---
 
@@ -178,10 +182,20 @@ Merge strategy: dynamic first (highest ATR movers lead), static appended, dedupl
 
 ```
 Scanner (yfinance / Alpaca fallback)
-  → technical scores, OHLCV, RSI, MACD, Bollinger, SMA
+  → technical scores, OHLCV, RSI, MACD, Bollinger, SMA20/50
+  → breakout freshness: FRESH (0-5% above SMA20 = +1), EXTENDED (>12% = -1), NORMAL
+  → bid-ask spread filter: reject if (ask-bid)/ask > 0.5%
+  → pre-market gap filter: reject if abs(preMarketPrice/prevClose - 1) > 8%
+  → intraday range filter: reject if avg(H-L)/O > 5% (stops stop-noise)
+  → ORB signal: above_orb = price > first-30-min high (5-min bars)
+  → intraday VWAP: cumulative TP×V / cumV from 5-min bars; vwap_reclaim flag
   → Alpaca live ask prices (refresh step)
   → Alpaca VWAP, RS vs SPY, today % change (intraday signals)
   → ML model score (P(hit +2%) — XGBoost, trained on 6 months)
+
+Market Context (parallel fetch)
+  → VIX, Fear & Greed, US futures, intl markets, economic calendar
+  → Sector rotation: 11 sector ETFs ranked by today's return (leading/lagging summary for Claude)
 
 Claude (claude-sonnet-4-6)
   → selects trades, sets confidence, writes reasoning
@@ -206,7 +220,7 @@ Streamlit Dashboard
 
 ## 9. Validation Gate
 
-**Run on June 1, 2026:** `python3 eval.py --days 14`
+**Run on June 8, 2026:** `python3 eval.py --days 14`
 
 | Criterion | Threshold |
 |-----------|-----------|
@@ -241,10 +255,10 @@ Strategy B is a companion live paper-trading system operating in parallel on the
 
 | Dimension | Strategy A | Strategy B |
 |-----------|-----------|-----------|
-| **Universe** | 600+ tickers (S&P 500 + ETFs) | ~150 blue chip large caps (Pool 1 → Pool 3) |
-| **Daily candidates** | All scored tickers (20–60 after filter) | 8–10 Pool 3 daily elite picks |
-| **Capital** | $100,000 | $50,000 |
-| **Position sizes** | $7K / $6K / $5K (HIGH/MED/LOW) | $3.5K / $3K / $2.5K (HIGH/MED/LOW) |
+| **Universe** | ~450 tickers (curated large-caps + ETFs) | ~150 blue chip large caps (Pool 1 → Pool 3) |
+| **Daily candidates** | Scored tickers with \|score\| ≥ 4 (20–50 after filter) | 8–10 Pool 3 daily elite picks |
+| **Capital** | $50,000 | $50,000 |
+| **Position sizes** | $3.5K / $3K / $2.5K (HIGH/MED/LOW) | $3.5K / $3K / $2.5K (HIGH/MED/LOW) |
 | **Profit target** | +2% (premarket and intraday) | +2% premarket · +1% intraday entries |
 | **Stop loss** | −0.67% | −0.67% |
 | **R:R floor** | 3.0 (normal) / 2.0 (quiet day) | 2.0 (always) |
