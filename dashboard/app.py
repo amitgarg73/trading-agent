@@ -1232,7 +1232,8 @@ elif page == "Performance":
                     _gap_icon     = "✅" if abs(_latest_gap) < 50 else ("⚠️" if abs(_latest_gap) < 200 else "❌")
                     st.markdown(
                         f"{_gap_icon} Broker friction gap (latest): **{_gap_sign}${_latest_gap:,.2f}**  "
-                        f"<span style='color:#888;font-size:0.82em'>— Alpaca equity ${_latest_eq:,.2f} minus our P&L calc. "
+                        f"<span style='color:#888;font-size:0.82em'>— Strategy A Alpaca order fills minus our P&L calc "
+                        f"(per-strategy; Alpaca account equity ${_latest_eq:,.2f} is combined A+B). "
                         f"Avg over window: {'+' if _avg_gap >= 0 else ''}${_avg_gap:,.2f}. "
                         f"<$50 = ✅ clean · $50–$200 = ⚠️ monitor · >$200 = ❌ investigate.</span>",
                         unsafe_allow_html=True,
