@@ -271,7 +271,8 @@ class TestIntradayRangeFilter:
                  "intraday_range_pct": intraday_range_pct,
                  "range_52w_pct": 0.5, "dist_sma20": 0.01, "dist_sma50": 0.02,
                  "mom1": 0.01, "mom5": 0.02, "sma20": 100.0, "price": 100.0,
-             }):
+             }), \
+             patch("scanner.scanner._intraday_signals", return_value={}):
             from scanner.scanner import _scan_ticker
             return _scan_ticker("TEST")
 
@@ -295,3 +296,109 @@ class TestIntradayRangeFilter:
         result = self._run_scan_ticker(intraday_range_pct=2.0)
         assert result is not None
         assert "intraday_range_pct" in result
+
+
+# ── _intraday_signals / ORB / VWAP ───────────────────────────────────────────
+
+def _make_intraday_df(n: int = 12, trend: str = "up") -> pd.DataFrame:
+    """Synthetic 5-min bars for ORB/VWAP tests."""
+    import datetime as dt
+    base = 100.0
+    rows = []
+    for i in range(n):
+        close = base + i * 0.3 if trend == "up" else base - i * 0.3
+        rows.append({
+            "open":   close - 0.1,
+            "high":   close + 0.4,
+            "low":    close - 0.4,
+            "close":  close,
+            "volume": 200_000,
+        })
+    today = date.today()
+    times = [
+        dt.datetime.combine(today, dt.time(9, 30)) + dt.timedelta(minutes=5 * i)
+        for i in range(n)
+    ]
+    df = pd.DataFrame(rows, index=pd.DatetimeIndex(times))
+    return df
+
+
+class TestIntradaySignals:
+
+    def test_returns_empty_when_no_bars(self):
+        from scanner.scanner import _intraday_signals
+        with patch("scanner.scanner._intraday_bars", return_value=None):
+            result = _intraday_signals("AAPL")
+        assert result == {}
+
+    def test_above_orb_true_on_uptrend(self):
+        from scanner.scanner import _intraday_signals
+        df = _make_intraday_df(n=12, trend="up")
+        with patch("scanner.scanner._intraday_bars", return_value=df):
+            result = _intraday_signals("AAPL")
+        assert result["above_orb"] is True
+
+    def test_above_orb_false_on_downtrend(self):
+        from scanner.scanner import _intraday_signals
+        df = _make_intraday_df(n=12, trend="down")
+        with patch("scanner.scanner._intraday_bars", return_value=df):
+            result = _intraday_signals("AAPL")
+        assert result["above_orb"] is False
+
+    def test_above_vwap_present(self):
+        from scanner.scanner import _intraday_signals
+        df = _make_intraday_df(n=12, trend="up")
+        with patch("scanner.scanner._intraday_bars", return_value=df):
+            result = _intraday_signals("AAPL")
+        assert "above_vwap" in result
+        assert isinstance(result["above_vwap"], bool)
+
+    def test_vwap_reclaim_present(self):
+        from scanner.scanner import _intraday_signals
+        df = _make_intraday_df(n=12, trend="up")
+        with patch("scanner.scanner._intraday_bars", return_value=df):
+            result = _intraday_signals("AAPL")
+        assert "vwap_reclaim" in result
+
+    def test_vwap_value_returned(self):
+        from scanner.scanner import _intraday_signals
+        df = _make_intraday_df(n=12, trend="up")
+        with patch("scanner.scanner._intraday_bars", return_value=df):
+            result = _intraday_signals("AAPL")
+        assert isinstance(result.get("vwap"), float)
+        assert result["vwap"] > 0
+
+
+class TestScanTickerIntradayFields:
+    """_scan_ticker() must include ORB/VWAP fields from _intraday_signals()."""
+
+    def _run(self, intraday_signals: dict):
+        df = _make_volatile_df(intraday_range_pct=2.0)
+        info = {"averageVolume": 5_000_000, "longName": "Test", "sector": "Tech"}
+        with patch("scanner.scanner._fetch", return_value=(info, df)), \
+             patch("scanner.scanner._technical", return_value={
+                 "technical_score": 6, "signals": [], "rsi": 55.0,
+                 "macd_hist": 0.1, "bb_pct": 0.5, "volume_ratio": 2.0,
+                 "atr": 1.0, "atr_pct": 1.0, "intraday_range_pct": 2.0,
+                 "range_52w_pct": 0.5, "dist_sma20": 0.01, "dist_sma50": 0.02,
+                 "mom1": 0.01, "mom5": 0.02, "sma20": 100.0, "price": 100.0,
+             }), \
+             patch("scanner.scanner._intraday_signals", return_value=intraday_signals):
+            from scanner.scanner import _scan_ticker
+            return _scan_ticker("TEST")
+
+    def test_orb_and_vwap_fields_present_when_market_open(self):
+        signals = {"above_orb": True, "above_vwap": True, "vwap_reclaim": False, "vwap": 101.5}
+        result = self._run(signals)
+        assert result is not None
+        assert result["above_orb"] is True
+        assert result["above_vwap"] is True
+        assert result["vwap_reclaim"] is False
+        assert result["vwap"] == 101.5
+
+    def test_fields_are_none_when_market_closed(self):
+        result = self._run({})
+        assert result is not None
+        assert result["above_orb"] is None
+        assert result["above_vwap"] is None
+        assert result["vwap_reclaim"] is None

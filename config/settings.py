@@ -102,7 +102,7 @@ STOCK_UNIVERSE = [
     "S", "ASAN", "BILL", "GTLB",
     "ESTC", "DT", "DOCN", "FSLY", "CWAN", "FOUR",
     "PATH", "AI", "BBAI", "SOUN", "BRZE", "FRSH", "DOMO",
-    "APP", "APLD", "IONQ", "RGTI", "QUBT", "QBTS",
+    "APP", "APLD", "IONQ",
     "TTD", "MGNI", "PUBM", "CXAI", "GFAI",
     "RBLX", "U", "SHOP", "MELI", "SE", "GRAB",
     "PCVX", "DAVE", "MQ",
@@ -112,19 +112,11 @@ STOCK_UNIVERSE = [
     "LMND", "HIMS", "WEX", "GPN", "FIS", "FISV",
     "V", "AXP", "SYF", "COF", "ALLY", "OPEN",
 
-    # ── Crypto-adjacent ───────────────────────────────────────────
-    "MARA", "RIOT", "HUT", "CLSK", "IREN", "BITF", "CIFR",
-    "BTBT", "WULF", "CORZ",
-
     # ── Biotech / Pharma / Health ─────────────────────────────────
     "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR",
     "BMY", "AMGN", "GILD", "BIIB", "REGN", "VRTX", "ISRG",
     "BSX", "SYK", "MDT", "BDX", "RMD", "IQV", "MRNA",
-    "BNTX", "NVAX", "SRPT", "BMRN", "ALNY", "RARE", "PTCT",
-    "FOLD", "TGTX", "PRAX", "IMVT", "ARWR", "BEAM", "EDIT",
-    "NTLA", "CRSP", "KYMR", "KROS", "ABCL", "VKTX",
-    "GPCR", "RXRX", "ACAD", "HALO", "CELH",
-    "INVA", "RVMD", "PTGX", "AGIO",
+    "BNTX", "NVAX", "SRPT", "BMRN", "ALNY", "RXRX", "ACAD", "HALO", "CELH",
 
     # ── Consumer Discretionary ────────────────────────────────────
     "HD", "LOW", "MCD", "SBUX", "TJX", "ROST",
@@ -179,7 +171,7 @@ STOCK_UNIVERSE = [
     "EQR", "DLR", "WELL", "VTR",
 
     # ── Space / Defense-adjacent ──────────────────────────────────
-    "ASTS", "OKLO", "LUNR", "RKLB", "IRDM", "SPIR",
+    "ASTS", "OKLO", "RKLB", "IRDM",
 
 ]
 

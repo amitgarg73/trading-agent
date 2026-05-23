@@ -16,6 +16,56 @@ from config.settings import (
 )
 
 
+def _intraday_bars(ticker: str) -> pd.DataFrame | None:
+    """Fetch today's 5-min bars. Returns None if market is closed or fewer than 6 bars."""
+    try:
+        df = yf.download(ticker, period="1d", interval="5m", progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [c[0].lower() for c in df.columns]
+        else:
+            df.columns = [c.lower() for c in df.columns]
+        df.index = pd.to_datetime(df.index)
+        today_bars = df[df.index.date == date.today()]
+        return today_bars if len(today_bars) >= 6 else None
+    except Exception:
+        return None
+
+
+def _intraday_signals(ticker: str) -> dict:
+    """ORB and intraday VWAP signals from 5-min bars. Empty dict when market is closed."""
+    bars = _intraday_bars(ticker)
+    if bars is None:
+        return {}
+    try:
+        cur_price = float(bars["close"].iloc[-1])
+
+        orb_high  = float(bars.head(6)["high"].max())
+        above_orb = cur_price > orb_high
+
+        df = bars.copy()
+        df["typical"]   = (df["high"] + df["low"] + df["close"]) / 3
+        df["cum_tpvol"] = (df["typical"] * df["volume"]).cumsum()
+        df["cum_vol"]   = df["volume"].cumsum()
+        df["vwap"]      = df["cum_tpvol"] / df["cum_vol"]
+
+        vwap_now       = float(df["vwap"].iloc[-1])
+        above_vwap_now = cur_price > vwap_now
+
+        mid       = max(1, len(df) // 2)
+        was_below = bool((df["close"].iloc[:mid] < df["vwap"].iloc[:mid]).any())
+
+        return {
+            "above_orb":    above_orb,
+            "above_vwap":   above_vwap_now,
+            "vwap_reclaim": above_vwap_now and was_below,
+            "vwap":         round(vwap_now, 2),
+        }
+    except Exception:
+        return {}
+
+
 def _fetch_alpaca(ticker: str) -> tuple[dict, pd.DataFrame | None]:
     """Alpaca daily bars fallback — used when yfinance is rate-limited."""
     try:
@@ -175,6 +225,8 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
     # Threshold = 5% → blocks quantum, crypto, leveraged ETFs; keeps blue chips.
     if tech["intraday_range_pct"] > MAX_INTRADAY_RANGE_PCT:
         return None
+    # ORB + intraday VWAP — only computed after score gate (avoids 5-min fetch for every ticker)
+    intraday = _intraday_signals(ticker)
     return {
         "ticker": ticker,
         "name": info.get("longName", ticker),
@@ -198,6 +250,10 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
         "dist_sma50": tech["dist_sma50"],
         "mom1": tech["mom1"],
         "mom5": tech["mom5"],
+        "above_orb":    intraday.get("above_orb"),
+        "above_vwap":   intraday.get("above_vwap"),
+        "vwap_reclaim": intraday.get("vwap_reclaim"),
+        "vwap":         intraday.get("vwap"),
         "ml_score": None,
         "scanned_at": datetime.utcnow().isoformat(),
     }
