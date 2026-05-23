@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.17 · **Updated:** 2026-05-23
+**Version:** v5.18 · **Updated:** 2026-05-23
 
 ---
 
@@ -52,6 +52,7 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 | **2. Strategy (Claude)** | Selects trades, assigns confidence (HIGH/MEDIUM/LOW), sets entry/target/stop using fixed formulas. |
 | **3. Risk Validation** | Enforces R:R floor, position size bounds, max loss per trade. Quiet day: R:R floor drops to 2.0. |
 | **3.5 Sector Guard** | Caps exposure at 3 positions per sector. |
+| **3.6 ATR Sizer (P0)** | Replaces fixed 0.67% formula stop with ATR-based stop (`max(ATR × 1.2, 0.5%)`). Computes shares from constant $150 dollar risk so max loss is predictable regardless of stop width. ORB gate: if first-30-min opening range < 0.5 × ATR (choppy open), halve shares. Trades where ATR stop ≥ target (R:R < 1) are dropped. Trades with no ATR data pass through unchanged. |
 | **3.75 Guardrails** | Blocks duplicates, price sanity check (>5% from market = reject), daily loss limit. |
 | **4. Execute** | Opens bracket orders in Alpaca. Each trade splits into two legs (partial profit design). |
 
@@ -86,12 +87,17 @@ Confidence is assigned by Claude based on technical score, VWAP position, and re
 ```
 entry_price    = current ask price (Alpaca) or scanner close price
 target_price   = round(entry * 1.04, 2)          # +4% ceiling (limit order on Leg B)
-stop_loss      = round(entry * 0.9933, 2)         # -0.67% stop
 partial_target = round(entry * 1.01, 2)           # +1% partial exit (Leg A)
+
+# ATR-based stop (P0) — applied by atr_sizer.py after sector guard:
+stop_pct    = max(atr_pct * 1.2, 0.5%)           # stop is outside the noise band
+stop_loss   = round(entry * (1 - stop_pct), 2)
+shares      = min(int($150 / (entry * stop_pct)), int(position_size_cap / entry))
 ```
 
-Reward:Risk = 4% / 0.67% = **6.0:1** ceiling R:R (trail exits earlier in practice)  
-Reward:Risk floor on quiet days = **2:1** (Fear & Greed < 35)
+Reward:Risk = 4% / stop_pct (varies by ATR; typically 2.2:1–6.0:1)  
+Reward:Risk floor on quiet days = **2:1** (Fear & Greed < 35)  
+Trades with stop_pct ≥ 4% (ATR so wide that stop ≥ target) are dropped before execution.
 
 ### 4.3 Partial Profit Design
 
@@ -140,6 +146,7 @@ Five independent layers, applied in sequence:
 | **News Filter** | Earnings-day surprises, negative catalyst stocks |
 | **Risk Agent** | R:R below floor, position size out of bounds, stop too wide |
 | **Sector Guard** | > 3 positions in any single sector |
+| **ATR Sizer** | Drops trades where ATR stop ≥ target (R:R < 1); applies ORB halving on choppy opens |
 | **Guardrails** | Duplicates, price sanity (>5% from market), daily loss limit (-$500 net P&L) |
 
 ### 5.1 Quiet Day Mode
@@ -160,7 +167,11 @@ Triggered when Fear & Greed Index < 35.
 |-----------|-------|---------|
 | `TOTAL_CAPITAL` | $50,000 | Simulated account size |
 | `TARGET_PCT` | 4% | Ceiling limit order on Leg B — only fills on straight-line momentum runs; trail exits earlier in most trades |
-| `MAX_LOSS_PER_TRADE` | 0.67% | Stop loss depth |
+| `MAX_LOSS_PER_TRADE` | 0.67% | Formula stop (Claude's prompt reference; overridden by ATR sizer at runtime) |
+| `ATR_STOP_MULTIPLIER` | 1.2 | ATR-based stop multiplier: stop = max(ATR × 1.2, 0.5%) |
+| `ATR_STOP_FLOOR` | 0.5% | Minimum stop regardless of ATR — never tighter than this |
+| `MAX_LOSS_DOLLARS` | $150 | Constant dollar risk per trade; shares = $150 / (entry × stop_pct) |
+| `ORB_ATR_FLOOR` | 0.5 | ORB/ATR ratio below which the open is deemed choppy → halve shares |
 | `MIN_REWARD_RISK` | 2.9 | Normal day R:R floor |
 | `QUIET_DAY_MIN_REWARD_RISK` | 2.0 | Quiet day R:R floor |
 | `QUIET_DAY_FG_THRESHOLD` | 35 | Fear & Greed threshold for quiet day |
