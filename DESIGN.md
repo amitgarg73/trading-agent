@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.14 · **Updated:** 2026-05-23
+**Version:** v5.15 · **Updated:** 2026-05-23
 
 ---
 
@@ -172,9 +172,23 @@ Triggered when Fear & Greed Index < 35.
 
 - **Large-cap stocks (~410):** Curated across mega-cap tech, semiconductors, software/AI, fintech, biotech, consumer, energy, financials, industrials, materials, utilities, and communication sectors. Junk tickers removed: crypto miners (MARA, RIOT, HUT, etc.), speculative quantum plays (RGTI, QUBT, QBTS), and small-cap biotech with insufficient liquidity. IONQ and RXRX retained (portfolio holdings).
 - **Non-leveraged ETFs (41):** Sector, broad market, and thematic ETFs; no leveraged or inverse ETFs.
-- **Dynamic:** Top ATR movers from the S&P 500 pool, refreshed monthly. Sorted by volatility, prepended to static list.
+- **Dynamic:** Top ATR movers from the live S&P 500 list, refreshed monthly by `universe_refresh`. Sorted by ATR%, prepended to static list.
 
-Merge strategy: dynamic first (highest ATR movers lead), static appended, deduplicated. Ensures broad coverage while surfacing active names. Universe quality floor raised in 2026-05 to reduce noise from ultra-volatile tickers that trigger stop-noise before the 2.5% target is reached.
+**Refresh pipeline (`agents/universe_refresh.py`, runs 1st of each month):**
+1. Fetches live S&P 500 constituents from Wikipedia; writes `config/sp500_tickers.json` as fallback
+2. Screens all tickers: price $5–$2000, avg volume ≥500K/day, ATR% ≥0.5%
+3. Sorts survivors by ATR% descending (highest movers lead)
+4. Writes `config/universe_cache.json` — committed to the repo by the workflow
+
+**`load_universe()` at premarket (no Supabase call):**
+- Reads `config/universe_cache.json` directly (local file, zero network latency)
+- Cache valid for 35 days — survives a missed monthly run
+- Falls back to `settings.py` static list if cache is missing or stale
+
+**Retry strategy (`.github/workflows/universe_refresh.yml`):**
+- 3 attempts per run with exponential backoff: 60s → 120s → 240s
+- Fallback cron schedules on 2nd and 3rd of each month if 1st fails
+- Skip step on 2nd/3rd: exits immediately if cache is < 25 days old (prevents re-runs after a success)
 
 ---
 
@@ -205,6 +219,11 @@ Alpaca Paper Trading
   → bracket orders: limit entry + limit take-profit + stop-loss
   → two orders per trade (partial profit design)
   → reconciliation: intraday agent reads filled sell orders
+
+Universe Cache (local file — no DB call at premarket)
+  → config/universe_cache.json: ATR-sorted S&P 500 + ETFs, written monthly by universe_refresh
+  → config/sp500_tickers.json: raw S&P 500 list fallback (Wikipedia fetch)
+  → config/settings.py UNIVERSE: static hardcoded fallback if both files are stale/missing
 
 Supabase
   → positions, planned_trades, trade_plans, scan_results, daily_performance
