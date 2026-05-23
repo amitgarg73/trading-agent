@@ -265,6 +265,17 @@ def premarket(broker: str = "simulation"):
     else:
         print(f"        No sector concentration issues")
 
+    # 3.6 ATR sizing (P0) — replace formula stop with ATR-based stop + constant $150 risk
+    atr_dropped = []
+    if approved:
+        from agents import atr_sizer
+        candidates_atr = {c["ticker"]: c.get("atr_pct") for c in candidates}
+        approved, atr_dropped = atr_sizer.apply(approved, candidates_atr)
+        if atr_dropped:
+            print(f"[ 3.6/4 ] ATR sizer dropped {len(atr_dropped)} trade(s) (R:R < 1 after ATR stop)")
+        else:
+            print(f"[ 3.6/4 ] ATR sizer applied to {len(approved)} trade(s)")
+
     # 3.75 Guardrails (V5)
     guardrail_blocked = []
     if approved:
@@ -291,6 +302,7 @@ def premarket(broker: str = "simulation"):
         halt_reasons = (
             [r.get("reason") or str(r) for r in rejected] +
             [s.get("reason") or str(s) for s in sector_blocked] +
+            atr_dropped +
             guardrail_blocked
         )
 
