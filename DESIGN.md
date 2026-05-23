@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.18 · **Updated:** 2026-05-23
+**Version:** v5.19 · **Updated:** 2026-05-23
 
 ---
 
@@ -43,7 +43,7 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 | Step | What Happens |
 |------|-------------|
 | **0. Market Context** | Fetches VIX, Fear & Greed, US futures, intl markets, economic calendar, and sector rotation (11 sector ETFs ranked by today's return). Sets `max_positions` and `quiet_day` flag. Skips trading if futures down >1.5%. |
-| **1. Scan** | Scores ~450 tickers on RSI, MACD, Bollinger Bands, volume ratio, SMA20/50 trend, breakout freshness. Applies bid-ask spread filter (>0.5% → skip), pre-market gap filter (abs(gap) >8% → skip), and intraday range filter (avg H-L/O >5% → skip). Enriches passing candidates with ORB and intraday VWAP signals from 5-min bars. Returns candidates with \|score\| ≥ 4. |
+| **1. Scan** | Scores ~450 tickers on RSI, MACD, Bollinger Bands, volume ratio, SMA20/50 trend, breakout freshness. Applies bid-ask spread filter (>0.5% → skip), pre-market gap filter (abs(gap) >8% → skip), intraday range filter (avg H-L/O >5% → skip), and ATR quality gate (ATR% >5% → skip — ATR sizer would produce R:R<1 for these). Enriches passing candidates with ORB and intraday VWAP signals from 5-min bars. Returns candidates with \|score\| ≥ 4. |
 | **1.5 News Filter** | Removes earnings-day tickers (today or tomorrow blackout). Adds news sentiment context. |
 | **1.75 Pre-filter** | Drops bearish candidates (score < 5). Reduces Claude input tokens by ~60%. |
 | **1.76 ML Scoring** | Predicts P(stock hits +2% intraday). Re-ranks candidates by ML score. |
@@ -58,7 +58,8 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 
 ### 3.2 Intraday — Every 15 min, 10:00 AM–3:45 PM ET
 
-- **Reconcile:** Detects positions closed by Alpaca bracket (stop/target fired). Records real exit price and P&L. `_reconcile_with_alpaca()` in `agents/intraday.py` now fetches with `limit=500` and `after=today_start` to prevent UNFILLED misclassification on busy days where 40+ bracket orders previously exceeded the old 100-order API limit.
+- **Reconcile:** Detects positions closed by Alpaca bracket (stop/target fired). Records real exit price and P&L. `_reconcile_with_alpaca()` in `agents/intraday.py` fetches with `limit=500` and `after=today_start` to prevent UNFILLED misclassification on busy days.
+- **Intraday scan:** When open slots and P&L allow, runs a mid-day momentum scan. Approved trades now pass through a sector guard (MAX_PER_SECTOR cap per batch) and ATR sizer before `open_positions`.
 - **Refresh:** Syncs current price and unrealized P&L for open positions.
 - **Lock-in logic:** Tier 1 ($716 realized) — let winners ride. Tier 2 ($1,000 total) — close everything.
 
@@ -144,10 +145,12 @@ Five independent layers, applied in sequence:
 |-------|---------------|
 | **Market Context** | Trading on extreme volatility days (futures < -1.5%) |
 | **News Filter** | Earnings-day surprises, negative catalyst stocks |
+| **ATR Quality Gate** | Scanner drops tickers with ATR% >5% before they reach Claude |
 | **Risk Agent** | R:R below floor, position size out of bounds, stop too wide |
-| **Sector Guard** | > 3 positions in any single sector |
+| **Sector Guard** | > 3 positions in any single sector (premarket and intraday scans) |
 | **ATR Sizer** | Drops trades where ATR stop ≥ target (R:R < 1); applies ORB halving on choppy opens |
 | **Guardrails** | Duplicates, price sanity (>5% from market), daily loss limit (-$500 net P&L) |
+| **Fill Poll** | `submit_bracket_order` polls 15 s for fill confirmation; returns (None, None) on rejection so phantom positions are never written to DB |
 
 ### 5.1 Quiet Day Mode
 
@@ -189,6 +192,7 @@ Triggered when Fear & Greed Index < 35.
 | `MAX_SPREAD_PCT` | 0.5% | Bid-ask spread cap — wider spreads erode the 0.67% stop |
 | `MAX_PREMARKET_GAP_PCT` | 8% | Pre-market gap cap — stocks already extended >8% can't reach 2.5% more |
 | `MAX_INTRADAY_RANGE_PCT` | 5% | Avg daily H-L range cap — prevents stop-noise on hyper-volatile names |
+| `MAX_ATR_PCT` | 5% | ATR quality gate in scanner — skips tickers where ATR sizer would produce R:R < 1 |
 | `LARGE_CAP_AVG_VOLUME` | 15,000,000 | Volume above which the ratio threshold is relaxed for mega-caps |
 
 ---
@@ -280,12 +284,12 @@ Streamlit Dashboard
 
 ---
 
-## 10. Post-June-1 Roadmap
+## 10. Changelog
 
-| Priority | Feature |
-|----------|---------|
-| P0 | P&L reconciliation: Alpaca `account.equity` as source of truth + friction breakdown |
-| P1 | Intraday trade entries: second scan at 12:30 PM, momentum-only, guardrailed by open position count and daily P&L |
+| Version | Date | Changes |
+|---------|------|---------|
+| **v5.19** | 2026-05-23 | P1 fixes: (1) fill rate — `submit_bracket_order` polls 15 s for fill confirmation, returns `(order_id, fill_price)` tuple, blocks DB write on rejection/timeout; `fill_price` stored on positions; (2) friction breakdown — `performance.py` computes `avg_slippage_bps` / `fills_with_data` from entry vs fill price; (3) close_price=0.0 fix — replaced falsy `or` chain with `is None` check; (4) ATR quality gate — `MAX_ATR_PCT=5%` filter in scanner drops tickers before ATR sizer rejects them; (5) intraday completeness — sector guard + ATR sizer wired into `_maybe_run_intraday_scan`, market note updated |
+| **v5.18** | 2026-05-23 | P0: ATR-based stop (P0-1) and ORB choppiness gate (P0-2) |
 
 ---
 
