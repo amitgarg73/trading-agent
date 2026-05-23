@@ -271,6 +271,7 @@ class TestIntradayRangeFilter:
                  "intraday_range_pct": intraday_range_pct,
                  "range_52w_pct": 0.5, "dist_sma20": 0.01, "dist_sma50": 0.02,
                  "mom1": 0.01, "mom5": 0.02, "sma20": 100.0, "price": 100.0,
+                 "breakout_freshness": "NORMAL",
              }), \
              patch("scanner.scanner._intraday_signals", return_value={}):
             from scanner.scanner import _scan_ticker
@@ -382,6 +383,7 @@ class TestScanTickerIntradayFields:
                  "atr": 1.0, "atr_pct": 1.0, "intraday_range_pct": 2.0,
                  "range_52w_pct": 0.5, "dist_sma20": 0.01, "dist_sma50": 0.02,
                  "mom1": 0.01, "mom5": 0.02, "sma20": 100.0, "price": 100.0,
+                 "breakout_freshness": "NORMAL",
              }), \
              patch("scanner.scanner._intraday_signals", return_value=intraday_signals):
             from scanner.scanner import _scan_ticker
@@ -402,3 +404,164 @@ class TestScanTickerIntradayFields:
         assert result["above_orb"] is None
         assert result["above_vwap"] is None
         assert result["vwap_reclaim"] is None
+
+
+# ── Bid-ask spread filter ─────────────────────────────────────────────────────
+
+def _make_tech_stub(**overrides) -> dict:
+    """Base _technical() stub for _scan_ticker tests."""
+    base = {
+        "technical_score": 6, "signals": [], "rsi": 55.0,
+        "macd_hist": 0.1, "bb_pct": 0.5, "volume_ratio": 2.0,
+        "atr": 1.0, "atr_pct": 1.0, "intraday_range_pct": 2.0,
+        "range_52w_pct": 0.5, "dist_sma20": 0.01, "dist_sma50": 0.02,
+        "mom1": 0.01, "mom5": 0.02, "sma20": 100.0, "price": 100.0,
+        "breakout_freshness": "NORMAL",
+    }
+    base.update(overrides)
+    return base
+
+
+def _run_scan_with_info(info_overrides: dict):
+    """Run _scan_ticker with a patched info dict and fixed _technical stub."""
+    from tests.conftest import make_price_df
+    df = make_price_df()
+    base_info = {"averageVolume": 5_000_000, "longName": "Test", "sector": "Tech"}
+    base_info.update(info_overrides)
+    with patch("scanner.scanner._fetch", return_value=(base_info, df)), \
+         patch("scanner.scanner._technical", return_value=_make_tech_stub()), \
+         patch("scanner.scanner._intraday_signals", return_value={}):
+        from scanner.scanner import _scan_ticker
+        return _scan_ticker("TEST")
+
+
+class TestSpreadFilter:
+    """_scan_ticker() rejects tickers with bid-ask spread > MAX_SPREAD_PCT."""
+
+    def test_wide_spread_blocked(self):
+        # bid=100, ask=101 → spread=1% > 0.5% MAX_SPREAD_PCT
+        result = _run_scan_with_info({"bid": 100.0, "ask": 101.0})
+        assert result is None, "Wide spread (1%) must be filtered out"
+
+    def test_tight_spread_passes(self):
+        # bid=100, ask=100.3 → spread=0.3% < 0.5%
+        result = _run_scan_with_info({"bid": 100.0, "ask": 100.3})
+        assert result is not None, "Tight spread (0.3%) must pass the filter"
+
+    def test_exactly_at_threshold_passes(self):
+        # bid=100, ask=100.5 → spread=0.498% < 0.5%
+        result = _run_scan_with_info({"bid": 100.0, "ask": 100.5})
+        assert result is not None
+
+    def test_missing_bid_skips_filter(self):
+        # No bid/ask info → filter is skipped (no rejection)
+        result = _run_scan_with_info({})
+        assert result is not None, "Missing bid/ask must not block the ticker"
+
+    def test_zero_bid_skips_filter(self):
+        # bid=0 (yfinance sometimes returns 0) → filter is skipped
+        result = _run_scan_with_info({"bid": 0, "ask": 100.5})
+        assert result is not None
+
+
+# ── Pre-market gap filter ────────────────────────────────────────────────────
+
+class TestPremarketGapFilter:
+    """_scan_ticker() rejects tickers with abs(premarket gap) > MAX_PREMARKET_GAP_PCT."""
+
+    def test_large_gap_up_blocked(self):
+        # 10% gap up — too extended to hit 2.5% more
+        result = _run_scan_with_info({
+            "preMarketPrice": 110.0,
+            "regularMarketPreviousClose": 100.0,
+        })
+        assert result is None, "10% gap up must be filtered out"
+
+    def test_large_gap_down_blocked(self):
+        # 10% gap down
+        result = _run_scan_with_info({
+            "preMarketPrice": 90.0,
+            "regularMarketPreviousClose": 100.0,
+        })
+        assert result is None, "10% gap down must be filtered out"
+
+    def test_small_gap_passes(self):
+        # 3% gap — within the 8% threshold
+        result = _run_scan_with_info({
+            "preMarketPrice": 103.0,
+            "regularMarketPreviousClose": 100.0,
+        })
+        assert result is not None, "3% gap must pass the filter"
+
+    def test_missing_premarket_price_skips_filter(self):
+        result = _run_scan_with_info({"regularMarketPreviousClose": 100.0})
+        assert result is not None, "Missing premarket price must not block the ticker"
+
+    def test_premarket_gap_pct_in_returned_candidate(self):
+        result = _run_scan_with_info({
+            "preMarketPrice": 103.0,
+            "regularMarketPreviousClose": 100.0,
+        })
+        assert result is not None
+        assert "premarket_gap_pct" in result
+        assert abs(result["premarket_gap_pct"] - 0.03) < 0.001
+
+
+# ── Breakout freshness ───────────────────────────────────────────────────────
+
+class TestBreakoutFreshness:
+    """_technical() must classify breakout freshness and score accordingly."""
+
+    def test_fresh_breakout_adds_score(self):
+        """dist_sma20 0-5% → +1 score and FRESH label."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        df = make_price_df(start_price=100.0, trend=0.001)
+        # Inject a fresh breakout: price just above SMA20 by ~3%
+        df = df.copy()
+        sma20 = float(df["close"].tail(20).mean())
+        # Shift last close to be 3% above SMA20
+        df.iloc[-1, df.columns.get_loc("close")] = sma20 * 1.03
+        tech = _technical("TEST", df)
+        assert tech["breakout_freshness"] == "FRESH"
+        assert any("Fresh" in s for s in tech["signals"])
+
+    def test_extended_breakout_penalises_score(self):
+        """dist_sma20 >12% → -1 score and EXTENDED label."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        df = make_price_df(start_price=100.0, trend=0.001)
+        df = df.copy()
+        sma20 = float(df["close"].tail(20).mean())
+        df.iloc[-1, df.columns.get_loc("close")] = sma20 * 1.15
+        tech = _technical("TEST", df)
+        assert tech["breakout_freshness"] == "EXTENDED"
+        assert any("Extended" in s for s in tech["signals"])
+
+    def test_normal_range_no_label_change(self):
+        """dist_sma20 5-12% → NORMAL label, no extra score."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        df = make_price_df(start_price=100.0, trend=0.001)
+        df = df.copy()
+        sma20 = float(df["close"].tail(20).mean())
+        df.iloc[-1, df.columns.get_loc("close")] = sma20 * 1.08
+        tech = _technical("TEST", df)
+        assert tech["breakout_freshness"] == "NORMAL"
+
+    def test_below_sma20_is_normal(self):
+        """Price below SMA20 (negative dist) → NORMAL."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        df = make_price_df(start_price=100.0, trend=-0.001)
+        df = df.copy()
+        sma20 = float(df["close"].tail(20).mean())
+        df.iloc[-1, df.columns.get_loc("close")] = sma20 * 0.95
+        tech = _technical("TEST", df)
+        assert tech["breakout_freshness"] == "NORMAL"
+
+    def test_breakout_freshness_in_scan_ticker_output(self):
+        result = _run_scan_with_info({})
+        assert result is not None
+        assert "breakout_freshness" in result
+        assert result["breakout_freshness"] in ("FRESH", "NORMAL", "EXTENDED")

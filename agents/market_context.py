@@ -76,6 +76,7 @@ NFP_DATES = {
 
 
 _FUTURES_MAP = {"S&P500": "ES=F", "Nasdaq": "NQ=F", "Dow": "YM=F"}
+_SECTOR_ETFS = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLC", "XLY", "XLP", "XLB", "XLRE", "XLU"]
 _INTL_MAP    = {
     "Nikkei (Japan)":  "^N225",
     "FTSE (UK)":       "^FTSE",
@@ -151,6 +152,28 @@ def _fetch_market_data() -> dict:
     return {"vix": vix, "futures": futures, "intl": intl}
 
 
+def _fetch_sector_rotation() -> dict:
+    """Fetch today's return for each sector ETF. Returns {ETF: change_pct} sorted best→worst."""
+    try:
+        raw = yf.download(_SECTOR_ETFS, period="2d", interval="1d",
+                          progress=False, group_by="ticker")
+        rotation = {}
+        for etf in _SECTOR_ETFS:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    s = raw[etf]["Close"].dropna()
+                else:
+                    s = raw["Close"].dropna()
+                if len(s) >= 2:
+                    chg = (float(s.iloc[-1]) - float(s.iloc[-2])) / float(s.iloc[-2]) * 100
+                    rotation[etf] = round(chg, 2)
+            except Exception:
+                pass
+        return dict(sorted(rotation.items(), key=lambda x: x[1], reverse=True))
+    except Exception:
+        return {}
+
+
 def _fetch_fear_greed() -> Optional[dict]:
     """Fetch CNN Fear & Greed Index from alternative.me (free, no API key)."""
     try:
@@ -195,14 +218,16 @@ def run() -> dict:
     """
     print("[ 0/4 ] Checking market conditions...")
 
-    # Batch yfinance download (1 request instead of 9) + Fear&Greed + calendar in parallel
-    with ThreadPoolExecutor(max_workers=3) as _pool:
-        _f_mkt   = _pool.submit(_fetch_market_data)
-        _f_fg    = _pool.submit(_fetch_fear_greed)
-        _f_econ  = _pool.submit(_check_economic_calendar)
-        _mkt        = _f_mkt.result()
-        fear_greed  = _f_fg.result()
-        econ_events = _f_econ.result()
+    # Batch yfinance download + Fear&Greed + calendar + sector rotation in parallel
+    with ThreadPoolExecutor(max_workers=4) as _pool:
+        _f_mkt    = _pool.submit(_fetch_market_data)
+        _f_fg     = _pool.submit(_fetch_fear_greed)
+        _f_econ   = _pool.submit(_check_economic_calendar)
+        _f_sector = _pool.submit(_fetch_sector_rotation)
+        _mkt          = _f_mkt.result()
+        fear_greed    = _f_fg.result()
+        econ_events   = _f_econ.result()
+        sector_rotation = _f_sector.result()
 
     vix     = _mkt["vix"]
     futures = _mkt["futures"]
@@ -298,6 +323,12 @@ def run() -> dict:
     )
     if econ_str:
         summary += f" ⚠️ {econ_str} — position count reduced."
+    if sector_rotation:
+        items = list(sector_rotation.items())
+        top = ", ".join(f"{k} {'+' if v >= 0 else ''}{v:.1f}%" for k, v in items[:3])
+        bot = ", ".join(f"{k} {v:.1f}%" for k, v in items[-3:])
+        summary += f" Sector rotation — leading: {top}. Lagging: {bot}."
+        print(f"        📊 Sector leaders: {top} | Laggards: {bot}")
 
     # ── Print status ──────────────────────────────────────────────────
     vix_icon = "🟢" if (vix or 0) < VIX_CAUTION_L else "🟡" if (vix or 0) < VIX_CRISIS else "🔴"
@@ -328,6 +359,7 @@ def run() -> dict:
         "futures":         futures,
         "intl_markets":    intl,
         "futures_bias":    futures_bias,
+        "sector_rotation": sector_rotation,
         "summary":         summary,
         "skip_reason":     skip_reason,
     }

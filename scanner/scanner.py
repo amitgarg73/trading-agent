@@ -13,6 +13,7 @@ from config.settings import (
     UNIVERSE, RSI_OVERSOLD, RSI_OVERBOUGHT,
     MIN_VOLUME_RATIO, MIN_PRICE, MIN_AVG_VOLUME, SCORE_THRESHOLD,
     LARGE_CAP_AVG_VOLUME, LARGE_CAP_VOLUME_RATIO, MAX_INTRADAY_RANGE_PCT,
+    MAX_SPREAD_PCT, MAX_PREMARKET_GAP_PCT,
 )
 
 
@@ -179,6 +180,16 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False) -
     mom1 = round(float(close.pct_change(1).iloc[-1]), 4) if len(close) >= 2 else None
     mom5 = round(float(close.pct_change(5).iloc[-1]), 4) if len(close) >= 6 else None
 
+    # Breakout freshness — just crossed SMA20 has better continuation odds than an extended trend
+    breakout_freshness = "NORMAL"
+    if dist_sma20 is not None:
+        if 0 < dist_sma20 <= 0.05:
+            score += 1; signals.append("Fresh SMA20 breakout — continuation setup")
+            breakout_freshness = "FRESH"
+        elif dist_sma20 > 0.12:
+            score -= 1; signals.append("Extended >12% above SMA20 — mean-reversion risk")
+            breakout_freshness = "EXTENDED"
+
     return {
         "technical_score": max(-10, min(10, score)),
         "signals": signals,
@@ -194,6 +205,7 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False) -
         "dist_sma50": dist_sma50,
         "mom1": mom1,
         "mom5": mom5,
+        "breakout_freshness": breakout_freshness,
         "sma20": round(sma20, 2),
         "price": round(price, 2),
     }
@@ -218,6 +230,21 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
     price = tech["price"]
     if not _passes_filters(info, price):
         return None
+    # Bid-ask spread filter — wide spread eats directly into the 0.67% stop
+    bid = info.get("bid") or 0
+    ask = info.get("ask") or 0
+    if bid > 0 and ask > 0:
+        spread_pct = (ask - bid) / ask
+        if spread_pct > MAX_SPREAD_PCT:
+            return None
+    # Pre-market gap filter — stock already extended, 2.5% target unreachable on top
+    premarket_price = info.get("preMarketPrice")
+    prev_close      = info.get("regularMarketPreviousClose")
+    premarket_gap_pct = None
+    if premarket_price and prev_close and float(prev_close) > 0:
+        premarket_gap_pct = round((float(premarket_price) - float(prev_close)) / float(prev_close), 4)
+        if abs(premarket_gap_pct) > MAX_PREMARKET_GAP_PCT:
+            return None
     if abs(tech["technical_score"]) < SCORE_THRESHOLD:
         return None
     # Intraday volatility filter: skip stocks whose typical H-L swing is so wide
@@ -250,6 +277,8 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
         "dist_sma50": tech["dist_sma50"],
         "mom1": tech["mom1"],
         "mom5": tech["mom5"],
+        "breakout_freshness":  tech["breakout_freshness"],
+        "premarket_gap_pct":   premarket_gap_pct,
         "above_orb":    intraday.get("above_orb"),
         "above_vwap":   intraday.get("above_vwap"),
         "vwap_reclaim": intraday.get("vwap_reclaim"),
