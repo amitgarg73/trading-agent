@@ -396,6 +396,8 @@ def _lock_breakeven(open_pos: list, closed_leg_a: dict, broker: str) -> None:
                             target_price=leg_b["target_price"],
                             stop_price=entry,
                             action=leg_b["action"],
+                            use_native_trail=USE_NATIVE_TRAILING_STOP,
+                            trail_pct=TRAIL_PCT,
                         )
                         if new_id:
                             db.update("positions", {"id": leg_b["id"]}, {"alpaca_order_id": new_id})

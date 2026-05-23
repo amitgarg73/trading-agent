@@ -21,7 +21,7 @@ MAX_LOSS_PER_TRADE   = 0.0067     # stop loss: 0.67% of position size (maintains
 MIN_REWARD_RISK            = 2.9   # minimum reward:risk ratio (~3:1; 2% target / 0.67% stop = 2.985 due to rounding)
 QUIET_DAY_MIN_REWARD_RISK  = 2.0   # relaxed R:R on quiet days (Fear&Greed < 35) — 2:1 still profitable at 80% win rate
 QUIET_DAY_FG_THRESHOLD     = 35    # Fear&Greed below this = quiet day
-TARGET_PCT           = 0.02       # 2% profit target per trade (lowered from 3% — more achievable intraday move)
+TARGET_PCT           = 0.025      # 2.5% profit target per trade (+0.5% — paired with native trail to let winners run)
 MAX_PER_SECTOR       = 3          # V2d: max positions in any single sector
 DAILY_LOSS_PCT       = 0.01       # 1% of capital — daily net loss limit (realized + unrealized)
 DAILY_LOSS_LIMIT     = -(TOTAL_CAPITAL * DAILY_LOSS_PCT)  # -$500 at $50K capital
@@ -42,9 +42,7 @@ MIN_INTRADAY_VOLUME_RATIO       = 0.3         # minimum volume ratio for intrada
 MAX_INTRADAY_RANGE_PCT          = 5.0         # block stocks where avg(H-L)/Open > 5% — too volatile for 0.67% stop
 LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed
 LARGE_CAP_VOLUME_RATIO          = 0.5         # relaxed volume ratio for mega-caps (vs MIN_VOLUME_RATIO=1.5)
-USE_NATIVE_TRAILING_STOP    = False       # trail_percent not supported in StopLossRequest bracket leg; use manual high_watermark trail
-                                          # When False: manual high_watermark check every 15 min (safe default, paper OK)
-                                          # Enable after 2-week paper A/B validation — P0 before real money
+USE_NATIVE_TRAILING_STOP    = True        # Alpaca tracks peak in real-time, fires immediately on 1% reversal — no 15-min polling gap
 POSITION_SIZE_BY_CONFIDENCE = {           # Position size mapped to Claude confidence level
     "HIGH":   3_500,
     "MEDIUM": 3_000,
