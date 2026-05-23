@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.15 · **Updated:** 2026-05-23
+**Version:** v5.16 · **Updated:** 2026-05-23
 
 ---
 
@@ -84,13 +84,13 @@ Confidence is assigned by Claude based on technical score, VWAP position, and re
 ### 4.2 Trade Formulas (Hard Rules)
 
 ```
-entry_price   = current ask price (Alpaca) or scanner close price
-target_price  = round(entry * 1.02, 2)          # +2% full target
-stop_loss     = round(entry * 0.9933, 2)         # -0.67% stop
-partial_target = round(entry * 1.01, 2)          # +1% partial exit
+entry_price    = current ask price (Alpaca) or scanner close price
+target_price   = round(entry * 1.025, 2)         # +2.5% ceiling (limit order on Leg B)
+stop_loss      = round(entry * 0.9933, 2)         # -0.67% stop
+partial_target = round(entry * 1.01, 2)           # +1% partial exit (Leg A)
 ```
 
-Reward:Risk = 2% / 0.67% = **2.99 ≈ 3:1** (normal days)  
+Reward:Risk = 2.5% / 0.67% = **3.73 ≈ 3.7:1** (normal days)  
 Reward:Risk floor on quiet days = **2:1** (Fear & Greed < 35)
 
 ### 4.3 Partial Profit Design
@@ -98,20 +98,35 @@ Reward:Risk floor on quiet days = **2:1** (Fear & Greed < 35)
 Each trade opens as **two bracket orders**:
 
 - **Leg A** — half the shares, target = +1%. Locks in profit on smaller moves.
-- **Leg B** — remaining shares, target = +2%. Rides the full move.
+- **Leg B** — remaining shares, target = +2.5% ceiling. Rides the full move with native trailing stop.
 - Both legs share the same stop price.
 
-**Why:** Converts all-or-nothing bracket outcomes into graduated P&L. On quiet days where 2% moves are rare, Leg A frequently hits while Leg B stops out — net positive vs. net zero under the old design.
+**Why:** Converts all-or-nothing bracket outcomes into graduated P&L. On quiet days where large moves are rare, Leg A frequently hits while Leg B trails out positive — net positive vs. net zero under the old design.
 
-### 4.4 Trailing Stop
+### 4.4 Native Trailing Stop
 
-Manual high-watermark trail runs every 15 min (Alpaca native trailing stops not used — not supported in bracket legs):
+Alpaca's native trailing stop tracks the intraday peak in real-time and fires immediately on a 1% reversal from the high — no polling gap.
 
 ```
-effective_stop = max(stop_loss, high_watermark × (1 - 1%))
+exit triggered when: price ≤ peak_since_entry × (1 − 1%)
 ```
 
-After Tier 1 lock-in ($716 realized), trail tightens to 0.5% to protect gains.
+**Why native over manual polling:** The previous manual high-watermark trail checked every 15 min. A stock that peaks at +1.8% and drops 1% within a single 15-min window would exit at the next poll — potentially at +0.5% or worse. Native trail fires the moment the 1% reversal occurs.
+
+**The ceiling (2.5% limit order) and trail work together:**
+
+```
+Native trail (1% from peak)  →  exits most winning trades between +0.5% and +2.4%
+2.5% limit order (ceiling)   →  captures strong momentum runs that push through
+0.67% stop                   →  hard floor, unchanged
+```
+
+The ceiling is not a "close here" target in the traditional sense — it only fills if momentum is strong enough to push through. On most trades the trail does the work. The ceiling prevents leaving money on the table when a stock genuinely wants to run.
+
+**Breakeven lock after Leg A closes:**  
+When Leg A hits +1%, Leg B's stop is resubmitted at entry price (breakeven). The resubmit explicitly passes `use_native_trail=True` and `trail_pct` so Leg B continues trailing from breakeven rather than reverting to a fixed stop.
+
+**After Tier 1 lock-in ($716 realized):** trail tightens to 0.5% on remaining open positions to protect the day's gains.
 
 ---
 
@@ -144,13 +159,14 @@ Triggered when Fear & Greed Index < 35.
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
 | `TOTAL_CAPITAL` | $50,000 | Simulated account size |
-| `TARGET_PCT` | 2.5% | Profit target per trade |
+| `TARGET_PCT` | 2.5% | Ceiling limit order on Leg B — only fills if momentum pushes through |
 | `MAX_LOSS_PER_TRADE` | 0.67% | Stop loss depth |
 | `MIN_REWARD_RISK` | 2.9 | Normal day R:R floor |
 | `QUIET_DAY_MIN_REWARD_RISK` | 2.0 | Quiet day R:R floor |
 | `QUIET_DAY_FG_THRESHOLD` | 35 | Fear & Greed threshold for quiet day |
 | `PARTIAL_PROFIT_PCT` | 1% | Partial exit target (Leg A) |
-| `TRAIL_PCT` | 1% | Trailing stop from high watermark |
+| `USE_NATIVE_TRAILING_STOP` | True | Alpaca native trail — fires immediately on 1% reversal, no polling gap |
+| `TRAIL_PCT` | 1% | Trail percentage from intraday peak |
 | `DAILY_LOCK_IN_TARGET` | $716 | Tier 1: let winners ride |
 | `DAILY_BONUS_TARGET` | $1,000 | Tier 2: close everything |
 | `DAILY_LOSS_LIMIT` | -$500 | Pause new entries if net P&L (realized + unrealized) drops below (1% of capital) |
