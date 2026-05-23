@@ -85,7 +85,11 @@ def run(candidates: list[dict]) -> dict:
     for c in candidates:
         ticker = c["ticker"]
 
-        # Earnings blackout disabled
+        # Earnings blackout — skip tickers reporting today or tomorrow
+        earnings_dt = _get_earnings_date(ticker)
+        if earnings_dt and earnings_dt in (today, tomorrow):
+            blackout_tickers.append({"ticker": ticker, "reason": f"earnings {earnings_dt}"})
+            continue
 
         filtered.append(c)
 
