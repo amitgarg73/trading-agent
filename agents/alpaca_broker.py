@@ -152,18 +152,19 @@ def submit_bracket_order(
     action: str = "BUY",
     use_native_trail: bool = False,
     trail_pct: float = 0.01,
-) -> str:
+) -> tuple[str | None, float | None]:
     """
-    Submit a bracket order: limit entry + limit take-profit + stop-loss.
+    Submit a bracket order: market entry + take-profit + stop-loss.
+    Polls up to 15 s for fill confirmation before returning.
 
-    use_native_trail=False (default): fixed stop at stop_price; manual 15-min trail check.
-    use_native_trail=True: trailing stop leg at trail_pct% — Alpaca tracks peak in real-time,
-                           fires immediately on reversal (no 15-min polling gap).
-                           Only enable after 2-week paper A/B validation.
+    Returns (order_id, fill_price) on confirmed fill.
+    Returns (None, None) when the order is rejected, cancelled, or unconfirmed —
+    callers must not write a position row in this case.
 
-    Entry is a limit order at entry_price + 0.1% buffer for fill probability on liquid stocks.
-    Returns the Alpaca parent order ID.
+    use_native_trail=True: trailing stop leg at trail_pct% — Alpaca tracks peak
+    in real-time, fires on reversal without the 15-min polling gap.
     """
+    import time
     from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
     from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
@@ -175,9 +176,6 @@ def submit_bracket_order(
     else:
         stop_loss_req = StopLossRequest(stop_price=round(stop_price, 2))
 
-    # Market entry guarantees fill on momentum stocks already in motion.
-    # Limit entries at current price routinely go unfilled when the stock
-    # keeps running past the limit without pulling back.
     req = MarketOrderRequest(
         symbol=ticker,
         qty=shares,
@@ -189,7 +187,23 @@ def submit_bracket_order(
     )
     order = _client().submit_order(req)
     print(f"        Market order: {ticker} {shares} shares → {order.id}")
-    return str(order.id)
+
+    for _ in range(15):
+        time.sleep(1)
+        try:
+            o = _client().get_order_by_id(str(order.id))
+            status = str(o.status).lower()
+            if status in ("filled", "partially_filled"):
+                fill_price = float(o.filled_avg_price) if o.filled_avg_price else None
+                return str(order.id), fill_price
+            if status in ("cancelled", "rejected", "expired"):
+                print(f"        ⚠️ {ticker} order {status} — blocking DB write")
+                return None, None
+        except Exception:
+            pass
+
+    print(f"        ⚠️ {ticker} — could not confirm fill after 15s — blocking DB write")
+    return None, None
 
 
 def get_open_tickers() -> set:

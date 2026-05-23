@@ -1,4 +1,4 @@
-"""Tests for agents/alpaca_broker.py — get_order_fill classification."""
+"""Tests for agents/alpaca_broker.py — get_order_fill classification and fill poll."""
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -84,3 +84,65 @@ def test_exception_returns_none_tuple(mock_client):
     price, mech = get_order_fill("order-err")
     assert price is None
     assert mech is None
+
+
+# ── submit_bracket_order fill poll (P1) ──────────────────────────────────────
+
+@patch("agents.alpaca_broker._client")
+def test_submit_bracket_order_returns_tuple_on_fill(mock_client):
+    """Confirmed fill returns (order_id, fill_price) tuple."""
+    order = MagicMock()
+    order.id = "ord-123"
+    mock_client.return_value.submit_order.return_value = order
+
+    filled = MagicMock()
+    filled.status = "filled"
+    filled.filled_avg_price = 101.5
+    mock_client.return_value.get_order_by_id.return_value = filled
+
+    from agents.alpaca_broker import submit_bracket_order
+    with patch("time.sleep"):
+        order_id, fill_price = submit_bracket_order("AAPL", 10, 100.0, 104.0, 99.33)
+
+    assert order_id == "ord-123"
+    assert fill_price == 101.5
+
+
+@patch("agents.alpaca_broker._client")
+def test_submit_bracket_order_returns_none_on_rejection(mock_client):
+    """Rejected order returns (None, None) — caller must not write to DB."""
+    order = MagicMock()
+    order.id = "ord-456"
+    mock_client.return_value.submit_order.return_value = order
+
+    rejected = MagicMock()
+    rejected.status = "rejected"
+    rejected.filled_avg_price = None
+    mock_client.return_value.get_order_by_id.return_value = rejected
+
+    from agents.alpaca_broker import submit_bracket_order
+    with patch("time.sleep"):
+        order_id, fill_price = submit_bracket_order("TSLA", 5, 200.0, 208.0, 198.66)
+
+    assert order_id is None
+    assert fill_price is None
+
+
+@patch("agents.alpaca_broker._client")
+def test_submit_bracket_order_returns_none_on_timeout(mock_client):
+    """Unconfirmed fill after 15 polls returns (None, None)."""
+    order = MagicMock()
+    order.id = "ord-789"
+    mock_client.return_value.submit_order.return_value = order
+
+    pending = MagicMock()
+    pending.status = "pending_new"
+    pending.filled_avg_price = None
+    mock_client.return_value.get_order_by_id.return_value = pending
+
+    from agents.alpaca_broker import submit_bracket_order
+    with patch("time.sleep"):
+        order_id, fill_price = submit_bracket_order("MSFT", 8, 300.0, 312.0, 298.0)
+
+    assert order_id is None
+    assert fill_price is None

@@ -441,6 +441,107 @@ def test_reconcile_order_fetch_uses_limit_500(mock_client, mock_tickers, mock_se
     )
 
 
+# ── Sector guard and ATR sizer (P1) ─────────────────────────────────────────
+
+class TestIntradaySectorGuardAndAtrSizer:
+
+    def _good_closed(self):
+        return [_make_closed_row(100.0)]
+
+    def test_sector_guard_caps_trades_per_sector(self):
+        """Sector guard must block trades beyond MAX_PER_SECTOR in the same sector."""
+        from config.settings import MAX_PER_SECTOR
+
+        def _t(i):
+            return {
+                "ticker": f"T{i}", "action": "BUY", "entry_price": 100.0,
+                "target_price": 101.0, "stop_loss": 99.33, "shares": 30,
+                "position_size": 3000.0, "confidence": "MEDIUM",
+                "reasoning": "test", "estimated_profit": 30.0,
+                "sector": "Technology",
+            }
+
+        excess = MAX_PER_SECTOR + 2
+        tech_trades = [_t(i) for i in range(excess)]
+
+        result, mock_open = _run_scan(
+            trades=tech_trades,
+            approved=tech_trades,
+            closed_rows=self._good_closed(),
+            opened_count=MAX_PER_SECTOR,
+        )
+        assert result is not None
+        opened_trades = mock_open.call_args[0][1]
+        tech_count = sum(1 for t in opened_trades if t.get("sector") == "Technology")
+        assert tech_count <= MAX_PER_SECTOR, (
+            f"Sector guard should cap Technology at {MAX_PER_SECTOR}, got {tech_count}"
+        )
+
+    def test_sector_guard_allows_different_sectors(self):
+        """Trades from different sectors must all pass even when each sector hits the cap."""
+        from config.settings import MAX_PER_SECTOR
+
+        trades = [
+            {
+                "ticker": "AAPL", "action": "BUY", "entry_price": 100.0,
+                "target_price": 101.0, "stop_loss": 99.33, "shares": 30,
+                "position_size": 3000.0, "confidence": "MEDIUM",
+                "reasoning": "test", "estimated_profit": 30.0,
+                "sector": "Technology",
+            },
+            {
+                "ticker": "JPM", "action": "BUY", "entry_price": 150.0,
+                "target_price": 151.5, "stop_loss": 148.99, "shares": 20,
+                "position_size": 3000.0, "confidence": "MEDIUM",
+                "reasoning": "test", "estimated_profit": 30.0,
+                "sector": "Financials",
+            },
+        ]
+        result, mock_open = _run_scan(
+            trades=trades,
+            approved=trades,
+            closed_rows=self._good_closed(),
+            opened_count=2,
+        )
+        assert result is not None
+        opened_trades = mock_open.call_args[0][1]
+        assert len(opened_trades) == 2
+
+    def test_atr_sizer_is_called_for_intraday_trades(self):
+        """ATR sizer must be invoked and its drop output must prevent those trades opening."""
+        trade = {
+            "ticker": "AAPL", "action": "BUY", "entry_price": 100.0,
+            "target_price": 101.0, "stop_loss": 99.33, "shares": 30,
+            "position_size": 3000.0, "confidence": "MEDIUM",
+            "reasoning": "test", "estimated_profit": 30.0,
+        }
+
+        with patch("agents.intraday.datetime") as mock_dt, \
+             patch("core.db.select", side_effect=lambda t, **kw: (
+                 self._good_closed() if kw.get("filters", {}).get("status") == "CLOSED"
+                 else []
+             )), \
+             patch("core.db.insert", return_value={"id": "x"}), \
+             patch("core.db.update"), \
+             patch("agents.market_context.run", return_value={"quiet_day": False, "summary": ""}), \
+             patch("scanner.scanner.run_scan", return_value=[{"ticker": "AAPL", "technical_score": 6}]), \
+             patch("scanner.intraday_momentum.scan", return_value=[]), \
+             patch("agents.strategy.run", return_value={"trades": [trade], "market_context": ""}), \
+             patch("agents.risk.run", return_value={"approved_trades": [trade], "rejected_trades": []}), \
+             patch("agents.atr_sizer.apply", return_value=([], ["AAPL: R:R < 1"])) as mock_atr, \
+             patch("agents.portfolio.open_positions", return_value=[]) as mock_open:
+            mock_dt.utcnow.return_value = _utc_now(WINDOW_HOUR)
+            mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
+            from importlib import reload
+            import agents.intraday
+            reload(agents.intraday)
+            from agents.intraday import _maybe_run_intraday_scan
+            result = _maybe_run_intraday_scan(broker="simulation")
+
+        mock_atr.assert_called_once()
+        mock_open.assert_not_called()   # all dropped by ATR sizer
+
+
 @patch("core.db.update")
 @patch("core.db.select")
 @patch("agents.alpaca_broker.get_open_tickers", return_value=set())

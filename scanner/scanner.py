@@ -13,7 +13,7 @@ from config.settings import (
     UNIVERSE, RSI_OVERSOLD, RSI_OVERBOUGHT,
     MIN_VOLUME_RATIO, MIN_PRICE, MIN_AVG_VOLUME, SCORE_THRESHOLD,
     LARGE_CAP_AVG_VOLUME, LARGE_CAP_VOLUME_RATIO, MAX_INTRADAY_RANGE_PCT,
-    MAX_SPREAD_PCT, MAX_PREMARKET_GAP_PCT,
+    MAX_SPREAD_PCT, MAX_PREMARKET_GAP_PCT, MAX_ATR_PCT,
 )
 
 
@@ -251,6 +251,10 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
     # that a 0.67% stop gets hit by noise before the 1% target is reached.
     # Threshold = 5% → blocks quantum, crypto, leveraged ETFs; keeps blue chips.
     if tech["intraday_range_pct"] > MAX_INTRADAY_RANGE_PCT:
+        return None
+    # ATR quality gate: skip stocks where ATR sizer would produce R:R < 1
+    # (stop_pct = ATR × 1.2 ≥ 4% target) — saves a guardrails rejection cycle.
+    if tech["atr_pct"] > MAX_ATR_PCT:
         return None
     # ORB + intraday VWAP — only computed after score gate (avoids 5-min fetch for every ticker)
     intraday = _intraday_signals(ticker)

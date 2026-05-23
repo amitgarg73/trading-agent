@@ -11,7 +11,7 @@ from config.settings import (
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END,
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
     INTRADAY_TARGET_PCT, MIN_INTRADAY_MOVE_PCT, STRATEGY_MIN_SCORE, UNIVERSE,
-    TOTAL_CAPITAL,
+    TOTAL_CAPITAL, MAX_PER_SECTOR,
 )
 
 
@@ -243,7 +243,7 @@ def _maybe_run_intraday_scan(broker: str):
             f"{mkt.get('summary', '')}\n\n"
             f"INTRADAY SCAN #{run_num}: Focus on momentum plays already moving today. "
             f"Prefer stocks with today_pct_change > {int(MIN_INTRADAY_MOVE_PCT)}% and rs_vs_spy > 1.5. "
-            f"Use standard 2% targets and 0.67% stops to maintain 3:1 reward:risk."
+            f"Use ATR-based stops (0.5% floor) and {int(INTRADAY_TARGET_PCT * 100)}% intraday targets."
         )
         strategy_out = strategy.run(merged, market_summary=market_note,
                                     max_positions=strategy_slots)
@@ -263,8 +263,28 @@ def _maybe_run_intraday_scan(broker: str):
         # but actual entries use the tighter intraday cap
         approved = _cap_intraday_targets(approved)
 
+        # Sector guard — prevent overweighting one sector in this scan batch
+        approved_by_sector: dict[str, int] = {}
+        sector_passed = []
+        for t in approved:
+            sector = t.get("sector") or "Unknown"
+            if approved_by_sector.get(sector, 0) < MAX_PER_SECTOR:
+                sector_passed.append(t)
+                approved_by_sector[sector] = approved_by_sector.get(sector, 0) + 1
+            else:
+                print(f"  📊 Sector guard: {t['ticker']} blocked — {sector} at {MAX_PER_SECTOR} limit")
+        approved = sector_passed
+
+        # ATR sizer — apply ATR-based stops if ATR data available; passes through otherwise
+        if approved:
+            from agents import atr_sizer
+            intraday_atr = {c["ticker"]: c.get("atr_pct") for c in merged}
+            approved, atr_dropped = atr_sizer.apply(approved, intraday_atr)
+            if atr_dropped:
+                print(f"  📊 ATR sizer dropped {len(atr_dropped)} intraday trade(s): {atr_dropped}")
+
         if not approved:
-            print("  📊 Intraday scan: all trades rejected by risk")
+            print("  📊 Intraday scan: all trades rejected by risk/sector/ATR")
             _save_scan_result(today, now_utc,
                               {"candidates": len(merged), "momentum": len(momentum_candidates),
                                "rejected": len(trades)})

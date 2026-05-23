@@ -565,3 +565,54 @@ class TestBreakoutFreshness:
         assert result is not None
         assert "breakout_freshness" in result
         assert result["breakout_freshness"] in ("FRESH", "NORMAL", "EXTENDED")
+
+
+# ── ATR quality gate (P1) ────────────────────────────────────────────────────
+
+class TestAtrQualityGate:
+    """Stocks with ATR% > MAX_ATR_PCT must be dropped by _scan_ticker."""
+
+    def _run_scan_with_atr(self, atr_pct_override):
+        """Patch _technical to return a given atr_pct, run _scan_ticker, return result."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _scan_ticker
+        from config.settings import MAX_ATR_PCT
+
+        df = make_price_df(start_price=100.0, trend=0.002)
+        info = {
+            "averageVolume": 5_000_000,
+            "sector": "Technology",
+            "longName": "TEST Corp",
+            "marketCap": 50_000_000_000,
+        }
+
+        with patch("scanner.scanner._fetch", return_value=(info, df)), \
+             patch("scanner.scanner._intraday_signals", return_value={}):
+            # We control atr_pct by patching _technical
+            from scanner.scanner import _technical as real_technical
+
+            def patched_technical(ticker, df, **kw):
+                result = real_technical(ticker, df, **kw)
+                result["atr_pct"] = atr_pct_override
+                # Ensure score is high enough to not be blocked by score gate
+                result["technical_score"] = 6
+                result["intraday_range_pct"] = 1.0
+                return result
+
+            with patch("scanner.scanner._technical", side_effect=patched_technical):
+                return _scan_ticker("TEST")
+
+    def test_high_atr_ticker_blocked(self):
+        from config.settings import MAX_ATR_PCT
+        result = self._run_scan_with_atr(atr_pct_override=MAX_ATR_PCT + 0.1)
+        assert result is None, f"ATR {MAX_ATR_PCT + 0.1}% must be blocked by quality gate"
+
+    def test_acceptable_atr_ticker_passes(self):
+        from config.settings import MAX_ATR_PCT
+        result = self._run_scan_with_atr(atr_pct_override=MAX_ATR_PCT - 0.1)
+        assert result is not None, f"ATR {MAX_ATR_PCT - 0.1}% must pass quality gate"
+
+    def test_exact_threshold_passes(self):
+        from config.settings import MAX_ATR_PCT
+        result = self._run_scan_with_atr(atr_pct_override=MAX_ATR_PCT)
+        assert result is not None, "ATR exactly at threshold must pass (not strictly greater)"

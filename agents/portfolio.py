@@ -59,6 +59,7 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
         planned = db.insert("planned_trades", planned_row)
 
     alpaca_order_id  = None
+    fill_price_actual = None
     effective_entry  = trade["entry_price"]
     effective_stop   = trade["stop_loss"]
     effective_target = trade["target_price"]
@@ -85,7 +86,7 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                 effective_stop   = round(live_px * (1 - stop_pct),   2)
                 effective_target = round(live_px * (1 + target_pct), 2)
 
-            alpaca_order_id = alpaca_broker.submit_bracket_order(
+            alpaca_order_id, fill_price_actual = alpaca_broker.submit_bracket_order(
                 ticker=ticker,
                 shares=trade["shares"],
                 entry_price=effective_entry,
@@ -95,7 +96,12 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                 use_native_trail=USE_NATIVE_TRAILING_STOP,
                 trail_pct=TRAIL_PCT,
             )
-            print(f"        Alpaca order placed: {ticker}{leg_label} → {alpaca_order_id}")
+            if alpaca_order_id:
+                slip_note = ""
+                if fill_price_actual and effective_entry > 0:
+                    bps = abs(fill_price_actual - effective_entry) / effective_entry * 10_000
+                    slip_note = f" fill=${fill_price_actual:.2f} slip={bps:.0f}bps"
+                print(f"        Alpaca order placed: {ticker}{leg_label} → {alpaca_order_id}{slip_note}")
         except Exception as e:
             print(f"        ⚠️  Alpaca order failed for {ticker}{leg_label}: {e}")
 
@@ -108,7 +114,7 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
 
     native_trail = broker == "alpaca" and USE_NATIVE_TRAILING_STOP
     db_entry = effective_entry if broker == "alpaca" else price
-    return db.insert("positions", {
+    pos_row = {
         "planned_trade_id":    planned["id"],
         "ticker":              ticker,
         "action":              trade["action"],
@@ -124,7 +130,14 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
         "high_watermark":      db_entry,
         "native_trail_active": native_trail,
         "run_id":              run_id,
-    })
+    }
+    if fill_price_actual is not None:
+        pos_row["fill_price"] = fill_price_actual
+    try:
+        return db.insert("positions", pos_row)
+    except Exception:
+        pos_row.pop("fill_price", None)
+        return db.insert("positions", pos_row)
 
 
 def open_positions(plan_id: str, approved_trades: list, broker: str = "simulation",
@@ -252,7 +265,9 @@ def refresh_positions(broker: str = "simulation") -> list:
                     except Exception:
                         pass
 
-                close_price    = close_price    or pos.get("current_price") or pos["entry_price"]
+                if close_price is None:
+                    close_price = (pos.get("current_price") if pos.get("current_price") is not None
+                                   else pos["entry_price"])
                 exit_mechanism = exit_mechanism or "CLOSED"
                 close_reason   = "TARGET" if exit_mechanism == "TARGET" else "STOP"
 
@@ -389,7 +404,7 @@ def _lock_breakeven(open_pos: list, closed_leg_a: dict, broker: str) -> None:
                 if order_id:
                     cancelled = alpaca_broker.cancel_order(order_id)
                     if cancelled:
-                        new_id = alpaca_broker.submit_bracket_order(
+                        new_id, _ = alpaca_broker.submit_bracket_order(
                             ticker=leg_b["ticker"],
                             shares=leg_b["shares"],
                             entry_price=entry,

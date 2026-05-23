@@ -47,6 +47,7 @@ def run(broker: str = "simulation") -> dict:
     # Alpaca equity reconciliation — fetch ground-truth equity from broker
     alpaca_equity  = None
     friction_gap   = None
+    friction_breakdown = None
     if broker == "alpaca":
         try:
             from agents import alpaca_broker
@@ -57,6 +58,23 @@ def run(broker: str = "simulation") -> dict:
             print(f"  💰 Alpaca equity: ${alpaca_equity:,.2f} | Our calc: ${ending_capital:,.2f} | Gap: {gap_sign}${friction_gap:,.2f}")
         except Exception as e:
             print(f"  ⚠️  Alpaca equity fetch failed: {e}")
+
+        fills = [
+            p for p in real_closed
+            if p.get("fill_price") is not None and float(p.get("entry_price") or 0) > 0
+        ]
+        if fills:
+            slippages = [
+                abs(float(p["fill_price"]) - float(p["entry_price"])) / float(p["entry_price"]) * 10_000
+                for p in fills
+            ]
+            friction_breakdown = {
+                "total_entry_slippage_bps": round(sum(slippages), 1),
+                "avg_slippage_bps":         round(sum(slippages) / len(slippages), 1),
+                "fills_with_data":          len(fills),
+            }
+            print(f"  📊 Friction: avg slip {friction_breakdown['avg_slippage_bps']}bps "
+                  f"over {len(fills)} fill(s) | total {friction_breakdown['total_entry_slippage_bps']}bps")
 
     record = {
         "date":                today,
@@ -74,6 +92,7 @@ def run(broker: str = "simulation") -> dict:
         "notes":               f"Target: $1,000 | Actual: ${total_pnl:,.2f} | {'✅ HIT' if total_pnl >= 1000 else '⚠️ MISSED'}",
         "alpaca_equity":       alpaca_equity,
         "friction_gap":        friction_gap,
+        "friction_breakdown":  friction_breakdown,
     }
 
     db.upsert("daily_performance", record, on_conflict="date")

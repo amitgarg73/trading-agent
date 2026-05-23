@@ -354,7 +354,7 @@ class TestBreakevenStop:
 
         with patch("agents.portfolio.db.update") as mock_update, \
              patch("agents.alpaca_broker.cancel_order", return_value=True) as mock_cancel, \
-             patch("agents.alpaca_broker.submit_bracket_order", return_value="new-bracket-id") as mock_submit:
+             patch("agents.alpaca_broker.submit_bracket_order", return_value=("new-bracket-id", 100.0)) as mock_submit:
             _lock_breakeven([leg_b], leg_a, broker="alpaca")
 
         mock_submit.assert_called_once()
@@ -396,7 +396,7 @@ class TestLivePriceRecalculation:
 
         with patch("agents.portfolio._current_price", return_value=live_price), \
              patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": live_price}), \
-             patch("agents.alpaca_broker.submit_bracket_order", return_value="order-123"), \
+             patch("agents.alpaca_broker.submit_bracket_order", return_value=("order-123", live_price)), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"):
             from agents.portfolio import _open_single_position
@@ -443,7 +443,7 @@ class TestLivePriceRecalculation:
         submitted = {}
         def capture_submit(**kwargs):
             submitted.update(kwargs)
-            return "order-xyz"
+            return ("order-xyz", live_price)
 
         with patch("agents.portfolio._current_price", return_value=live_price), \
              patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": live_price}), \
@@ -592,7 +592,7 @@ class TestPhantomPositionGuard:
             inserts.append((table, data))
             return {**data, "id": f"fake-{table}"}
 
-        with patch("agents.alpaca_broker.submit_bracket_order", return_value="order-xyz"), \
+        with patch("agents.alpaca_broker.submit_bracket_order", return_value=("order-xyz", 100.0)), \
              patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": 100.0}), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"), \
@@ -603,3 +603,38 @@ class TestPhantomPositionGuard:
         assert result is not None, "Must return the inserted position"
         position_inserts = [t for t, _ in inserts if t == "positions"]
         assert len(position_inserts) == 1, "Must insert exactly one position row"
+
+
+# ── Fix 3: close_price=0.0 not replaced by fallback ──────────────────────────
+
+class TestClosePriceZeroFix:
+    """close_price of 0.0 must not be treated as falsy and swapped for entry_price."""
+
+    def _make_alpaca_pos(self, opened_at: str = "2024-01-01T10:00:00") -> dict:
+        pos = make_position(ticker="AAPL", entry=100.0, shares=30)
+        pos["alpaca_order_id"]   = "ord-abc"
+        pos["opened_at"]         = opened_at
+        pos["native_trail_active"] = False
+        pos["current_price"]     = 99.0
+        return pos
+
+    @patch("agents.alpaca_broker.get_order_fill", return_value=(0.0, "STOP"))
+    @patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+    @patch("core.db.update")
+    @patch("core.db.select")
+    def test_zero_close_price_not_replaced_by_fallback(
+            self, mock_select, mock_update, mock_tickers, mock_fill):
+        """close_price=0.0 is NOT replaced — fix changed `or` chain to `is None` check."""
+        pos = self._make_alpaca_pos()
+        mock_select.side_effect = lambda table, **kw: (
+            [pos] if kw.get("filters", {}).get("status") == "OPEN" else []
+        )
+
+        from agents.portfolio import refresh_positions
+        refresh_positions(broker="alpaca")
+
+        closed_calls = [c[0][2] for c in mock_update.call_args_list
+                        if c[0][0] == "positions" and c[0][2].get("status") == "CLOSED"]
+        assert len(closed_calls) == 1
+        assert closed_calls[0]["close_price"] == 0.0, \
+            "close_price 0.0 must not be replaced by current_price or entry_price fallback"
