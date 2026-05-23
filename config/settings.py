@@ -55,7 +55,7 @@ RSI_OVERBOUGHT       = 65
 MIN_VOLUME_RATIO     = 1.0        # vs 20-day avg
 MIN_PRICE            = 5.0
 MIN_AVG_VOLUME       = 1_000_000  # liquidity floor — raised from 500K to 1M to reduce spread/slippage on smaller tickers
-SCORE_THRESHOLD      = 1          # minimum score to be a scanner candidate (absolute value)
+SCORE_THRESHOLD      = 4          # minimum score to be a scanner candidate (absolute value)
 
 # Strategy pre-filter — applied in orchestrator BEFORE the Claude API call.
 #

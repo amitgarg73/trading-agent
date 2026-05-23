@@ -101,7 +101,7 @@ def get_intraday_signals(tickers: list[str]) -> dict[str, dict]:
                 continue
             vwap, open_px, price = float(vwap), float(open_px), float(price)
             today_pct  = (price - open_px) / open_px if open_px > 0 else 0.0
-            rs_vs_spy  = round(today_pct / spy_pct, 2) if spy_pct and spy_pct != 0 else None
+            rs_vs_spy  = round(today_pct / spy_pct, 2) if spy_pct and abs(spy_pct) > 0.003 else None
             today_vol = int(getattr(snap.daily_bar, "volume", 0) or 0)
             signals[ticker] = {
                 "above_vwap":       price > vwap,
