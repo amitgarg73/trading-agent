@@ -50,20 +50,24 @@ def _is_halted() -> bool:
 
 def load_universe() -> list:
     """Merge dynamic refresh with static universe. Dynamic adds ATR-screened movers on top;
-    static ensures full 430+ curated coverage is always scanned regardless of refresh health."""
-    rows = db.select("scan_results", filters={"scan_type": "universe_refresh"},
-                     order="created_at", limit=1)
-    if rows:
-        row = rows[0]
-        age_days = (date.today() - date.fromisoformat(row["date"])).days
-        if age_days <= 7:
-            dynamic = row["results"]["tickers"]
-            # Merge: dynamic first (sorted by ATR), then static additions, deduplicated
+    static ensures full 430+ curated coverage is always scanned regardless of refresh health.
+    Reads from local cache file written by universe_refresh — no Supabase call."""
+    from pathlib import Path
+    cache_path = Path(__file__).parent / "config" / "universe_cache.json"
+    try:
+        cache = json.loads(cache_path.read_text())
+        age_days = (date.today() - date.fromisoformat(cache["date"])).days
+        if age_days <= 35:  # generous window — monthly refresh, covers missed months
+            dynamic = cache["tickers"]
             merged = list(dict.fromkeys(dynamic + UNIVERSE))
             print(f"        Merged universe: {len(merged)} tickers "
-                  f"({len(dynamic)} dynamic + {len(UNIVERSE)} static, refreshed {row['date']}, {age_days}d ago)")
+                  f"({len(dynamic)} dynamic + {len(UNIVERSE)} static, "
+                  f"cache from {cache['date']}, {age_days}d ago)")
             return merged
-    print(f"        Static universe: {len(UNIVERSE)} tickers (no recent refresh)")
+        print(f"        Universe cache is stale ({age_days}d old) — using static fallback")
+    except Exception:
+        pass
+    print(f"        Static universe: {len(UNIVERSE)} tickers (no cache found)")
     return UNIVERSE
 
 

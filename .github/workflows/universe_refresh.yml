@@ -2,7 +2,9 @@ name: Universe Refresh
 
 on:
   schedule:
-    - cron: '30 12 1 * *'   # 8:30 AM ET on the 1st of each month (12:30 UTC)
+    - cron: '30 12 1 * *'   # Primary:  8:30 AM ET on 1st of month
+    - cron: '30 12 2 * *'   # Fallback: 2nd of month (if 1st failed)
+    - cron: '30 12 3 * *'   # Fallback: 3rd of month (if 1st+2nd failed)
   workflow_dispatch:         # manual trigger any time
 
 jobs:
@@ -23,20 +25,54 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Refresh universe
+      - name: Skip if cache is fresh
+        id: freshness
+        run: |
+          if [ -f config/universe_cache.json ]; then
+            CACHE_DATE=$(python3 -c "import json; print(json.load(open('config/universe_cache.json'))['date'])")
+            AGE=$(python3 -c "from datetime import date; print((date.today() - date.fromisoformat('$CACHE_DATE')).days)")
+            echo "Cache date: $CACHE_DATE, age: ${AGE}d"
+            if [ "$AGE" -lt 25 ]; then
+              echo "Cache is fresh (${AGE}d old) — skipping refresh"
+              echo "skip=true" >> $GITHUB_OUTPUT
+            else
+              echo "Cache is stale (${AGE}d old) — running refresh"
+              echo "skip=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No cache found — running refresh"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Refresh universe (with retry)
+        if: steps.freshness.outputs.skip != 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
-        run: python orchestrator.py --mode universe_refresh
+        run: |
+          MAX_RETRIES=3
+          DELAY=60
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt / $MAX_RETRIES"
+            python orchestrator.py --mode universe_refresh && exit 0
+            if [ $attempt -lt $MAX_RETRIES ]; then
+              echo "Attempt $attempt failed — waiting ${DELAY}s before retry"
+              sleep $DELAY
+              DELAY=$((DELAY * 2))   # exponential backoff: 60s → 120s → 240s
+            fi
+          done
+          echo "All $MAX_RETRIES attempts failed — fallback schedules (2nd, 3rd) will retry"
+          exit 1
 
-      - name: Commit updated S&P 500 fallback
+      - name: Commit updated cache files
+        if: steps.freshness.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
-          git add config/sp500_tickers.json
-          git diff --cached --quiet || git commit -m "chore: update S&P 500 fallback tickers [skip ci]"
+          git add config/sp500_tickers.json config/universe_cache.json
+          git diff --cached --quiet || git commit -m "chore: update universe cache [skip ci]"
           git push

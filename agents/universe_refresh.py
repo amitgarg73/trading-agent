@@ -23,6 +23,7 @@ import pandas as pd
 from datetime import date
 
 _FALLBACK_FILE = Path(__file__).parent.parent / "config" / "sp500_tickers.json"
+_CACHE_FILE    = Path(__file__).parent.parent / "config" / "universe_cache.json"
 
 MIN_PRICE      = 5.0
 MAX_PRICE      = 2000.0
@@ -197,24 +198,18 @@ def run() -> list[str]:
     print(f"        Passed: {len(tickers)} | Filtered out: {total_failed}")
     print(f"        Top movers: {', '.join(tickers[:10])}")
 
-    from core import db
-    db.insert("scan_results", {
-        "date":      date.today().isoformat(),
-        "scan_type": "universe_refresh",
-        "results": {
-            "tickers":        tickers,
-            "stats":          all_passed,
+    # Write local cache — orchestrator reads this at premarket (no Supabase round-trip)
+    _CACHE_FILE.write_text(json.dumps({
+        "date":    date.today().isoformat(),
+        "tickers": tickers,
+        "stats": {
             "total_screened": len(combined),
             "passed":         len(tickers),
             "failed":         total_failed,
-            "sources": {
-                "sp500":  len(sp500),
-                "etfs":   len(NON_LEVERAGED_ETFS),
-            },
+            "sources":        {"sp500": len(sp500), "etfs": len(NON_LEVERAGED_ETFS)},
         },
-    })
-
-    print(f"        Saved {len(tickers)} tickers to Supabase\n")
+    }, indent=2))
+    print(f"        Saved {len(tickers)} tickers to universe_cache.json\n")
     return tickers
 
 
