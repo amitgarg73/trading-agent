@@ -8,6 +8,7 @@ stays in the user message and is never cached.
 """
 import json
 import re
+import time
 import anthropic
 from datetime import datetime, timezone, timedelta
 from config.settings import (
@@ -164,13 +165,26 @@ def run(candidates: list[dict], market_summary: str = "", max_positions: int = M
     if not candidates:
         return {"trades": [], "market_context": "No candidates found.", "total_estimated_profit": 0}
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4096,
-        system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": _build_prompt(candidates, market_summary, max_positions)}],
-        extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
-    )
+    last_exc = None
+    for attempt in range(1, 4):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": _build_prompt(candidates, market_summary, max_positions)}],
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+            )
+            break
+        except (anthropic.APIConnectionError, anthropic.APITimeoutError,
+                anthropic.RateLimitError, anthropic.InternalServerError) as exc:
+            last_exc = exc
+            wait = 15 * attempt
+            print(f"  ⚠️  Anthropic API error (attempt {attempt}/3): {exc} — retrying in {wait}s")
+            time.sleep(wait)
+    else:
+        print(f"  ❌ Anthropic API failed after 3 attempts: {last_exc} — skipping trade selection")
+        return {"trades": [], "market_context": "Claude unavailable — API error.", "total_estimated_profit": 0}
 
     # Log cache metrics so we can track savings
     usage = response.usage

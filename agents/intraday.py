@@ -73,7 +73,28 @@ def _reconcile_with_alpaca():
                 print(f"  ⏳ Reconciliation: {pos['ticker']} buy order pending — waiting for fill")
                 continue
             if pos["ticker"] in filled_buys:
-                # Entry filled — bracket exited; portfolio.refresh_positions() resolves P&L
+                # Entry filled but position gone from Alpaca — bracket exited natively.
+                # Resolve the exit price and mechanism via the parent order's filled legs.
+                order_id = pos.get("alpaca_order_id")
+                if order_id:
+                    close_price, mechanism = alpaca_broker.get_order_fill(order_id)
+                    if close_price:
+                        entry  = float(pos.get("fill_price") or pos["entry_price"])
+                        shares = int(pos["shares"])
+                        pnl    = round(shares * (close_price - entry), 2)
+                        db.update("positions", {"id": pos["id"]}, {
+                            "status":         "CLOSED",
+                            "close_reason":   mechanism or "BRACKET",
+                            "exit_mechanism": mechanism or "BRACKET",
+                            "close_price":    close_price,
+                            "realized_pnl":   pnl,
+                            "closed_at":      datetime.utcnow().isoformat(),
+                        })
+                        print(f"  ✅ Bracket exit: {pos['ticker']} → {mechanism} @ ${close_price:.2f} P&L=${pnl:+.2f}")
+                    else:
+                        print(f"  ⚠️  {pos['ticker']} gone from Alpaca but get_order_fill returned no price — will retry next cycle")
+                else:
+                    print(f"  ⚠️  {pos['ticker']} bracket exited but no alpaca_order_id stored — cannot resolve P&L")
                 continue
             # No filled buy and no pending buy — entry truly never executed
             print(f"  ⚠️  Reconciliation: {pos['ticker']} is OPEN in DB but not in Alpaca — marking UNFILLED")
