@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.19 · **Updated:** 2026-05-23
+**Version:** v5.21 · **Updated:** 2026-05-23
 
 ---
 
@@ -65,6 +65,8 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 
 ### 3.3 EOD — 4:30 PM ET
 
+- **Dedup guard:** checks `scan_results` for `run_eod_started` before proceeding — prevents double-run if GitHub Actions fires twice.
+- **Observability:** `_log_run("eod", "started/completed/failed")` writes a status record to `scan_results`; EOD sends an email alert via `core/alerts.py` if positions are still open after close, or if the run crashes.
 - Records daily performance to `daily_performance` table.
 - Runs eval against 30-day rolling window.
 - Generates daily summary.
@@ -143,6 +145,7 @@ Five independent layers, applied in sequence:
 
 | Layer | What It Blocks |
 |-------|---------------|
+| **API Resilience** | Anthropic API timeouts/errors — 3-attempt retry with 15/30/45 s backoff; returns empty trades on total failure (no crash) |
 | **Market Context** | Trading on extreme volatility days (futures < -1.5%) |
 | **News Filter** | Earnings-day surprises, negative catalyst stocks |
 | **ATR Quality Gate** | Scanner drops tickers with ATR% >5% before they reach Claude |
@@ -288,6 +291,8 @@ Streamlit Dashboard
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v5.21** | 2026-05-23 | Structural gap fixes: (1) Gap 1 — Anthropic retry: 3-attempt with 15/30/45 s backoff in `agents/strategy.py`; (2) Gap 2 — bracket exit reconciliation: `agents/intraday.py` `_reconcile_with_alpaca()` now calls `get_order_fill()` on filled_buys and writes close price + P&L to DB; (3) Gap 5 — EOD dedup guard (`run_eod_started` check in `scan_results`); intraday guard skips if no premarket scan today; (4) Gap 6 — `core/alerts.py` (Gmail SMTP); `_log_run()` writes start/complete/failed records; EOD alerts on crash or unclosed positions; `from __future__ import annotations` for Python 3.9 compat |
+| **v5.20** | 2026-05-23 | Friction gap reconciliation: `STRATEGY_TAG="a"` in settings; bracket orders tagged `strata_{ticker}_{ts}`; `_alpaca_order_pnl()` in performance.py computes per-strategy P&L from Alpaca order history; `friction_gap` now meaningful (per-strategy, not combined A+B equity) |
 | **v5.19** | 2026-05-23 | P1 fixes: (1) fill rate — `submit_bracket_order` polls 15 s for fill confirmation, returns `(order_id, fill_price)` tuple, blocks DB write on rejection/timeout; `fill_price` stored on positions; (2) friction breakdown — `performance.py` computes `avg_slippage_bps` / `fills_with_data` from entry vs fill price; (3) close_price=0.0 fix — replaced falsy `or` chain with `is None` check; (4) ATR quality gate — `MAX_ATR_PCT=5%` filter in scanner drops tickers before ATR sizer rejects them; (5) intraday completeness — sector guard + ATR sizer wired into `_maybe_run_intraday_scan`, market note updated |
 | **v5.18** | 2026-05-23 | P0: ATR-based stop (P0-1) and ORB choppiness gate (P0-2) |
 
