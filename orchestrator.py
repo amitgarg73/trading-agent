@@ -2,6 +2,7 @@
 Orchestrator: chains all agents together.
 Called by GitHub Actions with --mode premarket | intraday | eod
 """
+from __future__ import annotations
 import sys
 import json
 import argparse
@@ -13,8 +14,22 @@ from agents import strategy, risk, sector_guard, guardrails, performance, market
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db
+from core.alerts import send_alert
 from config.settings import UNIVERSE, STRATEGY_MIN_SCORE, TOTAL_CAPITAL, MAX_POSITIONS, POSITION_SIZE_BY_CONFIDENCE
 from agents import alpaca_broker
+
+
+def _log_run(mode: str, status: str, details: dict | None = None) -> None:
+    """Write a run-status record to scan_results for observability."""
+    try:
+        db.insert("scan_results", {
+            "date":      date.today().isoformat(),
+            "scan_type": f"run_{mode}_{status}",
+            "results":   {"mode": mode, "status": status, "ts": datetime.utcnow().isoformat(),
+                          **(details or {})},
+        })
+    except Exception as e:
+        print(f"  ⚠️  _log_run({mode}, {status}) failed: {e}")
 
 
 def _is_trading_day() -> bool:
@@ -404,18 +419,51 @@ def eod(broker: str = "simulation"):
     print(f"{'='*60}\n")
     if _is_halted():
         return
-    record = performance.run(broker=broker)
-    if not record:
-        print("  No trades today.")
-        return
-    icon = "✅" if record["total_pnl"] >= 1000 else "⚠️"
-    print(f"  {icon} Daily P&L:     ${record['total_pnl']:,.2f}")
-    print(f"  Ending capital: ${record['ending_capital']:,.2f}")
-    print(f"  Trades: {record['total_trades']} | Win rate: {record['win_rate']}%")
-    print(f"  Best:  {record['best_trade_ticker']} +${record['best_trade_pnl']:,.2f}")
-    print(f"  Worst: {record['worst_trade_ticker']} ${record['worst_trade_pnl']:,.2f}\n")
 
-    daily_summary.generate(record, broker=broker)
+    # Dedup — EOD should run exactly once per day
+    today_iso = date.today().isoformat()
+    if db.select("scan_results", filters={"date": today_iso, "scan_type": "run_eod_started"}):
+        print(f"  ⚠️  EOD already ran for {today_iso} — skipping duplicate run.")
+        return
+
+    _log_run("eod", "started")
+
+    try:
+        # Alert if there are open positions that the close step should handle
+        open_before = db.select("positions", filters={"status": "OPEN"})
+
+        record = performance.run(broker=broker)
+        if not record:
+            print("  No trades today.")
+            _log_run("eod", "completed", {"trades": 0})
+            return
+
+        # Alert if positions were open but nothing got closed
+        if broker == "alpaca" and open_before:
+            open_after = db.select("positions", filters={"status": "OPEN"})
+            still_open = [p["ticker"] for p in open_after
+                          if p["id"] in {x["id"] for x in open_before}]
+            if still_open:
+                send_alert(
+                    f"[Trading Agent A] EOD close FAILED — {len(still_open)} position(s) still open",
+                    f"Date: {today_iso}\nStill open: {still_open}\n"
+                    f"These positions will carry overnight. Manual close required.",
+                )
+
+        icon = "✅" if record["total_pnl"] >= 1000 else "⚠️"
+        print(f"  {icon} Daily P&L:     ${record['total_pnl']:,.2f}")
+        print(f"  Ending capital: ${record['ending_capital']:,.2f}")
+        print(f"  Trades: {record['total_trades']} | Win rate: {record['win_rate']}%")
+        print(f"  Best:  {record['best_trade_ticker']} +${record['best_trade_pnl']:,.2f}")
+        print(f"  Worst: {record['worst_trade_ticker']} ${record['worst_trade_pnl']:,.2f}\n")
+
+        daily_summary.generate(record, broker=broker)
+        _log_run("eod", "completed", {"total_pnl": record["total_pnl"], "trades": record["total_trades"]})
+
+    except Exception as e:
+        _log_run("eod", "failed", {"error": str(e)})
+        send_alert(f"[Trading Agent A] EOD run FAILED — {today_iso}", f"Error: {e}")
+        raise
 
 
 def main():
