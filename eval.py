@@ -182,16 +182,22 @@ def _compute_metrics(days: int = None, perf_rows: list = None) -> dict | None:
     all_open    = db.select("positions", filters={"status": "OPEN"})
     orphaned    = [p for p in all_open if (p.get("opened_at") or "")[:10] < today_str]
 
-    # Duplicate ticker same day (guardrail should block, but eval confirms)
-    ticker_day = defaultdict(int)
-    for p in all_closed_in_window:
-        ticker_day[(p["ticker"], (p.get("closed_at") or "")[:10])] += 1
-    duplicate_count = sum(1 for v in ticker_day.values() if v > 1)
-
-    # --- Planned trades for Claude quality checks ---
+    # --- Planned trades (needed for duplicate check and Claude quality checks) ---
     all_planned      = db.select("planned_trades")
+    pt_to_plan       = {pt["id"]: pt.get("plan_id") for pt in all_planned}
     pt_ids_in_window = {p["planned_trade_id"] for p in positions if p.get("planned_trade_id")}
     planned_in_window = [pt for pt in all_planned if pt["id"] in pt_ids_in_window]
+
+    # Duplicate ticker same day — real guardrail failures only.
+    # Partial profit splits intentionally open Leg A + Leg B for the same ticker
+    # under the same plan_id. Only count tickers where >1 distinct plan submitted
+    # the same ticker on the same day. Excludes UNFILLED/CLEANUP (already in positions).
+    ticker_day_plans = defaultdict(set)
+    for p in positions:
+        ptid    = p.get("planned_trade_id")
+        plan_id = pt_to_plan.get(ptid) if ptid else f"__pos_{p['id']}"
+        ticker_day_plans[(p["ticker"], (p.get("opened_at") or "")[:10])].add(plan_id)
+    duplicate_count = sum(1 for pids in ticker_day_plans.values() if len(pids) > 1)
     pt_lookup        = {pt["id"]: pt for pt in planned_in_window}
 
     # R:R integrity — guardrails don't check this; Claude could slip a bad trade through
@@ -481,7 +487,7 @@ def _print_summary(m: dict):
     if m.get("rr_violations"):
         actions.append(f"{len(m['rr_violations'])} trade(s) submitted below {MIN_REWARD_RISK}x R:R — Claude constraint drift")
     if m.get("duplicate_count", 0) > 0:
-        actions.append(f"{m['duplicate_count']} duplicate ticker(s) same day — guardrail may have failed")
+        actions.append(f"{m['duplicate_count']} ticker(s) submitted by multiple trade plans same day — guardrail may have failed")
     unfill_pct = m.get("unfilled_count", 0) / m.get("total_attempted", 1) * 100
     if unfill_pct >= 15:
         actions.append(f"{unfill_pct:.0f}% unfilled rate — limit entry price too tight, orders not filling")
@@ -712,7 +718,7 @@ def _print_metrics(m: dict):
           f"{'✅ all exits tracked' if missing == 0 else f'⚠️  {missing} positions have no exit_mechanism — code path gap'}")
     dups = m.get("duplicate_count", 0)
     print(f"  Duplicate tickers:    {dups}  "
-          f"{'✅ none' if dups == 0 else f'❌ {dups} ticker(s) opened twice same day — guardrail missed'}")
+          f"{'✅ none' if dups == 0 else f'❌ {dups} ticker(s) submitted by multiple trade plans same day — guardrail missed'}")
     orphaned = m.get("orphaned", [])
     if orphaned:
         print(f"  Orphaned open pos:    ❌ {len(orphaned)} position(s) stuck OPEN from a prior day:")
