@@ -532,9 +532,6 @@ class TestIntradaySectorGuardAndAtrSizer:
              patch("agents.portfolio.open_positions", return_value=[]) as mock_open:
             mock_dt.utcnow.return_value = _utc_now(WINDOW_HOUR)
             mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
-            from importlib import reload
-            import agents.intraday
-            reload(agents.intraday)
             from agents.intraday import _maybe_run_intraday_scan
             result = _maybe_run_intraday_scan(broker="simulation")
 
