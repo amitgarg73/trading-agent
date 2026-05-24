@@ -4,7 +4,7 @@ Runs via GitHub Actions schedule during market hours.
 """
 from datetime import date, datetime
 from agents.portfolio import refresh_positions, close_all_positions
-from core import db
+from core import db, ledger
 from config.settings import (
     DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET,
     MAX_POSITIONS, DAILY_LOSS_LIMIT,
@@ -90,6 +90,13 @@ def _reconcile_with_alpaca():
                             "realized_pnl":   pnl,
                             "closed_at":      datetime.utcnow().isoformat(),
                         })
+                        ledger.log("trade_closed", {
+                            "ticker":      pos["ticker"],
+                            "mechanism":   mechanism or "BRACKET",
+                            "close_price": close_price,
+                            "pnl":         pnl,
+                            "shares":      int(pos["shares"]),
+                        })
                         print(f"  ✅ Bracket exit: {pos['ticker']} → {mechanism} @ ${close_price:.2f} P&L=${pnl:+.2f}")
                     else:
                         print(f"  ⚠️  {pos['ticker']} gone from Alpaca but get_order_fill returned no price — will retry next cycle")
@@ -98,6 +105,7 @@ def _reconcile_with_alpaca():
                 continue
             # No filled buy and no pending buy — entry truly never executed
             print(f"  ⚠️  Reconciliation: {pos['ticker']} is OPEN in DB but not in Alpaca — marking UNFILLED")
+            ledger.log("trade_unfilled", {"ticker": pos["ticker"], "entry_price": pos.get("entry_price")})
             db.update("positions", {"id": pos["id"]}, {
                 "status":         "CLOSED",
                 "close_reason":   "UNFILLED",

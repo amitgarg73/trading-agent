@@ -13,7 +13,7 @@ from scanner.ml_scorer import score_candidates as ml_score_candidates, is_availa
 from agents import strategy, risk, sector_guard, guardrails, performance, market_context, news_intel, universe_refresh, daily_summary
 from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
-from core import db
+from core import db, ledger
 from core.alerts import send_alert
 from config.settings import UNIVERSE, STRATEGY_MIN_SCORE, TOTAL_CAPITAL, MAX_POSITIONS, POSITION_SIZE_BY_CONFIDENCE
 from agents import alpaca_broker
@@ -21,12 +21,14 @@ from agents import alpaca_broker
 
 def _log_run(mode: str, status: str, details: dict | None = None) -> None:
     """Write a run-status record to scan_results for observability."""
+    payload = {"mode": mode, "status": status, "ts": datetime.utcnow().isoformat(),
+               **(details or {})}
+    ledger.log(f"run_{status}", {"mode": mode, **(details or {})})
     try:
         db.insert("scan_results", {
             "date":      date.today().isoformat(),
             "scan_type": f"run_{mode}_{status}",
-            "results":   {"mode": mode, "status": status, "ts": datetime.utcnow().isoformat(),
-                          **(details or {})},
+            "results":   payload,
         })
     except Exception as e:
         print(f"  ⚠️  _log_run({mode}, {status}) failed: {e}")

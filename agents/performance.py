@@ -4,7 +4,7 @@ Performance Agent: runs EOD, closes all positions, writes daily P&L record.
 from __future__ import annotations
 from datetime import date, datetime
 from agents.portfolio import close_all_positions
-from core import db
+from core import db, ledger
 from config.settings import TOTAL_CAPITAL, STRATEGY_TAG
 import yfinance as yf
 
@@ -174,6 +174,15 @@ def run(broker: str = "simulation") -> dict:
     }
 
     db.upsert("daily_performance", record, on_conflict="date")
+    ledger.log("pnl_recorded", {
+        "date":            today,
+        "total_pnl":       total_pnl,
+        "trades":          len(scored),
+        "win_rate":        record["win_rate"],
+        "ending_capital":  ending_capital,
+        "alpaca_equity":   alpaca_equity,
+        "friction_gap":    friction_gap,
+    })
 
     _print_unfilled_analysis(today_closed)
 

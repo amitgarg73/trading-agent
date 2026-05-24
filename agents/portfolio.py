@@ -6,7 +6,7 @@ broker="alpaca"     submits real bracket orders to Alpaca paper trading.
 from __future__ import annotations
 import yfinance as yf
 from datetime import date, datetime
-from core import db
+from core import db, ledger
 from config.settings import (
     TRAIL_PCT, LOCK_IN_TRAIL_PCT, DAILY_LOCK_IN_TARGET,
     USE_NATIVE_TRAILING_STOP, PARTIAL_PROFIT_ENABLED, PARTIAL_PROFIT_PCT,
@@ -79,6 +79,8 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                     print(f"        ⚠️ Price drift: {ticker} plan={trade['entry_price']:.2f} "
                           f"live={live_px:.2f} ({deviation*100:.1f}%) — skipping")
                     db.update("planned_trades", {"id": planned["id"]}, {"status": "CANCELLED"})
+                    ledger.log("trade_cancelled", {"ticker": ticker, "reason": "price_drift",
+                                                   "plan_price": trade["entry_price"], "live_price": live_px})
                     return None
                 stop_pct         = (trade["entry_price"] - trade["stop_loss"])   / trade["entry_price"]
                 target_pct       = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]
@@ -110,6 +112,7 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
     if broker == "alpaca" and alpaca_order_id is None:
         print(f"        ⚠️  No order confirmed for {ticker}{leg_label} — skipping DB insert")
         db.update("planned_trades", {"id": planned["id"]}, {"status": "CANCELLED"})
+        ledger.log("trade_cancelled", {"ticker": ticker, "reason": "order_failed", "leg": leg_label})
         return None
 
     native_trail = broker == "alpaca" and USE_NATIVE_TRAILING_STOP
@@ -134,10 +137,21 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
     if fill_price_actual is not None:
         pos_row["fill_price"] = fill_price_actual
     try:
-        return db.insert("positions", pos_row)
+        inserted = db.insert("positions", pos_row)
     except Exception:
         pos_row.pop("fill_price", None)
-        return db.insert("positions", pos_row)
+        inserted = db.insert("positions", pos_row)
+    ledger.log("trade_opened", {
+        "ticker":          ticker,
+        "shares":          trade["shares"],
+        "entry":           db_entry,
+        "stop":            effective_stop,
+        "target":          effective_target,
+        "alpaca_order_id": alpaca_order_id,
+        "fill_price":      fill_price_actual,
+        "leg":             leg_label or "full",
+    })
+    return inserted
 
 
 def open_positions(plan_id: str, approved_trades: list, broker: str = "simulation",
