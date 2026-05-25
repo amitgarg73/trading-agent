@@ -8,7 +8,7 @@ from core import db, ledger
 from config.settings import (
     DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET,
     MAX_POSITIONS, DAILY_LOSS_LIMIT,
-    INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END,
+    INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END, INTRADAY_ENTRY_CUTOFF_UTC,
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
     INTRADAY_TARGET_PCT, MIN_INTRADAY_MOVE_PCT, STRATEGY_MIN_SCORE, UNIVERSE,
     TOTAL_CAPITAL, MAX_PER_SECTOR,
@@ -63,8 +63,18 @@ def _reconcile_with_alpaca():
         }
     except Exception as e:
         print(f"  ⚠️  Reconciliation: order fetch failed — {e}")
-        filled_buys  = set()
-        pending_buys = set()
+        ledger.log("reconcile_failed", {"error": str(e)})
+        db.insert("scan_results", {
+            "date":      datetime.utcnow().date().isoformat(),
+            "scan_type": "reconcile_failed",
+            "results":   {"error": str(e), "ts": datetime.utcnow().isoformat()},
+        })
+        from core import alerts
+        alerts.send_alert(
+            "Reconciliation Failed",
+            f"Order fetch exception: {e}\nCycle skipped — unfilled orders undetected this cycle.",
+        )
+        return
 
     for pos in open_positions:
         if pos["ticker"] not in alpaca_tickers:
@@ -181,6 +191,8 @@ def _maybe_run_intraday_scan(broker: str):
     """
     now_utc = datetime.utcnow()
     if not (INTRADAY_SCAN_UTC_START <= now_utc.hour < INTRADAY_SCAN_UTC_END):
+        return None
+    if now_utc.hour >= INTRADAY_ENTRY_CUTOFF_UTC:
         return None
 
     today = now_utc.date().isoformat()

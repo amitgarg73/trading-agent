@@ -80,7 +80,7 @@ if _halt_rows:
 # ── Sidebar ───────────────────────────────────────────────────────
 st.sidebar.title("📈 Trading Agent")
 st.sidebar.caption(f"Capital: ${TOTAL_CAPITAL:,} | Target: ${DAILY_PROFIT_TARGET:,}/day")
-page = st.sidebar.radio("View", ["Summary", "Today", "Positions", "Performance", "Scan Log"])
+page = st.sidebar.radio("View", ["Summary", "Today", "Positions", "Performance", "Scan Log", "Health"])
 st.sidebar.markdown("---")
 if st.sidebar.button("🔄 Refresh"):
     st.rerun()
@@ -1641,6 +1641,137 @@ elif page == "Scan Log":
                     st.dataframe(df, width="stretch")
             else:
                 st.json(results)
+
+# ── HEALTH ───────────────────────────────────────────────────────
+elif page == "Health":
+    import sys
+    st.title("System Health")
+    today = date.today().isoformat()
+
+    # ── Run status (from scan_results) ────────────────────────────
+    st.subheader("Today's Runs")
+    premarket_today = db.select("scan_results", filters={"date": today, "scan_type": "premarket"})
+    intraday_today  = db.select("scan_results", filters={"date": today, "scan_type": "intraday_scan"})
+
+    r1, r2, r3 = st.columns(3)
+    pm_status  = "✅ Done" if premarket_today else "⏳ Not run"
+    pm_color   = "#1e8449" if premarket_today else "#7f8c8d"
+    r1.markdown(
+        f"<div style='background:#1a2a1a;border:1px solid {pm_color};border-radius:6px;padding:12px'>"
+        f"<b>Premarket</b><br><span style='color:{pm_color}'>{pm_status}</span></div>",
+        unsafe_allow_html=True,
+    )
+    r2.markdown(
+        f"<div style='background:#1a2a1a;border:1px solid #1a5276;border-radius:6px;padding:12px'>"
+        f"<b>Intraday scans</b><br><span style='color:#3498db'>{len(intraday_today)} run(s) today</span></div>",
+        unsafe_allow_html=True,
+    )
+    eod_today = db.select("daily_performance", filters={"date": today})
+    eod_status = "✅ Done" if eod_today else "⏳ Not run"
+    eod_color  = "#1e8449" if eod_today else "#7f8c8d"
+    r3.markdown(
+        f"<div style='background:#1a2a1a;border:1px solid {eod_color};border-radius:6px;padding:12px'>"
+        f"<b>EOD</b><br><span style='color:{eod_color}'>{eod_status}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+
+    # ── Reconciliation failures ────────────────────────────────────
+    st.subheader("Reconciliation")
+    reconcile_fails = db.select("scan_results", filters={"scan_type": "reconcile_failed"}, order="created_at", limit=5)
+    today_fails  = [r for r in reconcile_fails if (r.get("date") or "") == today]
+    recent_fails = [r for r in reconcile_fails if (r.get("date") or "") < today]
+
+    if not today_fails and not recent_fails:
+        st.success("✅ No reconciliation failures on record.")
+    else:
+        if today_fails:
+            for fail in today_fails:
+                err = (fail.get("results") or {}).get("error", "unknown error")
+                ts  = (fail.get("results") or {}).get("ts", "")[:16].replace("T", " ")
+                st.error(f"❌ **Reconciliation failed today at {ts} UTC** — {err}")
+        if recent_fails:
+            with st.expander(f"Recent failures ({len(recent_fails)} in last 5 records)"):
+                for fail in recent_fails:
+                    err = (fail.get("results") or {}).get("error", "unknown error")
+                    st.caption(f"{fail.get('date')} — {err}")
+
+    st.divider()
+
+    # ── Open positions health ─────────────────────────────────────
+    st.subheader("Open Positions")
+    all_open = db.select("positions", filters={"status": "OPEN"})
+    stale    = [p for p in all_open if not (p.get("opened_at") or "").startswith(today)]
+
+    if not all_open:
+        st.success("✅ No open positions.")
+    else:
+        if stale:
+            st.error(f"⚠️ {len(stale)} position(s) opened before today and still OPEN — may be stuck.")
+            for p in stale:
+                opened = (p.get("opened_at") or "")[:10]
+                st.markdown(f"- **{p['ticker']}** opened {opened} — {p.get('shares')} shares @ ${p.get('entry_price', 0):.2f}")
+        else:
+            st.info(f"{len(all_open)} open position(s) — all opened today.")
+            for p in all_open:
+                st.markdown(f"- **{p['ticker']}** {p.get('shares')} shares @ ${p.get('entry_price', 0):.2f}")
+
+    st.divider()
+
+    # ── Halt flag ─────────────────────────────────────────────────
+    st.subheader("Halt Flag")
+    halt_rows = db.select("scan_results", filters={"scan_type": "halt_flag"})
+    if halt_rows:
+        hr = halt_rows[0].get("results", {})
+        st.error(
+            f"🛑 **Agent halted** — {hr.get('reason', 'Manual override')}  "
+            f"·  Since {(hr.get('halted_at') or '')[:16].replace('T', ' ')} UTC"
+        )
+    else:
+        st.success("✅ Agent is running normally — no halt flag active.")
+
+    st.divider()
+
+    # ── Local ledger (best-effort: only available if dashboard runs on agent host) ─
+    st.subheader("Ledger Events Today")
+    try:
+        _ledger_path = os.path.join(
+            os.path.dirname(__file__), "..", "data",
+            f"ledger_{today}.jsonl",
+        )
+        if os.path.exists(_ledger_path):
+            import json as _json
+            _events = []
+            with open(_ledger_path) as _lf:
+                for _line in _lf:
+                    try:
+                        _events.append(_json.loads(_line.strip()))
+                    except Exception:
+                        pass
+            if _events:
+                _alert_fails = [e for e in _events if e["event"] == "alert_delivery_failed"]
+                _rec_fails   = [e for e in _events if e["event"] == "reconcile_failed"]
+                if _alert_fails:
+                    st.warning(f"⚠️ {len(_alert_fails)} alert delivery failure(s) today.")
+                    for _af in _alert_fails:
+                        st.caption(f"  {_af['ts'][:16]} — {_af['data'].get('subject', '')}")
+                if _rec_fails:
+                    st.error(f"❌ {len(_rec_fails)} reconcile failure(s) in ledger today.")
+
+                import pandas as _pd
+                _df = _pd.DataFrame([
+                    {"Time": e["ts"][11:16], "Event": e["event"], "Detail": str(e.get("data", {}))}
+                    for e in _events
+                ])
+                st.dataframe(_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("Ledger file is empty for today.")
+        else:
+            st.caption("Local ledger not available — dashboard is running on a separate host from the trading agent.")
+    except Exception as _le:
+        st.caption(f"Ledger read unavailable: {_le}")
+
 
 # ── Auto-refresh ──────────────────────────────────────────────────
 if _refresh_secs > 0:
