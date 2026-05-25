@@ -475,10 +475,34 @@ def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list
         db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
         closed.append({**pos, "realized_pnl": pnl})
 
-    # Safety sweep: close Strategy A orphans only (not Strategy B's positions)
+    # Safety sweep: close Strategy A orphans (in Alpaca but NOT in our DB).
+    # Filters by strat{TAG}_ prefix so B's positions are never touched.
+    # Excludes db_tickers to avoid re-closing positions just submitted above.
     if broker == "alpaca":
         from agents import alpaca_broker
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
         from config.settings import STRATEGY_TAG
-        alpaca_broker.close_all_positions(tag_prefix=f"strat{STRATEGY_TAG}_")
+        from datetime import timezone, timedelta
+        db_tickers = {p["ticker"] for p in open_pos}
+        tag_prefix = f"strat{STRATEGY_TAG}_"
+        try:
+            two_days_ago = (datetime.utcnow() - timedelta(days=2)).replace(tzinfo=timezone.utc)
+            recent = alpaca_broker._client().get_orders(GetOrdersRequest(
+                status=QueryOrderStatus.ALL, limit=500, after=two_days_ago
+            ))
+            our_tickers = {
+                str(o.symbol) for o in recent
+                if str(o.client_order_id or "").startswith(tag_prefix)
+            }
+            for ap in alpaca_broker._client().get_all_positions():
+                if ap.symbol not in db_tickers and ap.symbol in our_tickers:
+                    print(f"  [orphan sweep] Closing {ap.symbol} ({ap.qty} shares)")
+                    try:
+                        alpaca_broker.close_position(ap.symbol)
+                    except Exception as e:
+                        print(f"  [orphan sweep] Could not close {ap.symbol}: {e}")
+        except Exception as e:
+            print(f"  [orphan sweep] Error: {e}")
 
     return closed

@@ -42,8 +42,10 @@ def _reconcile_with_alpaca():
     # NOT included. filled_sells would always be empty for bracket exits, so we don't use it.
     # portfolio.refresh_positions() correctly resolves bracket exits via get_order_fill().
     try:
+        from datetime import timezone
         today = datetime.utcnow().date().isoformat()
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0,
+                                                tzinfo=timezone.utc)
         all_orders = alpaca_broker._client().get_orders(
             GetOrdersRequest(status=QueryOrderStatus.ALL, limit=500, after=today_start)
         )

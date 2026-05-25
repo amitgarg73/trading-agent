@@ -482,6 +482,9 @@ def eod(broker: str = "simulation"):
     print(f"\n{'='*60}")
     print(f"  EOD RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')} [{broker}]")
     print(f"{'='*60}\n")
+    if not _is_trading_day():
+        print(f"[orchestrator] {date.today()} is not a NYSE trading day — skipping EOD")
+        return
     if _is_halted():
         return
 

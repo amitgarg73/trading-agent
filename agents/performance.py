@@ -35,7 +35,7 @@ def _alpaca_order_pnl(tag_prefix: str, real_closed: list) -> tuple[float | None,
     tagged_buys = [
         o for o in all_orders
         if str(o.client_order_id or "").startswith(tag_prefix)
-        and str(o.side).lower() == "buy"
+        and getattr(o.side, "value", str(o.side)).lower() == "buy"
         and o.filled_avg_price
     ]
 
@@ -61,7 +61,7 @@ def _alpaca_order_pnl(tag_prefix: str, real_closed: list) -> tuple[float | None,
         # Bracket exit leg (target or stop fired by Alpaca)
         exit_fill = None
         for leg in (o.legs or []):
-            if str(leg.status).lower() in ("filled", "partially_filled") and leg.filled_avg_price:
+            if getattr(leg.status, "value", str(leg.status)).lower() in ("filled", "partially_filled") and leg.filled_avg_price:
                 exit_fill = float(leg.filled_avg_price)
                 break
 

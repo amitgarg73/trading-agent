@@ -16,6 +16,7 @@ class TestEODDedup:
     def test_eod_skips_when_already_ran(self):
         """EOD bails early when run_eod_started record exists for today."""
         with patch("orchestrator.db") as mock_db, \
+             patch("orchestrator._is_trading_day", return_value=True), \
              patch("orchestrator._is_halted", return_value=False):
             def _sel(table, **kw):
                 f = kw.get("filters", {})
@@ -31,6 +32,7 @@ class TestEODDedup:
     def test_eod_proceeds_when_no_prior_run(self):
         """EOD runs and inserts run_eod_started when no prior run exists."""
         with patch("orchestrator.db") as mock_db, \
+             patch("orchestrator._is_trading_day", return_value=True), \
              patch("orchestrator._is_halted", return_value=False), \
              patch("orchestrator.performance") as mock_perf, \
              patch("orchestrator.daily_summary"):
@@ -75,6 +77,7 @@ class TestRunLogging:
     def test_eod_logs_failed_and_reraises(self):
         """EOD inserts run_eod_failed and re-raises on unexpected exception."""
         with patch("orchestrator.db") as mock_db, \
+             patch("orchestrator._is_trading_day", return_value=True), \
              patch("orchestrator._is_halted", return_value=False), \
              patch("orchestrator.performance") as mock_perf, \
              patch("orchestrator.send_alert"):
@@ -93,6 +96,7 @@ class TestRunLogging:
     def test_eod_logs_completed_on_success(self):
         """EOD inserts run_eod_completed after a successful no-trades-today run."""
         with patch("orchestrator.db") as mock_db, \
+             patch("orchestrator._is_trading_day", return_value=True), \
              patch("orchestrator._is_halted", return_value=False), \
              patch("orchestrator.performance") as mock_perf, \
              patch("orchestrator.daily_summary"):
@@ -130,6 +134,7 @@ class TestEODAlerts:
             "worst_trade_ticker": "MSFT", "worst_trade_pnl": 50.0,
         }
         with patch("orchestrator.db") as mock_db, \
+             patch("orchestrator._is_trading_day", return_value=True), \
              patch("orchestrator._is_halted", return_value=False), \
              patch("orchestrator.performance") as mock_perf, \
              patch("orchestrator.daily_summary"), \
@@ -145,6 +150,7 @@ class TestEODAlerts:
     def test_alert_sent_on_eod_crash(self):
         """send_alert is called when the EOD run crashes with an unexpected exception."""
         with patch("orchestrator.db") as mock_db, \
+             patch("orchestrator._is_trading_day", return_value=True), \
              patch("orchestrator._is_halted", return_value=False), \
              patch("orchestrator.performance") as mock_perf, \
              patch("orchestrator.send_alert") as mock_alert:
