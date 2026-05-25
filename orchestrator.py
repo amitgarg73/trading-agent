@@ -19,6 +19,64 @@ from config.settings import UNIVERSE, STRATEGY_MIN_SCORE, TOTAL_CAPITAL, MAX_POS
 from agents import alpaca_broker
 
 
+def _sweep_and_verify() -> bool:
+    """
+    Close overnight Alpaca positions with one retry and a verification step.
+    Returns True if Alpaca is clear after either attempt.
+    Returns False if positions remain after both — halt flag is set and alert sent.
+    """
+    import time
+
+    overnight = alpaca_broker.get_open_tickers()
+    if not overnight:
+        return True
+
+    print(f"  ⚠️  OVERNIGHT POSITIONS DETECTED: {overnight}")
+    print("  Closing before day trading begins...")
+    alpaca_broker.cancel_all_orders()
+    alpaca_broker.close_all_positions()
+
+    time.sleep(10)
+    remaining = alpaca_broker.get_open_tickers()
+    if not remaining:
+        print("  ✅ Morning sweep complete — Alpaca is clear.\n")
+        return True
+
+    print(f"  ⚠️  Positions still open after first sweep: {remaining} — retrying...")
+    alpaca_broker.close_all_positions()
+    time.sleep(10)
+    remaining = alpaca_broker.get_open_tickers()
+    if not remaining:
+        print("  ✅ Cleared on second attempt.\n")
+        return True
+
+    tickers = sorted(remaining)
+    ledger.log("sweep_failed", {"tickers": tickers})
+    db.insert("scan_results", {
+        "date":      date.today().isoformat(),
+        "scan_type": "halt_flag",
+        "results": {
+            "reason":     f"Morning sweep failed — positions still open: {tickers}",
+            "halted_at":  datetime.utcnow().isoformat(),
+            "halted_by":  "sweep_and_verify",
+            "positions_closed": [],
+        },
+    })
+    send_alert(
+        "TRADING HALTED — Morning Sweep Failed",
+        f"Positions still open after 2 close attempts: {', '.join(tickers)}\n\n"
+        f"STEP 1 — Close positions manually in Alpaca:\n"
+        f"  https://app.alpaca.markets/paper/dashboard/overview\n"
+        f"  Find these tickers and close each one: {', '.join(tickers)}\n\n"
+        f"STEP 2 — Restart the trading agent:\n"
+        f"  https://github.com/amitgarg73/trading-agent/actions/workflows/restart.yml\n"
+        f"  Click 'Run workflow' then confirm.\n\n"
+        f"No new trades will open until you complete both steps.",
+    )
+    print(f"  ❌ Sweep failed after 2 attempts — premarket halted. Alert sent.")
+    return False
+
+
 def _log_run(mode: str, status: str, details: dict | None = None) -> None:
     """Write a run-status record to scan_results for observability."""
     payload = {"mode": mode, "status": status, "ts": datetime.utcnow().isoformat(),
@@ -109,13 +167,8 @@ def premarket(broker: str = "simulation"):
 
     # 0a. Morning sweep — close any overnight positions before trading begins
     if broker == "alpaca":
-        overnight = alpaca_broker.get_open_tickers()
-        if overnight:
-            print(f"  ⚠️  OVERNIGHT POSITIONS DETECTED: {overnight}")
-            print(f"  Closing before day trading begins...\n")
-            alpaca_broker.cancel_all_orders()
-            swept = alpaca_broker.close_all_positions()
-            print(f"  Swept {len(swept)} overnight position(s). These will appear in today's Alpaca equity delta.\n")
+        if not _sweep_and_verify():
+            return
 
     # 0. Market context — volatility gate + futures signal
     mkt = market_context.run()
