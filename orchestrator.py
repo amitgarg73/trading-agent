@@ -15,7 +15,7 @@ from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db, ledger
 from core.alerts import send_alert
-from config.settings import UNIVERSE, STRATEGY_MIN_SCORE, TOTAL_CAPITAL, MAX_POSITIONS, POSITION_SIZE_BY_CONFIDENCE
+from config.settings import UNIVERSE, STRATEGY_MIN_SCORE, TOTAL_CAPITAL, MAX_POSITIONS, POSITION_SIZE_BY_CONFIDENCE, STRATEGY_TAG
 from agents import alpaca_broker
 
 
@@ -24,6 +24,9 @@ def _sweep_and_verify() -> bool:
     Close overnight Alpaca positions with one retry and a verification step.
     Returns True if Alpaca is clear after either attempt.
     Returns False if positions remain after both — halt flag is set and alert sent.
+
+    Only acts on positions tracked in our DB as OPEN — skips Strategy B's positions
+    on the shared Alpaca account. Closes use a strategy tag filter for the same reason.
     """
     import time
 
@@ -31,21 +34,28 @@ def _sweep_and_verify() -> bool:
     if not overnight:
         return True
 
-    print(f"  ⚠️  OVERNIGHT POSITIONS DETECTED: {overnight}")
+    # Cross-strategy guard: only act on positions we opened (in our DB as OPEN)
+    our_open = {p["ticker"] for p in db.select("positions", filters={"status": "OPEN"})}
+    ours_overnight = overnight & our_open
+    if not ours_overnight:
+        return True
+
+    _tag = f"strat{STRATEGY_TAG}_"
+    print(f"  ⚠️  OVERNIGHT POSITIONS DETECTED: {ours_overnight}")
     print("  Closing before day trading begins...")
     alpaca_broker.cancel_all_orders()
-    alpaca_broker.close_all_positions()
+    alpaca_broker.close_all_positions(tag_prefix=_tag)
 
     time.sleep(10)
-    remaining = alpaca_broker.get_open_tickers()
+    remaining = alpaca_broker.get_open_tickers() & our_open
     if not remaining:
         print("  ✅ Morning sweep complete — Alpaca is clear.\n")
         return True
 
     print(f"  ⚠️  Positions still open after first sweep: {remaining} — retrying...")
-    alpaca_broker.close_all_positions()
+    alpaca_broker.close_all_positions(tag_prefix=_tag)
     time.sleep(10)
-    remaining = alpaca_broker.get_open_tickers()
+    remaining = alpaca_broker.get_open_tickers() & our_open
     if not remaining:
         print("  ✅ Cleared on second attempt.\n")
         return True
@@ -203,7 +213,7 @@ def premarket(broker: str = "simulation"):
     # 1. Scan
     print("[ 1/4 ] Running market scan...")
     universe = load_universe()
-    candidates = run_scan(universe=universe, skip_volume_surge=(mode == "premarket"))
+    candidates = run_scan(universe=universe, skip_volume_surge=True)
     print(f"        Found {len(candidates)} candidates")
 
     if not candidates:

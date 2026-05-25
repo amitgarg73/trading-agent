@@ -475,9 +475,10 @@ def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list
         db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
         closed.append({**pos, "realized_pnl": pnl})
 
-    # Safety sweep: close any Alpaca positions not tracked in our DB (orphaned bracket buys)
+    # Safety sweep: close Strategy A orphans only (not Strategy B's positions)
     if broker == "alpaca":
         from agents import alpaca_broker
-        alpaca_broker.close_all_positions()
+        from config.settings import STRATEGY_TAG
+        alpaca_broker.close_all_positions(tag_prefix=f"strat{STRATEGY_TAG}_")
 
     return closed

@@ -291,14 +291,34 @@ def cancel_all_orders() -> None:
         pass
 
 
-def close_all_positions() -> list[dict]:
-    """Market-close every open position on Alpaca. Returns list of {ticker, success, fill_price}."""
+def close_all_positions(tag_prefix: str | None = None) -> list[dict]:
+    """Market-close every open position on Alpaca.
+    tag_prefix: when given (e.g. 'strata_'), only close positions with a matching
+    tagged buy order in the last 2 days — prevents closing Strategy B's positions
+    when both strategies share one Alpaca account.
+    """
     results = []
     try:
         positions = _client().get_all_positions()
     except Exception as e:
         print(f"  ⚠️  Could not fetch Alpaca positions: {e}")
         return results
+
+    if tag_prefix:
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            from datetime import timezone, timedelta
+            two_days_ago = (datetime.utcnow() - timedelta(days=2)).replace(tzinfo=timezone.utc)
+            orders = _client().get_orders(GetOrdersRequest(
+                status=QueryOrderStatus.ALL, limit=500, after=two_days_ago
+            ))
+            owned = {str(o.symbol) for o in orders
+                     if str(o.client_order_id or "").startswith(tag_prefix)}
+            positions = [p for p in positions if p.symbol in owned]
+        except Exception as e:
+            print(f"  ⚠️  Tag filter failed ({e}) — closing all positions to be safe")
+
     for pos in positions:
         ticker = pos.symbol
         ok, fill = close_position(ticker)
