@@ -32,10 +32,10 @@ def _try_gmail(subject: str, body: str) -> bool:
 
 def send_alert(subject: str, body: str) -> None:
     """Dispatch an alert. Telegram first, Gmail fallback. Logs to ledger if both fail."""
-    from core import telegram  # local import avoids circular dependency
+    from core import ntfy  # local import avoids circular dependency
     from core import ledger
 
-    if telegram.send_alert(subject, body):
+    if ntfy.send_alert(subject, body):
         return
 
     if _try_gmail(subject, body):

@@ -14,7 +14,7 @@ def _run_send_alert(telegram_ok: bool, gmail_ok: bool, monkeypatch=None, tmp_pat
     """Run send_alert with both channel outcomes controlled."""
     from core import alerts
 
-    with patch("core.telegram.send_alert", return_value=telegram_ok) as mock_tg, \
+    with patch("core.ntfy.send_alert", return_value=telegram_ok) as mock_tg, \
          patch("core.alerts._try_gmail", return_value=gmail_ok) as mock_gm:
         alerts.send_alert("Test subject", "Test body")
 
@@ -44,7 +44,7 @@ class TestLedgerFallback:
         import core.ledger as ledger_mod
         monkeypatch.setattr(ledger_mod, "_DATA_DIR", tmp_path)
         from core import alerts
-        with patch("core.telegram.send_alert", return_value=False), \
+        with patch("core.ntfy.send_alert", return_value=False), \
              patch("core.alerts._try_gmail", return_value=False):
             alerts.send_alert("Missed alert", "body")
 
@@ -57,7 +57,7 @@ class TestLedgerFallback:
         import core.ledger as ledger_mod
         monkeypatch.setattr(ledger_mod, "_DATA_DIR", tmp_path)
         from core import alerts
-        with patch("core.telegram.send_alert", return_value=True):
+        with patch("core.ntfy.send_alert", return_value=True):
             alerts.send_alert("Delivered", "body")
 
         assert ledger_mod.read_today() == []
@@ -66,7 +66,7 @@ class TestLedgerFallback:
         import core.ledger as ledger_mod
         monkeypatch.setattr(ledger_mod, "_DATA_DIR", tmp_path)
         from core import alerts
-        with patch("core.telegram.send_alert", return_value=False), \
+        with patch("core.ntfy.send_alert", return_value=False), \
              patch("core.alerts._try_gmail", return_value=True):
             alerts.send_alert("Delivered via email", "body")
 
