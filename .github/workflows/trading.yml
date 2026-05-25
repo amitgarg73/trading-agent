@@ -46,7 +46,7 @@ jobs:
           else
             HOUR=$(date -u +%H)
             MIN=$(date -u +%M)
-            TIME=$((HOUR * 60 + MIN))
+            TIME=$((10#$HOUR * 60 + 10#$MIN))
             # Use windows, not exact minutes — GitHub scheduler can fire 5-15 min late
             # Premarket window: 14:00-14:29 UTC (10:00-10:29 AM ET) — 30 min buffer for late firing
             # EOD window:       19:55-23:59 UTC (3:55+ PM ET) — runs before 4 PM market close
