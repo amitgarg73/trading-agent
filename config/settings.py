@@ -41,7 +41,7 @@ INTRADAY_SCAN_UTC_END           = 20          # outer scheduling window end
 INTRADAY_ENTRY_CUTOFF_UTC       = 19          # 3:00 PM ET hard entry cutoff; late entries are negative EV
 INTRADAY_SCAN_MAX_RUNS          = 6           # hourly: 10 AM, 11 AM, 12 PM, 1 PM, 2 PM, 3 PM ET
 INTRADAY_SCAN_MIN_INTERVAL_MINS = 55          # ~1 hr apart (55 min absorbs GH Actions delay)
-INTRADAY_TARGET_PCT             = 0.01        # 1% target for intraday entries — less time = smaller target
+INTRADAY_TARGET_PCT             = 0.015       # 1.5% target for intraday entries — gives 2.2:1 R:R with 0.67% fixed stop
 MIN_INTRADAY_MOVE_PCT           = 4.0         # minimum % move today to qualify as momentum candidate
 MIN_INTRADAY_VOLUME_RATIO       = 0.3         # minimum volume ratio for intraday entries — blocks illiquid noise
 MAX_INTRADAY_RANGE_PCT          = 5.0         # block stocks where avg(H-L)/Open > 5% — too volatile for 0.67% stop

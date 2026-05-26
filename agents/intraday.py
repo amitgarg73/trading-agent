@@ -318,16 +318,12 @@ def _maybe_run_intraday_scan(broker: str):
                 print(f"  📊 Sector guard: {t['ticker']} blocked — {sector} at {MAX_PER_SECTOR} limit")
         approved = sector_passed
 
-        # ATR sizer — apply ATR-based stops if ATR data available; passes through otherwise
-        if approved:
-            from agents import atr_sizer
-            intraday_atr = {c["ticker"]: c.get("atr_pct") for c in merged}
-            approved, atr_dropped = atr_sizer.apply(approved, intraday_atr)
-            if atr_dropped:
-                print(f"  📊 ATR sizer dropped {len(atr_dropped)} intraday trade(s): {atr_dropped}")
+        # ATR sizer intentionally skipped for intraday entries.
+        # ATR stops (0.8×ATR ≈ 3-4% for momentum stocks) are wider than the 1.5% intraday
+        # target, which kills R:R. Intraday uses the fixed 0.67% stop from risk.py instead.
 
         if not approved:
-            print("  📊 Intraday scan: all trades rejected by risk/sector/ATR")
+            print("  📊 Intraday scan: all trades rejected by risk/sector")
             _save_scan_result(today, now_utc,
                               {"candidates": len(merged), "momentum": len(momentum_candidates),
                                "rejected": len(trades)})

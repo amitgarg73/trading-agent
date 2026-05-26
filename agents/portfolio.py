@@ -82,9 +82,15 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                     ledger.log("trade_cancelled", {"ticker": ticker, "reason": "price_drift",
                                                    "plan_price": trade["entry_price"], "live_price": live_px})
                     return None
-                # Keep plan stop/target — recalculating from live ask risks stop > Alpaca fill
-                # price when ask > actual fill (e.g. wide spread in paper trading).
-                # Price drift check above already cancelled anything > PRICE_SANITY_PCT off.
+                # Anchor stop/target to live price, preserving the plan's % offsets.
+                # Without this, a 3% reversal within the sanity window would produce a
+                # plan stop (e.g. 99.33) above the actual fill price (97.0), firing the
+                # bracket immediately.
+                plan_stop_pct    = (trade["entry_price"] - trade["stop_loss"]) / trade["entry_price"]
+                plan_target_pct  = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]
+                effective_entry  = live_px
+                effective_stop   = round(live_px * (1 - plan_stop_pct), 2)
+                effective_target = round(live_px * (1 + plan_target_pct), 2)
 
             alpaca_order_id, fill_price_actual = alpaca_broker.submit_bracket_order(
                 ticker=ticker,

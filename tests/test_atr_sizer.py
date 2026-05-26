@@ -107,9 +107,9 @@ class TestAtrSizerDrops:
 
     def test_drop_when_atrstop_equals_target(self):
         """Exactly equal stop and target → drop (boundary)."""
-        # entry=100, target=104 (4%). Need ATR where 1.2×ATR/100 = 0.04 → ATR = 3.333%
+        # entry=100, target=104 (4%). Need ATR where 0.8×ATR/100 = 0.04 → ATR = 5.0%
         trades = [_trade(entry_price=100.0, target_price=104.0, stop_loss=99.33)]
-        adjusted, dropped = apply(trades, {"AAPL": 3.34})   # 3.34% × 1.2 = 4.008% > 4% target
+        adjusted, dropped = apply(trades, {"AAPL": 5.001})  # 5.001% × 0.8 = 4.0008% > 4% target
         assert len(adjusted) == 0
         assert len(dropped) == 1
 

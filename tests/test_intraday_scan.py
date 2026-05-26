@@ -507,13 +507,13 @@ class TestIntradaySectorGuardAndAtrSizer:
         opened_trades = mock_open.call_args[0][1]
         assert len(opened_trades) == 2
 
-    def test_atr_sizer_is_called_for_intraday_trades(self):
-        """ATR sizer must be invoked and its drop output must prevent those trades opening."""
+    def test_atr_sizer_not_called_for_intraday_trades(self):
+        """ATR sizer must NOT be invoked for intraday trades — it kills R:R on momentum stocks."""
         trade = {
             "ticker": "AAPL", "action": "BUY", "entry_price": 100.0,
-            "target_price": 101.0, "stop_loss": 99.33, "shares": 30,
+            "target_price": 101.5, "stop_loss": 99.33, "shares": 30,
             "position_size": 3000.0, "confidence": "MEDIUM",
-            "reasoning": "test", "estimated_profit": 30.0,
+            "reasoning": "test", "estimated_profit": 45.0,
         }
 
         with patch("agents.intraday.datetime") as mock_dt, \
@@ -535,8 +535,8 @@ class TestIntradaySectorGuardAndAtrSizer:
             from agents.intraday import _maybe_run_intraday_scan
             result = _maybe_run_intraday_scan(broker="simulation")
 
-        mock_atr.assert_called_once()
-        mock_open.assert_not_called()   # all dropped by ATR sizer
+        mock_atr.assert_not_called()   # ATR sizer bypassed for intraday
+        mock_open.assert_called_once() # trade passed through to open_positions
 
 
 @patch("core.db.update")
