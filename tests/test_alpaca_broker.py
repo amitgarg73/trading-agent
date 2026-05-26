@@ -129,8 +129,8 @@ def test_submit_bracket_order_returns_none_on_rejection(mock_client):
 
 
 @patch("agents.alpaca_broker._client")
-def test_submit_bracket_order_returns_none_on_timeout(mock_client):
-    """Unconfirmed fill after 15 polls returns (None, None)."""
+def test_submit_bracket_order_returns_order_id_on_pending_fill(mock_client):
+    """Unconfirmed fill after polls returns (order_id, None) — non-blocking; intraday reconciles later."""
     order = MagicMock()
     order.id = "ord-789"
     mock_client.return_value.submit_order.return_value = order
@@ -144,7 +144,7 @@ def test_submit_bracket_order_returns_none_on_timeout(mock_client):
     with patch("time.sleep"):
         order_id, fill_price = submit_bracket_order("MSFT", 8, 300.0, 312.0, 298.0)
 
-    assert order_id is None
+    assert order_id == "ord-789"
     assert fill_price is None
 
 
@@ -229,3 +229,39 @@ def test_alpaca_order_pnl_no_tagged_orders(mock_client):
 
     assert pnl is None
     assert "no tagged" in note
+
+
+# ── get_avg_daily_volumes BarSet fix ──────────────────────────────────────────
+
+@patch("agents.alpaca_broker._dclient")
+def test_get_avg_daily_volumes_uses_barset_data(mock_dclient):
+    """get_avg_daily_volumes must read bars.data.get() not bars.get() (BarSet has no .get)."""
+    from unittest.mock import MagicMock
+
+    bar = MagicMock()
+    bar.volume = 1_000_000.0
+
+    barset = MagicMock(spec=[])          # no .get() — mimics real BarSet
+    barset.data = {"AAPL": [bar] * 25}
+
+    mock_dclient.return_value.get_stock_bars.return_value = barset
+
+    from agents.alpaca_broker import get_avg_daily_volumes
+    result = get_avg_daily_volumes(["AAPL"], days=20)
+
+    assert "AAPL" in result
+    assert result["AAPL"] == pytest.approx(1_000_000.0, rel=0.01)
+
+
+@patch("agents.alpaca_broker._dclient")
+def test_get_avg_daily_volumes_missing_ticker_returns_empty(mock_dclient):
+    """Ticker absent from BarSet.data returns no entry — does not crash."""
+    barset = MagicMock(spec=[])
+    barset.data = {}                     # AAPL not in response
+
+    mock_dclient.return_value.get_stock_bars.return_value = barset
+
+    from agents.alpaca_broker import get_avg_daily_volumes
+    result = get_avg_daily_volumes(["AAPL"], days=20)
+
+    assert result == {}

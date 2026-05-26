@@ -141,7 +141,7 @@ def get_avg_daily_volumes(tickers: list[str], days: int = 20) -> dict[str, float
         bars = _dclient().get_stock_bars(req)
         result = {}
         for ticker in tickers:
-            ticker_bars = bars.get(ticker) or []
+            ticker_bars = (bars.data.get(ticker) or []) if hasattr(bars, "data") else []
             recent = list(ticker_bars)[-days:]
             if recent:
                 result[ticker] = sum(float(b.volume) for b in recent) / len(recent)

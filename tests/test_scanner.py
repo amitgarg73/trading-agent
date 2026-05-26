@@ -616,3 +616,154 @@ class TestAtrQualityGate:
         from config.settings import MAX_ATR_PCT
         result = self._run_scan_with_atr(atr_pct_override=MAX_ATR_PCT)
         assert result is not None, "ATR exactly at threshold must pass (not strictly greater)"
+
+
+# ── _fetch_alpaca BarSet fix ──────────────────────────────────────────────────
+
+class TestFetchAlpacaBarSet:
+    """_fetch_alpaca must use bars.data.get() — BarSet has no .get() method."""
+
+    def test_fetch_alpaca_uses_barset_data(self):
+        from unittest.mock import MagicMock
+        import pandas as pd
+
+        bar = MagicMock()
+        bar.open = bar.high = bar.low = bar.close = 100.0
+        bar.volume = 2_000_000.0
+        bar.timestamp = pd.Timestamp("2026-05-26")
+
+        barset = MagicMock(spec=[])        # no .get() on the object
+        barset.data = {"AAPL": [bar] * 25}
+
+        with patch("agents.alpaca_broker._dclient") as mock_dc:
+            mock_dc.return_value.get_stock_bars.return_value = barset
+            from scanner.scanner import _fetch_alpaca
+            info, df = _fetch_alpaca("AAPL")
+
+        assert df is not None
+        assert len(df) == 25
+        assert info["averageVolume"] > 0
+
+    def test_fetch_alpaca_missing_ticker_returns_none(self):
+        from unittest.mock import MagicMock
+
+        barset = MagicMock(spec=[])
+        barset.data = {}                   # ticker not in response
+
+        with patch("agents.alpaca_broker._dclient") as mock_dc:
+            mock_dc.return_value.get_stock_bars.return_value = barset
+            from scanner.scanner import _fetch_alpaca
+            info, df = _fetch_alpaca("AAPL")
+
+        assert df is None
+        assert info == {}
+
+
+# ── _intraday_bars Alpaca fallback ───────────────────────────────────────────
+
+class TestIntradayBarsAlpacaFallback:
+    """_intraday_bars falls back to Alpaca when yfinance fails."""
+
+    def test_falls_back_to_alpaca_on_yfinance_failure(self):
+        """yfinance download raises → Alpaca fallback is called."""
+        import pandas as pd
+        from datetime import date as dt_date
+
+        fake_df = pd.DataFrame(
+            [{"open": 100, "high": 101, "low": 99, "close": 100, "volume": 500_000}] * 8,
+            index=pd.DatetimeIndex([
+                pd.Timestamp.combine(dt_date.today(), pd.Timestamp("09:30").time()) + pd.Timedelta(minutes=5 * i)
+                for i in range(8)
+            ]),
+        )
+
+        with patch("scanner.scanner.yf.download", side_effect=Exception("401")), \
+             patch("scanner.scanner._intraday_bars_alpaca", return_value=fake_df) as mock_alpaca:
+            from scanner.scanner import _intraday_bars
+            result = _intraday_bars("AAPL")
+
+        mock_alpaca.assert_called_once_with("AAPL")
+        assert result is not None
+        assert len(result) == 8
+
+    def test_uses_yfinance_when_available(self):
+        """If yfinance succeeds with >=6 bars, Alpaca fallback is NOT called."""
+        import pandas as pd
+        from datetime import date as dt_date
+
+        fake_df = pd.DataFrame(
+            [{"open": 100, "high": 101, "low": 99, "close": 100, "volume": 500_000}] * 8,
+            index=pd.DatetimeIndex([
+                pd.Timestamp.combine(dt_date.today(), pd.Timestamp("09:30").time()) + pd.Timedelta(minutes=5 * i)
+                for i in range(8)
+            ]),
+        )
+
+        with patch("scanner.scanner.yf.download", return_value=fake_df), \
+             patch("scanner.scanner._intraday_bars_alpaca") as mock_alpaca:
+            from scanner.scanner import _intraday_bars
+            result = _intraday_bars("AAPL")
+
+        mock_alpaca.assert_not_called()
+        assert result is not None
+
+
+# ── Market momentum signal ────────────────────────────────────────────────────
+
+class TestMarketMomentumSignal:
+    """_technical adds +1 to bullish candidates when SPY is up >1%."""
+
+    def _score_with_ctx(self, spy_pct: float, base_trend: float = 0.002):
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        df = make_price_df(trend=base_trend)
+        return _technical("TEST", df, market_ctx={"spy_pct": spy_pct})
+
+    def test_strong_market_adds_one_to_bullish(self):
+        result_neutral = self._score_with_ctx(0.0)
+        result_bull    = self._score_with_ctx(1.5)
+        if result_neutral["technical_score"] > 0:
+            assert result_bull["technical_score"] == result_neutral["technical_score"] + 1
+            assert any("tailwind" in s.lower() for s in result_bull["signals"])
+
+    def test_flat_market_no_bonus(self):
+        result_no_ctx  = self._score_with_ctx(0.0)
+        result_flat    = self._score_with_ctx(0.5)
+        assert result_flat["technical_score"] == result_no_ctx["technical_score"]
+
+    def test_market_bonus_not_applied_to_bearish_candidate(self):
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        # Overbought extended stock (trend=0.015, low vol, skip volume surge) → score=-1
+        # RSI overbought(-2) + upper BB(-1) + extended SMA20(-1) + MACD bullish(+2) + uptrend(+1) = -1
+        df = make_price_df(trend=0.015, volatility=0.001)
+        result = _technical("TEST", df, skip_volume_surge=True, market_ctx={"spy_pct": 2.0})
+        assert result["technical_score"] <= 0, "test setup: expected non-positive score"
+        assert not any("tailwind" in s.lower() for s in result["signals"])
+
+    def test_no_market_ctx_behaves_as_before(self):
+        """Passing market_ctx=None must not raise and must not change score."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        df = make_price_df(trend=0.002)
+        r1 = _technical("TEST", df, market_ctx=None)
+        r2 = _technical("TEST", df)
+        assert r1["technical_score"] == r2["technical_score"]
+
+
+# ── run_scan passes market_ctx to each ticker ─────────────────────────────────
+
+class TestRunScanMarketCtx:
+
+    def test_market_ctx_computed_and_passed(self):
+        """run_scan must call _get_market_context once and forward it to _scan_ticker."""
+        fake_ctx = {"spy_pct": 1.2}
+
+        with patch("scanner.scanner._get_market_context", return_value=fake_ctx) as mock_ctx, \
+             patch("scanner.scanner._scan_ticker", return_value=None) as mock_scan:
+            from scanner.scanner import run_scan
+            run_scan(universe=["AAPL", "MSFT"])
+
+        mock_ctx.assert_called_once()
+        for call in mock_scan.call_args_list:
+            assert call.args[2] == fake_ctx or call.kwargs.get("market_ctx") == fake_ctx

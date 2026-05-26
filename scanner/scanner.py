@@ -17,21 +17,51 @@ from config.settings import (
 )
 
 
+def _intraday_bars_alpaca(ticker: str) -> pd.DataFrame | None:
+    """Alpaca 5-min bars fallback for ORB/VWAP — used when yfinance is rate-limited."""
+    try:
+        import os
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+        from agents.alpaca_broker import _dclient
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        req = StockBarsRequest(
+            symbol_or_symbols=ticker,
+            timeframe=TimeFrame(5, TimeFrameUnit.Minute),
+            start=today_start,
+        )
+        resp = _dclient().get_stock_bars(req)
+        bars = (resp.data.get(ticker) or []) if hasattr(resp, "data") else []
+        if len(bars) < 6:
+            return None
+        df = pd.DataFrame([{
+            "open": b.open, "high": b.high, "low": b.low,
+            "close": b.close, "volume": b.volume,
+        } for b in bars], index=pd.DatetimeIndex([b.timestamp for b in bars]))
+        df.index = pd.to_datetime(df.index)
+        return df
+    except Exception:
+        return None
+
+
 def _intraday_bars(ticker: str) -> pd.DataFrame | None:
-    """Fetch today's 5-min bars. Returns None if market is closed or fewer than 6 bars."""
+    """Fetch today's 5-min bars. Returns None if market is closed or fewer than 6 bars.
+    Tries yfinance first; falls back to Alpaca when yfinance is rate-limited."""
     try:
         df = yf.download(ticker, period="1d", interval="5m", progress=False, auto_adjust=True)
         if df is None or df.empty:
-            return None
+            raise ValueError("empty")
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [c[0].lower() for c in df.columns]
         else:
             df.columns = [c.lower() for c in df.columns]
         df.index = pd.to_datetime(df.index)
         today_bars = df[df.index.date == date.today()]
-        return today_bars if len(today_bars) >= 6 else None
+        if len(today_bars) >= 6:
+            return today_bars
     except Exception:
-        return None
+        pass
+    return _intraday_bars_alpaca(ticker)
 
 
 def _intraday_signals(ticker: str) -> dict:
@@ -70,18 +100,14 @@ def _intraday_signals(ticker: str) -> dict:
 def _fetch_alpaca(ticker: str) -> tuple[dict, pd.DataFrame | None]:
     """Alpaca daily bars fallback — used when yfinance is rate-limited."""
     try:
-        import os
-        from alpaca.data.historical import StockHistoricalDataClient
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
-        data_client = StockHistoricalDataClient(
-            api_key=os.environ.get("ALPACA_API_KEY"),
-            secret_key=os.environ.get("ALPACA_SECRET_KEY"),
-        )
+        from agents.alpaca_broker import _dclient
         start = datetime.utcnow() - timedelta(days=100)
         req = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Day, start=start)
-        bars = data_client.get_stock_bars(req)[ticker]
-        if not bars or len(bars) < 20:
+        resp = _dclient().get_stock_bars(req)
+        bars = (resp.data.get(ticker) or []) if hasattr(resp, "data") else []
+        if len(bars) < 20:
             return {}, None
         df = pd.DataFrame([{
             "open": b.open, "high": b.high, "low": b.low,
@@ -92,6 +118,26 @@ def _fetch_alpaca(ticker: str) -> tuple[dict, pd.DataFrame | None]:
         return info, df
     except Exception:
         return {}, None
+
+
+def _get_market_context() -> dict:
+    """Fetch SPY intraday performance once per scan for the market momentum signal."""
+    try:
+        from alpaca.data.requests import StockSnapshotRequest
+        from agents.alpaca_broker import _dclient
+        req   = StockSnapshotRequest(symbol_or_symbols=["SPY"])
+        snaps = _dclient().get_stock_snapshot(req)
+        spy   = snaps.get("SPY")
+        if not spy or not spy.daily_bar:
+            return {}
+        open_px = getattr(spy.daily_bar, "open", None)
+        price   = getattr(spy.latest_trade, "price", None) or getattr(spy.daily_bar, "close", None)
+        if open_px and price and float(open_px) > 0:
+            spy_pct = (float(price) - float(open_px)) / float(open_px) * 100
+            return {"spy_pct": round(spy_pct, 2)}
+    except Exception:
+        pass
+    return {}
 
 
 def _fetch(ticker: str) -> tuple[dict, pd.DataFrame | None]:
@@ -111,7 +157,7 @@ def _fetch(ticker: str) -> tuple[dict, pd.DataFrame | None]:
     return _fetch_alpaca(ticker)
 
 
-def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False) -> dict:
+def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, market_ctx: dict | None = None) -> dict:
     close  = df["close"]
     volume = df["volume"]
     signals = []
@@ -190,6 +236,13 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False) -
             score -= 1; signals.append("Extended >12% above SMA20 — mean-reversion risk")
             breakout_freshness = "EXTENDED"
 
+    # Market momentum: +1 if SPY up >1% (broad tape reinforces bullish setups)
+    if market_ctx:
+        spy_pct = market_ctx.get("spy_pct", 0)
+        if spy_pct >= 1.0 and score > 0:
+            score += 1
+            signals.append(f"Market tailwind: SPY +{spy_pct:.1f}%")
+
     return {
         "technical_score": max(-10, min(10, score)),
         "signals": signals,
@@ -216,7 +269,7 @@ def _passes_filters(info: dict, price: float) -> bool:
     return price >= MIN_PRICE and avg_vol >= MIN_AVG_VOLUME
 
 
-def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
+def _scan_ticker(ticker: str, skip_volume_surge: bool = False, market_ctx: dict | None = None) -> dict | None:
     info, df = _fetch(ticker)
     if df is None:
         return None
@@ -226,7 +279,7 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
     latest_date = df.index[-1].date() if hasattr(df.index[-1], "date") else None
     if latest_date and latest_date < date.today() - timedelta(days=7):
         return None
-    tech = _technical(ticker, df, skip_volume_surge=skip_volume_surge)
+    tech = _technical(ticker, df, skip_volume_surge=skip_volume_surge, market_ctx=market_ctx)
     price = tech["price"]
     if not _passes_filters(info, price):
         return None
@@ -293,10 +346,11 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False) -> dict | None:
 
 
 def run_scan(universe=None, skip_volume_surge: bool = False) -> list[dict]:
-    tickers = universe if universe is not None else UNIVERSE
+    tickers    = universe if universe is not None else UNIVERSE
+    market_ctx = _get_market_context()
     candidates = []
     with ThreadPoolExecutor(max_workers=20) as executor:
-        futs = {executor.submit(_scan_ticker, t, skip_volume_surge): t for t in tickers}
+        futs = {executor.submit(_scan_ticker, t, skip_volume_surge, market_ctx): t for t in tickers}
         for fut in as_completed(futs):
             result = fut.result()
             if result is not None:
