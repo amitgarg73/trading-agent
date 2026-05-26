@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.22 · **Updated:** 2026-05-26
+**Version:** v5.23 · **Updated:** 2026-05-26
 
 ---
 
@@ -48,7 +48,7 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 | **1.75 Pre-filter** | Drops bearish candidates (score < `PREMARKET_MIN_SCORE` = 5). Higher bar than intraday (4) because premarket candidates haven't proved today's move yet. Reduces Claude input tokens by ~60%. |
 | **1.76 ML Scoring** | Predicts P(stock hits +2% intraday). Re-ranks candidates by ML score. |
 | **1.8 Live Prices** | Refreshes entry prices from Alpaca ask quotes (Alpaca mode only). |
-| **1.85 VWAP Signals** | Enriches candidates with VWAP position, today's % change, RS vs SPY. |
+| **1.85 VWAP Signals** | Enriches candidates with VWAP position, today's % change, RS vs SPY. In Alpaca mode: Alpaca snapshot API. In simulation mode: yfinance batch download (all candidates + SPY, last 2 trading days) computes `today_pct_change` and `rs_vs_spy` for each candidate so simulation rankings match live behavior. |
 | **2. Strategy (Claude)** | Selects trades, assigns confidence (HIGH/MEDIUM/LOW), sets entry/target/stop using fixed formulas. |
 | **3. Risk Validation** | Enforces R:R floor, position size bounds, max loss per trade. Quiet day: R:R floor drops to 2.0. |
 | **3.5 Sector Guard** | Caps exposure at 3 positions per sector. |
@@ -58,7 +58,7 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 
 ### 3.2 Intraday — Every 15 min, 10:00 AM–3:45 PM ET
 
-- **Reconcile:** Detects positions closed by Alpaca bracket (stop/target fired). Records real exit price and P&L. `_reconcile_with_alpaca()` in `agents/intraday.py` fetches with `limit=500` and `after=today_start` to prevent UNFILLED misclassification on busy days.
+- **Reconcile:** Detects positions closed by Alpaca bracket (stop/target fired). Records real exit price and P&L. `_reconcile_with_alpaca()` in `agents/intraday.py` fetches with `limit=500` and `after=today_start` to prevent UNFILLED misclassification on busy days. Three passes per cycle: (1) fill_price backfill — positions with `fill_price=NULL` are matched to their filled buy order and updated; (2) stale order cancellation — pending buy orders older than 5 minutes are cancelled via Alpaca and marked UNFILLED in DB; (3) main reconcile — classifies each open position as TARGET/STOP/NATIVE_TRAIL/UNFILLED based on Alpaca order state. The stale order pass prevents momentum stocks from accumulating phantom orders when the stock moves past the limit before Alpaca fills.
 - **Intraday scan guards (checked in order):**
   - UTC hour in window, max `INTRADAY_SCAN_MAX_RUNS` runs, min interval since last run
   - Open position count below `MAX_POSITIONS` (15)
@@ -69,7 +69,8 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 - **Approved trades** pass through sector guard (MAX_PER_SECTOR cap) and ATR sizer before `open_positions`.
 - **Hard stop safety net:** If `current_price < stop_loss` and the position is still in Alpaca after a 5-minute grace period, `portfolio.refresh_positions()` forces a market close via `close_position()`. Prevents positions that slip through the bracket order from bleeding beyond the stop.
 - **Phantom STOP prevention:** When a position disappears from Alpaca with no fill price, it is classified as UNFILLED ($0 P&L) instead of STOP. Prevents the exit count and P&L statistics from being distorted by entries that never executed.
-- **Refresh:** Syncs current price and unrealized P&L for open positions.
+- **Confidence stored on open:** When a new position is written to DB, the `confidence` field (HIGH/MEDIUM/LOW) from the strategy agent is stored on the position row. Enables win-rate analysis sliced by confidence tier after the eval gate.
+- **Refresh:** Syncs current price and unrealized P&L for open positions. In simulation mode, STOP exits close at `eff_stop` (the actual trail stop price), not the yfinance poll price — prevents gap-down losses from overstating P&L impact relative to what the real stop would have caught.
 - **Lock-in logic:** Tier 1 ($716 realized) — let winners ride. Tier 2 ($1,000 total) — close everything.
 
 ### 3.3 EOD — 4:30 PM ET
@@ -163,7 +164,7 @@ Five independent layers, applied in sequence:
 | **Sector Guard** | > 3 positions in any single sector (premarket and intraday scans) |
 | **ATR Sizer** | Drops trades where ATR stop ≥ target (R:R < 1); applies ORB halving on choppy opens |
 | **Guardrails** | Duplicates, price sanity (primary: >3% from live market; secondary: entry >25% from 30d historical avg to catch corrupted scanner data where both live price and entry are wrong), daily loss limit (-$500 net P&L) |
-| **Fill Poll** | `submit_bracket_order` polls 15 s for fill confirmation; returns (None, None) on rejection so phantom positions are never written to DB |
+| **Fill Poll** | `submit_bracket_order` polls 30 s (15 × 2 s) for fill confirmation; returns (None, None) on rejection so phantom positions are never written to DB. Positions still showing `fill_price=NULL` after entry are backfilled during the next reconcile cycle. |
 
 ### 5.1 Quiet Day Mode
 
@@ -305,6 +306,7 @@ Streamlit Dashboard
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v5.23** | 2026-05-26 | Five structural accuracy fixes: (1) Simulation STOP exits now close at `eff_stop` (the trail stop price), not the yfinance poll price — fixes gap-down P&L overstatement; (2) Fill poll extended from 5s to 30s (15 × 2s); fill_price backfill added to reconcile for positions still showing NULL; (3) Stale order detection in `_reconcile_with_alpaca` — pending buy orders >5min are cancelled and marked UNFILLED, preventing momentum stocks from accumulating dead limit orders; (4) `confidence` (HIGH/MEDIUM/LOW) now stored on position row at open — enables confidence-slice win rate analysis; (5) Simulation premarket enrichment — yfinance batch download computes `rs_vs_spy` and `today_pct_change` in simulation mode so candidate rankings match live behavior |
 | **v5.22** | 2026-05-26 | Six root-cause fixes: (1) `MAX_DAILY_ENTRIES=12` hard cap on total daily positions — prevents 50-position blowups when stops free concurrent slots mid-day; (2) Sector conviction prompt — live sector ETF performance injected into strategy call so Claude prioritizes hot sectors and avoids weak ones; (3) Hard stop safety net — `portfolio.refresh_positions()` force-closes via `close_position()` if price < stop_loss after 5-min grace; (4) 30d historical avg secondary sanity — cross-checks entry against yfinance 30d mean to catch corrupted scanner data (MU at $907 vs actual ~$115); (5) Phantom STOP reclassification — positions without fill_price marked UNFILLED (not STOP) at EOD and during portfolio refresh; (6) Split min-score: `PREMARKET_MIN_SCORE=5` vs `STRATEGY_MIN_SCORE=4` — intraday bar is lower because live momentum signals provide extra confirmation |
 | **v5.21** | 2026-05-23 | Structural gap fixes: (1) Gap 1 — Anthropic retry: 3-attempt with 15/30/45 s backoff in `agents/strategy.py`; (2) Gap 2 — bracket exit reconciliation: `agents/intraday.py` `_reconcile_with_alpaca()` now calls `get_order_fill()` on filled_buys and writes close price + P&L to DB; (3) Gap 5 — EOD dedup guard (`run_eod_started` check in `scan_results`); intraday guard skips if no premarket scan today; (4) Gap 6 — `core/alerts.py` (Gmail SMTP); `_log_run()` writes start/complete/failed records; EOD alerts on crash or unclosed positions; `from __future__ import annotations` for Python 3.9 compat |
 | **v5.20** | 2026-05-23 | Friction gap reconciliation: `STRATEGY_TAG="a"` in settings; bracket orders tagged `strata_{ticker}_{ts}`; `_alpaca_order_pnl()` in performance.py computes per-strategy P&L from Alpaca order history; `friction_gap` now meaningful (per-strategy, not combined A+B equity) |
