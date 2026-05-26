@@ -179,10 +179,8 @@ def submit_bracket_order(
     side = OrderSide.BUY if action == "BUY" else OrderSide.SELL
 
     if use_native_trail:
-        stop_loss_req = StopLossRequest(trail_percent=round(trail_pct * 100, 4))
-        print(f"        📍 Native trail: {ticker} @ {trail_pct*100:.1f}% real-time Alpaca trail")
-    else:
-        stop_loss_req = StopLossRequest(stop_price=round(stop_price, 2))
+        print(f"        ⚠️  Native trail requested for {ticker} but not supported by StopLossRequest — using fixed stop")
+    stop_loss_req = StopLossRequest(stop_price=round(stop_price, 2))
 
     req = MarketOrderRequest(
         symbol=ticker,
