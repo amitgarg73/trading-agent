@@ -197,7 +197,7 @@ def submit_bracket_order(
     order = _client().submit_order(req)
     print(f"        Limit order: {ticker} {shares} shares @ ${limit_px} → {order.id}")
 
-    for i in range(120):
+    for i in range(5):
         time.sleep(1)
         try:
             o = _client().get_order_by_id(str(order.id))
@@ -211,8 +211,10 @@ def submit_bracket_order(
         except Exception:
             pass
 
-    print(f"        ⚠️ {ticker} — could not confirm fill after 120s — blocking DB write")
-    return None, None
+    # Paper trading fills can take several minutes — record position immediately with
+    # order_id so intraday reconciliation can update fill_price when it confirms.
+    print(f"        ⏳ {ticker} — fill pending, recording position for intraday reconciliation")
+    return str(order.id), None
 
 
 def get_open_tickers() -> set:
