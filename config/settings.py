@@ -33,7 +33,9 @@ PRICE_SANITY_PCT     = 0.03       # reject if entry price is >3% from live marke
 DAILY_LOCK_IN_TARGET = 716        # Tier 1: realized P&L floor — stop closing positions, let winners ride
 DAILY_BONUS_TARGET   = 1_000     # Tier 2: realized+unrealized total — close everything, protect exceptional day
 LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions after Tier 1 (simulation only)
-TRAIL_PCT                   = 0.01        # Trailing stop: close if price drops 1% from highest seen since entry
+TRAIL_PCT                   = 0.015       # Trailing stop: close if price drops 1.5% from highest seen since entry (widened from 1% — 1% fired on normal chop before capturing the move)
+INTRADAY_STOP_PCT           = 0.01        # Intraday entry stop: 1% below entry (replaces fixed 0.67% — survives normal chop on 2-4% ATR stocks)
+ENTRY_BUFFER_PCT            = 0.003       # Limit order buffer above plan price: 0.3% (was hardcoded 0.2% — wider to cut 44% unfill rate)
 PARTIAL_PROFIT_ENABLED      = True        # partial exit at 1% move locks in half the position
 PARTIAL_PROFIT_PCT          = 0.01        # 1% partial exit — locks in half the position on a smaller move
 INTRADAY_SCAN_UTC_START         = 14          # 10:00 AM ET (after premarket finishes)
@@ -41,7 +43,7 @@ INTRADAY_SCAN_UTC_END           = 20          # outer scheduling window end
 INTRADAY_ENTRY_CUTOFF_UTC       = 19          # 3:00 PM ET hard entry cutoff; late entries are negative EV
 INTRADAY_SCAN_MAX_RUNS          = 20          # */15 cron: up to 20 slots across 14:00-19:00 UTC
 INTRADAY_SCAN_MIN_INTERVAL_MINS = 12          # 12 min minimum — matches */15 cron with buffer for GH Actions delay
-INTRADAY_TARGET_PCT             = 0.015       # 1.5% target for intraday entries — gives 2.2:1 R:R with 0.67% fixed stop
+INTRADAY_TARGET_PCT             = 0.02        # 2% target for intraday entries — gives 2:1 R:R with new 1% stop (raised from 1.5%)
 MIN_INTRADAY_MOVE_PCT           = 2.5         # minimum % move today to qualify as momentum candidate (lowered from 4.0 — catch early movers)
 MIN_INTRADAY_VOLUME_RATIO       = 0.3         # minimum volume ratio for intraday entries — blocks illiquid noise
 MAX_INTRADAY_RANGE_PCT          = 5.0         # block stocks where avg(H-L)/Open > 5% — too volatile for 0.67% stop
@@ -49,6 +51,7 @@ MAX_SPREAD_PCT                  = 0.005       # 0.5% max bid-ask spread — wide
 MAX_PREMARKET_GAP_PCT           = 0.15        # 15% hard cap — gap-and-go stocks (8-15%) qualify if above VWAP + volume confirms
 GAP_AND_GO_VOLUME_MIN           = 1.5         # gap-and-go qualifier: volume ratio must be >= this (high conviction)
 STRONG_SECTOR_THRESHOLD         = 2.0         # sector ETF up >= this % → neutralise overbought/extended penalties for stocks in that sector
+WEAK_SECTOR_THRESHOLD           = -1.0        # sector ETF down >= 1% → apply -1 score penalty (avoids MPC/XLE-type picks on sector-down days)
 MAX_ATR_PCT                     = 5.0         # skip stocks with ATR% > this — ATR sizer would produce R:R < 1
 STRATEGY_TAG                    = "a"         # prefix on every Alpaca client_order_id — enables per-strategy order filtering
 LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed

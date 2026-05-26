@@ -10,8 +10,8 @@ from config.settings import (
     MAX_POSITIONS, DAILY_LOSS_LIMIT,
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END, INTRADAY_ENTRY_CUTOFF_UTC,
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
-    INTRADAY_TARGET_PCT, MIN_INTRADAY_MOVE_PCT, STRATEGY_MIN_SCORE, UNIVERSE,
-    TOTAL_CAPITAL, MAX_PER_SECTOR,
+    INTRADAY_TARGET_PCT, INTRADAY_STOP_PCT, MIN_INTRADAY_MOVE_PCT,
+    STRATEGY_MIN_SCORE, UNIVERSE, TOTAL_CAPITAL, MAX_PER_SECTOR,
 )
 
 
@@ -286,7 +286,7 @@ def _maybe_run_intraday_scan(broker: str):
             f"{mkt.get('summary', '')}\n\n"
             f"INTRADAY SCAN #{run_num}: Focus on momentum plays already moving today. "
             f"Prefer stocks with today_pct_change > {int(MIN_INTRADAY_MOVE_PCT)}% and rs_vs_spy > 1.5. "
-            f"Use ATR-based stops (0.5% floor) and {int(INTRADAY_TARGET_PCT * 100)}% intraday targets."
+            f"Set stop ~1% below entry and target ~{int(INTRADAY_TARGET_PCT * 100)}% above entry."
         )
         strategy_out = strategy.run(merged, market_summary=market_note,
                                     max_positions=strategy_slots)
@@ -318,9 +318,14 @@ def _maybe_run_intraday_scan(broker: str):
                 print(f"  📊 Sector guard: {t['ticker']} blocked — {sector} at {MAX_PER_SECTOR} limit")
         approved = sector_passed
 
-        # ATR sizer intentionally skipped for intraday entries.
-        # ATR stops (0.8×ATR ≈ 3-4% for momentum stocks) are wider than the 1.5% intraday
-        # target, which kills R:R. Intraday uses the fixed 0.67% stop from risk.py instead.
+        # ATR sizer skipped for intraday. Instead apply INTRADAY_STOP_PCT (1%) override:
+        # Claude sets 0.67% stop (MAX_LOSS_PER_TRADE default). We widen to 1% here so
+        # normal intraday chop on 2-4% ATR stocks doesn't fire the stop before the move.
+        # Target is already capped at INTRADAY_TARGET_PCT (2%) by _cap_intraday_targets().
+        for t in approved:
+            entry = t.get("entry_price", 0)
+            if entry > 0 and t.get("signal_type") == "INTRADAY_MOMENTUM":
+                t["stop_loss"] = round(entry * (1 - INTRADAY_STOP_PCT), 2)
 
         if not approved:
             print("  📊 Intraday scan: all trades rejected by risk/sector")

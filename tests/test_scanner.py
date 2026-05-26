@@ -763,6 +763,36 @@ class TestMarketMomentumSignal:
         r2 = _technical("TEST", df)
         assert r1["technical_score"] == r2["technical_score"]
 
+    def test_weak_sector_applies_penalty(self):
+        """Stock in sector ETF down >= 1% should receive -1 score penalty."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        from config.settings import WEAK_SECTOR_THRESHOLD
+        df = make_price_df(trend=0.005)
+        # spy_pct=1.0: strong tape neutralises overbought/extended penalties → positive base score
+        ctx_flat   = {"spy_pct": 1.0, "sector_pct": {"XLE": 0.0}}
+        ctx_weak   = {"spy_pct": 1.0, "sector_pct": {"XLE": WEAK_SECTOR_THRESHOLD - 0.5}}
+        flat_score = _technical("TEST", df, skip_volume_surge=True,
+                                market_ctx=ctx_flat, ticker_sector="Energy")
+        weak_score = _technical("TEST", df, skip_volume_surge=True,
+                                market_ctx=ctx_weak, ticker_sector="Energy")
+        assert weak_score["technical_score"] < flat_score["technical_score"]
+        assert any("headwind" in s.lower() for s in weak_score["signals"])
+
+    def test_weak_sector_no_penalty_when_score_zero_or_negative(self):
+        """Headwind penalty only fires when score > 0 — no double-punishing bad setups."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        from config.settings import WEAK_SECTOR_THRESHOLD
+        # trend=0.005, default volatility: overbought RSI + upper BB cancel MACD bullish → score=0
+        # (verified: make_price_df(trend=0.005) produces score=0 with spy_pct=0.3)
+        df = make_price_df(trend=0.005)
+        ctx_weak = {"spy_pct": 0.3, "sector_pct": {"XLE": WEAK_SECTOR_THRESHOLD - 0.5}}
+        result = _technical("TEST", df, skip_volume_surge=True,
+                            market_ctx=ctx_weak, ticker_sector="Energy")
+        assert result["technical_score"] == 0
+        assert not any("headwind" in s.lower() for s in result["signals"])
+
 
 # ── run_scan passes market_ctx to each ticker ─────────────────────────────────
 

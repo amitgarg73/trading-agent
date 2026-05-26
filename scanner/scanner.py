@@ -14,7 +14,7 @@ from config.settings import (
     MIN_VOLUME_RATIO, MIN_PRICE, MIN_AVG_VOLUME, SCORE_THRESHOLD,
     LARGE_CAP_AVG_VOLUME, LARGE_CAP_VOLUME_RATIO, MAX_INTRADAY_RANGE_PCT,
     MAX_SPREAD_PCT, MAX_PREMARKET_GAP_PCT, MAX_ATR_PCT,
-    STRONG_SECTOR_THRESHOLD, GAP_AND_GO_VOLUME_MIN,
+    STRONG_SECTOR_THRESHOLD, WEAK_SECTOR_THRESHOLD, GAP_AND_GO_VOLUME_MIN,
 )
 
 # Maps yfinance sector labels → SPDR sector ETF tickers
@@ -198,6 +198,7 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, m
     sector_etf = _SECTOR_ETF_MAP.get(ticker_sector, "") if ticker_sector else ""
     sector_pct_today = (market_ctx or {}).get("sector_pct", {}).get(sector_etf, 0) if sector_etf else 0
     strong_sector_day = sector_pct_today >= STRONG_SECTOR_THRESHOLD
+    weak_sector_day   = bool(sector_etf and sector_pct_today <= WEAK_SECTOR_THRESHOLD)
     strong_tape = strong_day or strong_sector_day
 
     # RSI
@@ -288,6 +289,10 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, m
         elif strong_sector_day and not strong_day and score > 0:
             score += 1
             signals.append(f"Sector tailwind: {sector_etf} +{sector_pct_today:.1f}%")
+
+        if weak_sector_day and score > 0:
+            score -= 1
+            signals.append(f"Sector headwind: {sector_etf} {sector_pct_today:+.1f}%")
 
     return {
         "technical_score": max(-10, min(10, score)),

@@ -20,7 +20,7 @@ class TestTrailStopMath:
     def test_trail_stop_from_entry(self):
         entry = 100.0
         eff_stop = round(entry * (1 - TRAIL_PCT), 4)
-        assert eff_stop == pytest.approx(entry * 0.99, abs=0.01)
+        assert eff_stop == pytest.approx(entry * 0.985, abs=0.01)  # TRAIL_PCT=0.015
 
     def test_trail_stop_ratchets_up_with_price(self):
         entry = 100.0
@@ -125,11 +125,11 @@ class TestRefreshPositionsSimulation:
 
     def test_trail_stop_hit_when_price_falls_from_peak(self):
         """
-        Peak 104, trail 1% → stop = 102.96. Price = 102.5 → below trail → STOP.
+        Peak 104, trail 1.5% → stop = 102.44. Price = 102.0 → below trail → STOP.
         """
         pos = [make_position(entry=100.0, stop=99.33, target=106.0,
                              shares=60, high_watermark=104.0)]
-        result, _ = self._run_refresh(pos, price=102.5)
+        result, _ = self._run_refresh(pos, price=102.0)
         assert result[0]["close_reason"] == "STOP"
 
 

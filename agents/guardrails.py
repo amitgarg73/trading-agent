@@ -86,12 +86,18 @@ def filter_trades(approved_trades: list, broker: str = "simulation",
 
     committed_capital = 0.0  # cumulative position sizes approved in this batch
 
-    # Check 3: Build open-ticker set (open positions + already traded today)
+    # Check 3: Build traded-today set.
+    # Uses opened_at (when we created the position) not closed_at — catches stocks that
+    # were stopped out and re-queued in the same scan batch (parallel run race condition),
+    # and blocks same-day re-entry after a stop without waiting for the next reconcile cycle.
     today_str = date.today().isoformat()
-    open_pos = db.select("positions", filters={"status": "OPEN"})
-    closed_today = db.select("positions", filters={"status": "CLOSED"})
-    closed_today = [p for p in closed_today if (p.get("closed_at") or "").startswith(today_str)]
-    traded_today = set(p["ticker"] for p in open_pos) | set(p["ticker"] for p in closed_today)
+    open_pos  = db.select("positions", filters={"status": "OPEN"})
+    all_pos   = db.select("positions")
+    traded_today = {
+        p["ticker"] for p in all_pos
+        if p.get("status") == "OPEN"
+        or (p.get("opened_at") or "").startswith(today_str)
+    }
 
     passed, blocked = [], []
     for trade in approved_trades:

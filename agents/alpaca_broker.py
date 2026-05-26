@@ -182,7 +182,8 @@ def submit_bracket_order(
         print(f"        ⚠️  Native trail requested for {ticker} but not supported by StopLossRequest — using fixed stop")
     stop_loss_req = StopLossRequest(stop_price=round(stop_price, 2))
 
-    limit_px = round(entry_price * 1.002, 2)  # 0.2% above plan price — ensures fill when market ≥ entry
+    from config.settings import ENTRY_BUFFER_PCT
+    limit_px = round(entry_price * (1 + ENTRY_BUFFER_PCT), 2)  # buffer above plan price — widens fill window on fast-moving stocks
     req = LimitOrderRequest(
         symbol=ticker,
         qty=shares,

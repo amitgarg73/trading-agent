@@ -19,10 +19,12 @@ def _run(trades, *, today_pnl=0.0, open_pos=None, closed_today=None,
     open_pos     = open_pos or []
     closed_today = closed_today or []
 
+    all_pos = open_pos + closed_today
     with patch("agents.guardrails._today_realized_pnl", return_value=today_pnl), \
          patch("agents.guardrails._current_price", return_value=market_price), \
          patch("core.db.select", side_effect=lambda table, **kw: (
-             open_pos if table == "positions" and kw.get("filters", {}).get("status") == "OPEN"
+             open_pos  if table == "positions" and kw.get("filters", {}).get("status") == "OPEN"
+             else all_pos if table == "positions" and not kw.get("filters")
              else closed_today
          )):
         return filter_trades(
@@ -125,6 +127,14 @@ class TestDuplicateGuard:
         open_pos = [make_position("AAPL")]
         result = _run([make_trade("MSFT")], open_pos=open_pos)
         assert len(result["approved_trades"]) == 1
+
+    def test_stopped_out_and_reopened_today_blocked(self):
+        # Position was opened AND closed today (stop hit) — re-entry must be blocked
+        # even if it no longer appears in open_pos (parallel-run / same-day re-entry guard)
+        closed = [make_position("AAPL", status="CLOSED")]  # opened_at = today
+        result = _run([make_trade("AAPL")], open_pos=[], closed_today=closed)
+        assert len(result["approved_trades"]) == 0
+        assert "Duplicate" in result["guardrail_blocked"][0]["reason"]
 
 
 # ── Price sanity ─────────────────────────────────────────────────────────────
