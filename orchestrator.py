@@ -15,7 +15,9 @@ from agents.portfolio import open_positions
 from agents.intraday import run as run_intraday
 from core import db, ledger
 from core.alerts import send_alert
-from config.settings import UNIVERSE, STRATEGY_MIN_SCORE, TOTAL_CAPITAL, MAX_POSITIONS, POSITION_SIZE_BY_CONFIDENCE, STRATEGY_TAG
+from config.settings import (UNIVERSE, STRATEGY_MIN_SCORE, PREMARKET_MIN_SCORE, TOTAL_CAPITAL,
+                             MAX_POSITIONS, POSITION_SIZE_BY_CONFIDENCE, STRATEGY_TAG,
+                             STRONG_SECTOR_THRESHOLD, WEAK_SECTOR_THRESHOLD)
 from agents import alpaca_broker
 
 
@@ -249,15 +251,14 @@ def premarket(broker: str = "simulation"):
         print("        All candidates blocked (earnings). No trades today.")
         return
 
-    # 1.75 Strategy pre-filter — trim to bullish candidates above STRATEGY_MIN_SCORE.
-    # Reduces Claude input tokens by ~60-70% without meaningful loss of trade quality.
-    # See config/settings.py STRATEGY_MIN_SCORE for full tradeoff documentation.
+    # 1.75 Strategy pre-filter — trim to bullish candidates above PREMARKET_MIN_SCORE.
+    # Higher bar than intraday (5 vs 4) — premarket candidates haven't proved today's move yet.
     pre_filter_count = len(candidates)
-    candidates = [c for c in candidates if c.get("technical_score", 0) >= STRATEGY_MIN_SCORE]
+    candidates = [c for c in candidates if c.get("technical_score", 0) >= PREMARKET_MIN_SCORE]
     post_prefilter_count = len(candidates)
     if post_prefilter_count < pre_filter_count:
         print(f"[ 1.75/4 ] Strategy pre-filter: {pre_filter_count} → {post_prefilter_count} candidates "
-              f"(score ≥ {STRATEGY_MIN_SCORE})")
+              f"(score ≥ {PREMARKET_MIN_SCORE})")
 
     if not candidates:
         print("        No candidates above strategy threshold. No trades today.")
@@ -281,11 +282,15 @@ def premarket(broker: str = "simulation"):
     above_vwap_count = 0
 
     # 1.8 + 1.85 Live price refresh and intraday signals — run concurrently (Alpaca only).
+    # Also fetch sector ETF signals to build sector conviction guidance for Claude.
+    _SECTOR_ETFS = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLC", "XLY", "XLP", "XLB", "XLRE", "XLU"]
+    intraday_sigs = {}
     if broker == "alpaca":
         tickers = [c["ticker"] for c in candidates]
+        signal_tickers = list(set(tickers + _SECTOR_ETFS))
         with ThreadPoolExecutor(max_workers=2) as executor:
             f_prices  = executor.submit(alpaca_broker.get_live_prices, tickers)
-            f_signals = executor.submit(alpaca_broker.get_intraday_signals, tickers)
+            f_signals = executor.submit(alpaca_broker.get_intraday_signals, signal_tickers)
             live          = f_prices.result()
             intraday_sigs = f_signals.result()
 
@@ -318,6 +323,22 @@ def premarket(broker: str = "simulation"):
     full_market_summary = mkt["summary"]
     if intel["news_context"]:
         full_market_summary += "\n\n" + intel["news_context"]
+
+    # Sector conviction guidance — tell Claude which sectors are hot/weak today
+    sector_perf = {etf: intraday_sigs[etf]["today_pct_change"]
+                   for etf in _SECTOR_ETFS if etf in intraday_sigs}
+    if sector_perf:
+        ranked = sorted(sector_perf.items(), key=lambda x: -x[1])
+        perf_lines = "  ".join(f"{etf} {pct:+.1f}%" for etf, pct in ranked)
+        hot  = [etf for etf, pct in sector_perf.items() if pct >= STRONG_SECTOR_THRESHOLD]
+        weak = [etf for etf, pct in sector_perf.items() if pct <= WEAK_SECTOR_THRESHOLD]
+        sector_guidance = f"\n\nSECTOR ETF PERFORMANCE TODAY: {perf_lines}"
+        if hot:
+            sector_guidance += f"\nHOT sectors (≥+{STRONG_SECTOR_THRESHOLD}%): {', '.join(hot)} — prioritize stocks from these sectors."
+        if weak:
+            sector_guidance += f"\nWEAK sectors (≤{WEAK_SECTOR_THRESHOLD}%): {', '.join(weak)} — max 1 pick each; avoid if alternatives exist."
+        full_market_summary += sector_guidance
+        print(f"        Sector guidance: hot={hot or 'none'} weak={weak or 'none'}")
 
     strategy_out = strategy.run(candidates, market_summary=full_market_summary,
                                 max_positions=today_max_positions)
@@ -497,6 +518,22 @@ def eod(broker: str = "simulation"):
     _log_run("eod", "started")
 
     try:
+        # Fix 6: Reclassify phantom STOPs — positions where entry never filled (fill_price NULL)
+        # but were labelled STOP instead of UNFILLED. Prevents them from inflating stop rate
+        # and incorrectly contributing to daily loss limit checks.
+        phantoms = [
+            p for p in db.select("positions", filters={"status": "CLOSED"})
+            if p.get("close_reason") == "STOP"
+            and p.get("fill_price") is None
+            and (p.get("realized_pnl") or 0) == 0
+            and (p.get("opened_at") or "").startswith(today_iso)
+        ]
+        if phantoms:
+            for p in phantoms:
+                db.update("positions", {"id": p["id"]}, {"close_reason": "UNFILLED"})
+            print(f"  🔧 Reclassified {len(phantoms)} phantom STOP(s) → UNFILLED: "
+                  f"{[p['ticker'] for p in phantoms]}")
+
         # Alert if there are open positions that the close step should handle
         open_before = db.select("positions", filters={"status": "OPEN"})
 

@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime as real_datetime, datetime, date
 from config.settings import (
-    MAX_POSITIONS, DAILY_LOSS_LIMIT, DAILY_BONUS_TARGET,
+    MAX_POSITIONS, MAX_DAILY_ENTRIES, DAILY_LOSS_LIMIT, DAILY_BONUS_TARGET,
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END,
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
     INTRADAY_TARGET_PCT,
@@ -37,15 +37,16 @@ def _make_prior_scan(minutes_ago: float = INTRADAY_SCAN_MIN_INTERVAL_MINS + 1) -
 
 
 def _run_scan(hour=WINDOW_HOUR, prior_scans=None, open_rows=None, closed_rows=None,
-              candidates=None, trades=None, approved=None, opened_count=1,
-              momentum_candidates=None):
+              all_today_rows=None, candidates=None, trades=None, approved=None,
+              opened_count=1, momentum_candidates=None):
     """
     Run _maybe_run_intraday_scan with full pipeline mocked.
     Returns the function result and the mock_open_positions call args.
     """
-    prior_scans  = prior_scans  or []
-    open_rows    = open_rows    if open_rows    is not None else []
-    closed_rows  = closed_rows  if closed_rows  is not None else []
+    prior_scans    = prior_scans  or []
+    open_rows      = open_rows    if open_rows    is not None else []
+    closed_rows    = closed_rows  if closed_rows  is not None else []
+    all_today_rows = all_today_rows if all_today_rows is not None else open_rows + closed_rows
     candidates   = candidates   if candidates   is not None else [
         {"ticker": "AAPL", "technical_score": 5, "action": "BUY"}
     ]
@@ -66,6 +67,8 @@ def _run_scan(hour=WINDOW_HOUR, prior_scans=None, open_rows=None, closed_rows=No
             return open_rows
         if f.get("status") == "CLOSED":
             return closed_rows
+        if table == "positions" and not f:   # unfiltered — daily_opened count
+            return all_today_rows
         return []
 
     mock_open_positions = MagicMock(return_value=[{"id": f"p{i}"} for i in range(opened_count)])
@@ -138,6 +141,14 @@ class TestIntradayScanGuards:
     def test_skips_if_total_at_bonus_target(self):
         closed_rows = [_make_closed_row(float(DAILY_BONUS_TARGET))]
         result, _ = _run_scan(closed_rows=closed_rows)
+        assert result is None
+
+    def test_skips_if_daily_entry_cap_hit(self):
+        today_rows = [
+            {"opened_at": f"{TODAY}T14:{i:02d}:00", "status": "CLOSED"}
+            for i in range(MAX_DAILY_ENTRIES)
+        ]
+        result, _ = _run_scan(all_today_rows=today_rows)
         assert result is None
 
 

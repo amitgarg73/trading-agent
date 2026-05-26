@@ -17,6 +17,7 @@ DAILY_PROFIT_TARGET  = 500
 MAX_POSITION_PCT     = 0.07       # max 7% of capital per position (fits 15 positions)
 MIN_POSITION_PCT     = 0.05       # min 5% of capital per position
 MAX_POSITIONS        = 15         # max concurrent positions
+MAX_DAILY_ENTRIES    = 12         # hard cap: total new positions opened per calendar day across all scans
 MAX_LOSS_PER_TRADE   = 0.0067     # stop loss: 0.67% of position size (maintains 3:1 R:R with 2% target)
 ATR_STOP_MULTIPLIER  = 0.8        # 0.8× ATR for stop — allows 3-4% ATR stocks to clear 2:1 R:R
 ATR_STOP_FLOOR       = 0.005      # P0: minimum 0.5% stop — never tighter than this
@@ -91,7 +92,8 @@ SCORE_THRESHOLD      = 4          # minimum score to be a scanner candidate (abs
 #
 # NOTE: This filters to score >= STRATEGY_MIN_SCORE (positive), not abs(score).
 #   Bearish candidates (negative scores) are always excluded — correct for a BUY-only system.
-STRATEGY_MIN_SCORE   = 4          # pre-filter before Claude call: only bullish candidates with score ≥ this (trialing 4 vs 5 — see eval gate)
+STRATEGY_MIN_SCORE   = 4          # intraday pre-filter: score ≥ this (intraday has live momentum signals as extra confirmation)
+PREMARKET_MIN_SCORE  = 5          # premarket pre-filter: higher bar — candidates haven't proved today's move yet
 
 # Stock + ETF universe
 # Removed drags: PYPL, META, ARKK, IWM, JPM, IBM, MA, ROOT, PSA, TWLO

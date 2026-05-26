@@ -7,11 +7,12 @@ from agents.portfolio import refresh_positions, close_all_positions
 from core import db, ledger
 from config.settings import (
     DAILY_LOCK_IN_TARGET, DAILY_BONUS_TARGET,
-    MAX_POSITIONS, DAILY_LOSS_LIMIT,
+    MAX_POSITIONS, MAX_DAILY_ENTRIES, DAILY_LOSS_LIMIT,
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END, INTRADAY_ENTRY_CUTOFF_UTC,
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
     INTRADAY_TARGET_PCT, INTRADAY_STOP_PCT, MIN_INTRADAY_MOVE_PCT,
-    STRATEGY_MIN_SCORE, UNIVERSE, TOTAL_CAPITAL, MAX_PER_SECTOR,
+    STRATEGY_MIN_SCORE, STRONG_SECTOR_THRESHOLD, WEAK_SECTOR_THRESHOLD,
+    UNIVERSE, TOTAL_CAPITAL, MAX_PER_SECTOR,
 )
 
 
@@ -216,6 +217,13 @@ def _maybe_run_intraday_scan(broker: str):
         print(f"  📊 Intraday scan skipped: {open_count}/{MAX_POSITIONS} slots full")
         return None
 
+    # Daily entry cap — prevents 50+ positions on high-volatility days where stops free slots quickly
+    all_pos_today = db.select("positions")
+    daily_opened  = sum(1 for p in all_pos_today if (p.get("opened_at") or "").startswith(today))
+    if daily_opened >= MAX_DAILY_ENTRIES:
+        print(f"  📊 Intraday scan skipped: daily entry cap hit ({daily_opened}/{MAX_DAILY_ENTRIES})")
+        return None
+
     realized   = _today_realized_pnl()
     unrealized = sum(p.get("unrealized_pnl", 0) or 0 for p in open_pos)
     total      = realized + unrealized
@@ -229,8 +237,9 @@ def _maybe_run_intraday_scan(broker: str):
         return None
 
     run_num         = len(prior_scans) + 1
-    available_slots = MAX_POSITIONS - open_count
+    available_slots = min(MAX_POSITIONS - open_count, MAX_DAILY_ENTRIES - daily_opened)
     print(f"\n  🔍 Intraday scan #{run_num}: {open_count}/{MAX_POSITIONS} slots used | "
+          f"{daily_opened}/{MAX_DAILY_ENTRIES} daily entries | "
           f"realized ${realized:,.2f} | {available_slots} slot(s) available")
 
     try:
@@ -282,8 +291,26 @@ def _maybe_run_intraday_scan(broker: str):
         ctx_max  = mkt.get("max_positions") or available_slots
         strategy_slots = min(available_slots, ctx_max)
 
+        # Sector conviction guidance — fetch ETF signals to tell Claude which sectors are hot/weak
+        from agents import alpaca_broker as _ab
+        _sector_etfs = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLC", "XLY"]
+        _sector_sigs = _ab.get_intraday_signals(_sector_etfs) if broker == "alpaca" else {}
+        _sector_perf = {etf: _sector_sigs[etf]["today_pct_change"]
+                        for etf in _sector_etfs if etf in _sector_sigs}
+        sector_note = ""
+        if _sector_perf:
+            perf_str = "  ".join(f"{etf} {pct:+.1f}%" for etf, pct in
+                                 sorted(_sector_perf.items(), key=lambda x: -x[1]))
+            _hot  = [e for e, p in _sector_perf.items() if p >= STRONG_SECTOR_THRESHOLD]
+            _weak = [e for e, p in _sector_perf.items() if p <= WEAK_SECTOR_THRESHOLD]
+            sector_note = f"\nSECTOR ETF PERFORMANCE TODAY: {perf_str}"
+            if _hot:
+                sector_note += f"\nHOT sectors (≥+{STRONG_SECTOR_THRESHOLD}%): {', '.join(_hot)} — prioritize these."
+            if _weak:
+                sector_note += f"\nWEAK sectors (≤{WEAK_SECTOR_THRESHOLD}%): {', '.join(_weak)} — max 1 pick each."
+
         market_note = (
-            f"{mkt.get('summary', '')}\n\n"
+            f"{mkt.get('summary', '')}{sector_note}\n\n"
             f"INTRADAY SCAN #{run_num}: Focus on momentum plays already moving today. "
             f"Prefer stocks with today_pct_change > {int(MIN_INTRADAY_MOVE_PCT)}% and rs_vs_spy > 1.5. "
             f"Set stop ~1% below entry and target ~{int(INTRADAY_TARGET_PCT * 100)}% above entry."

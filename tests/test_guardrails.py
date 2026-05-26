@@ -22,6 +22,7 @@ def _run(trades, *, today_pnl=0.0, open_pos=None, closed_today=None,
     all_pos = open_pos + closed_today
     with patch("agents.guardrails._today_realized_pnl", return_value=today_pnl), \
          patch("agents.guardrails._current_price", return_value=market_price), \
+         patch("yfinance.Ticker", side_effect=Exception("yf mocked out")), \
          patch("core.db.select", side_effect=lambda table, **kw: (
              open_pos  if table == "positions" and kw.get("filters", {}).get("status") == "OPEN"
              else all_pos if table == "positions" and not kw.get("filters")
@@ -177,6 +178,36 @@ class TestPriceSanity:
                 filter_trades([make_trade("AAPL")], broker="simulation",
                               universe=["AAPL"])
             mock_price.assert_called_once_with("AAPL")
+
+    def test_historical_avg_sanity_blocks_corrupt_price(self):
+        """Entry 6× above 30d avg (e.g. MU $907 vs $115) must be blocked."""
+        trade = make_trade(entry=900.0)  # corrupt scanner price
+        # Guardrails accesses hist["Close"].mean() — need subscript-style mock
+        mock_hist = MagicMock()
+        mock_hist.empty = False
+        mock_hist.__getitem__.return_value.mean.return_value = 115.0
+        with patch("agents.guardrails._today_realized_pnl", return_value=0.0), \
+             patch("agents.guardrails._current_price", return_value=905.0), \
+             patch("yfinance.Ticker") as mock_yf, \
+             patch("core.db.select", return_value=[]):
+            mock_yf.return_value.history.return_value = mock_hist
+            result = filter_trades([trade], broker="simulation", universe=[trade["ticker"]])
+        assert len(result["approved_trades"]) == 0
+        assert "30d avg" in result["guardrail_blocked"][0]["reason"]
+
+    def test_historical_avg_sanity_passes_normal_price(self):
+        """Normal entry within 25% of 30d avg passes secondary check."""
+        trade = make_trade(entry=102.0)
+        mock_hist = MagicMock()
+        mock_hist.empty = False
+        mock_hist.__getitem__.return_value.mean.return_value = 100.0
+        with patch("agents.guardrails._today_realized_pnl", return_value=0.0), \
+             patch("agents.guardrails._current_price", return_value=102.0), \
+             patch("yfinance.Ticker") as mock_yf, \
+             patch("core.db.select", return_value=[]):
+            mock_yf.return_value.history.return_value = mock_hist
+            result = filter_trades([trade], broker="simulation", universe=[trade["ticker"]])
+        assert len(result["approved_trades"]) == 1
 
 
 # ── Capital check ────────────────────────────────────────────────────────────

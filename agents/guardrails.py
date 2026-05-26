@@ -129,6 +129,21 @@ def filter_trades(approved_trades: list, broker: str = "simulation",
                         f"Price sanity: entry ${entry:.2f} is {deviation*100:.1f}% "
                         f"from market ${market_price:.2f} (max {PRICE_SANITY_PCT*100:.0f}%)"
                     )
+                else:
+                    # Secondary: cross-check against 30-day historical avg to catch corrupted
+                    # scanner data where both live price and entry are from the same bad source
+                    try:
+                        hist = yf.Ticker(ticker).history(period="1mo")
+                        if not hist.empty:
+                            avg_30d = float(hist["Close"].mean())
+                            hist_dev = abs(entry - avg_30d) / avg_30d
+                            if avg_30d > 0 and hist_dev > 0.25:
+                                reason = (
+                                    f"Price sanity: entry ${entry:.2f} is {hist_dev*100:.0f}% "
+                                    f"from 30d avg ${avg_30d:.2f} — likely data corruption"
+                                )
+                    except Exception:
+                        pass  # secondary check fails open — primary check already passed
 
         # Capital check — cumulative across this batch (no margin, no over-deployment)
         if reason is None and buying_power is not None:

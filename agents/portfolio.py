@@ -253,6 +253,37 @@ def refresh_positions(broker: str = "simulation") -> list:
                             db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
                             updated.append({**pos, "current_price": fill,
                                             "unrealized_pnl": 0, "close_reason": "STOP"})
+                        elif current < pos["stop_loss"]:
+                            # Price below hard stop but position still open in Alpaca — bracket stop
+                            # may be a stop-limit stuck below fill price on a fast gap move.
+                            # Force market close as safety net after a 5-min grace period.
+                            try:
+                                age_s = (datetime.utcnow() -
+                                         datetime.fromisoformat((pos.get("opened_at") or "")[:19])
+                                         ).total_seconds()
+                                if age_s > 300:
+                                    print(f"  🔴 HARD STOP: {ticker} ${current:.2f} < stop ${pos['stop_loss']:.2f} — forcing market close")
+                                    success, fill = alpaca_broker.close_position(ticker)
+                                    fill = fill or current
+                                    pnl  = round(pos["shares"] * (fill - entry), 2)
+                                    db.update("positions", {"id": pos["id"]}, {
+                                        "current_price":  fill,
+                                        "unrealized_pnl": 0,
+                                        "realized_pnl":   pnl,
+                                        "close_price":    fill,
+                                        "close_reason":   "STOP",
+                                        "exit_mechanism": "HARD_STOP",
+                                        "closed_at":      datetime.utcnow().isoformat(),
+                                        "status":         "CLOSED",
+                                        "high_watermark": new_high_wm,
+                                    })
+                                    db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
+                                    updated.append({**pos, "current_price": fill,
+                                                    "unrealized_pnl": 0, "close_reason": "STOP"})
+                                    continue
+                            except Exception as e:
+                                print(f"  ⚠️  Hard stop force-close failed for {ticker}: {e}")
+                            updated.append({**pos, **data, "close_reason": None})
                         else:
                             db.update("positions", {"id": pos["id"]}, {
                                 "current_price":  current,
@@ -282,6 +313,20 @@ def refresh_positions(broker: str = "simulation") -> list:
                             continue
                     except Exception:
                         pass
+
+                # If entry never confirmed (fill_price NULL) and Alpaca has no fill data,
+                # the bracket entry didn't execute — mark UNFILLED rather than STOP.
+                if close_price is None and pos.get("fill_price") is None:
+                    db.update("positions", {"id": pos["id"]}, {
+                        "unrealized_pnl": 0,
+                        "realized_pnl":   0,
+                        "close_reason":   "UNFILLED",
+                        "closed_at":      datetime.utcnow().isoformat(),
+                        "status":         "CLOSED",
+                    })
+                    db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
+                    updated.append({**pos, "unrealized_pnl": 0, "close_reason": "UNFILLED"})
+                    continue
 
                 if close_price is None:
                     close_price = (pos.get("current_price") if pos.get("current_price") is not None
