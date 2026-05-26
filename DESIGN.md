@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.21 · **Updated:** 2026-05-23
+**Version:** v5.22 · **Updated:** 2026-05-26
 
 ---
 
@@ -45,7 +45,7 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 | **0. Market Context** | Fetches VIX, Fear & Greed, US futures, intl markets, economic calendar, and sector rotation (11 sector ETFs ranked by today's return). Sets `max_positions` and `quiet_day` flag. Skips trading if futures down >1.5%. |
 | **1. Scan** | Scores ~450 tickers on RSI, MACD, Bollinger Bands, volume ratio, SMA20/50 trend, breakout freshness. Applies bid-ask spread filter (>0.5% → skip), pre-market gap filter (abs(gap) >8% → skip), intraday range filter (avg H-L/O >5% → skip), and ATR quality gate (ATR% >5% → skip — ATR sizer would produce R:R<1 for these). Enriches passing candidates with ORB and intraday VWAP signals from 5-min bars. Returns candidates with \|score\| ≥ 4. |
 | **1.5 News Filter** | Removes earnings-day tickers (today or tomorrow blackout). Adds news sentiment context. |
-| **1.75 Pre-filter** | Drops bearish candidates (score < 5). Reduces Claude input tokens by ~60%. |
+| **1.75 Pre-filter** | Drops bearish candidates (score < `PREMARKET_MIN_SCORE` = 5). Higher bar than intraday (4) because premarket candidates haven't proved today's move yet. Reduces Claude input tokens by ~60%. |
 | **1.76 ML Scoring** | Predicts P(stock hits +2% intraday). Re-ranks candidates by ML score. |
 | **1.8 Live Prices** | Refreshes entry prices from Alpaca ask quotes (Alpaca mode only). |
 | **1.85 VWAP Signals** | Enriches candidates with VWAP position, today's % change, RS vs SPY. |
@@ -59,7 +59,16 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 ### 3.2 Intraday — Every 15 min, 10:00 AM–3:45 PM ET
 
 - **Reconcile:** Detects positions closed by Alpaca bracket (stop/target fired). Records real exit price and P&L. `_reconcile_with_alpaca()` in `agents/intraday.py` fetches with `limit=500` and `after=today_start` to prevent UNFILLED misclassification on busy days.
-- **Intraday scan:** When open slots and P&L allow, runs a mid-day momentum scan. Approved trades now pass through a sector guard (MAX_PER_SECTOR cap per batch) and ATR sizer before `open_positions`.
+- **Intraday scan guards (checked in order):**
+  - UTC hour in window, max `INTRADAY_SCAN_MAX_RUNS` runs, min interval since last run
+  - Open position count below `MAX_POSITIONS` (15)
+  - **Daily entry cap:** total positions opened today (including closed ones) below `MAX_DAILY_ENTRIES` (12). Prevents 50-position blowups on volatile days where stops free concurrent slots faster than the cap can guard.
+  - Net P&L above `DAILY_LOSS_LIMIT`, not already at `DAILY_BONUS_TARGET`
+- **Sector conviction:** Before calling Claude, fetches live performance of 7 sector ETFs (XLK, XLF, XLE, XLV, XLI, XLC, XLY). Hot sectors (up >= `STRONG_SECTOR_THRESHOLD` = 2%) are highlighted as priorities; weak sectors (down >= 1%) are flagged for avoidance. Injected into the strategy prompt so Claude biases toward the sectors actually moving today.
+- **Intraday pre-filter:** Score >= `STRATEGY_MIN_SCORE` = 4 (lower than premarket's 5 — live momentum signals provide extra confirmation).
+- **Approved trades** pass through sector guard (MAX_PER_SECTOR cap) and ATR sizer before `open_positions`.
+- **Hard stop safety net:** If `current_price < stop_loss` and the position is still in Alpaca after a 5-minute grace period, `portfolio.refresh_positions()` forces a market close via `close_position()`. Prevents positions that slip through the bracket order from bleeding beyond the stop.
+- **Phantom STOP prevention:** When a position disappears from Alpaca with no fill price, it is classified as UNFILLED ($0 P&L) instead of STOP. Prevents the exit count and P&L statistics from being distorted by entries that never executed.
 - **Refresh:** Syncs current price and unrealized P&L for open positions.
 - **Lock-in logic:** Tier 1 ($716 realized) — let winners ride. Tier 2 ($1,000 total) — close everything.
 
@@ -67,6 +76,7 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 
 - **Dedup guard:** checks `scan_results` for `run_eod_started` before proceeding — prevents double-run if GitHub Actions fires twice.
 - **Observability:** `_log_run("eod", "started/completed/failed")` writes a status record to `scan_results`; EOD sends an email alert via `core/alerts.py` if positions are still open after close, or if the run crashes.
+- **Phantom STOP cleanup:** Scans today's CLOSED positions with `close_reason=STOP` and no `fill_price`. Reclassifies them as UNFILLED to keep stop-exit counts and P&L statistics accurate.
 - Records daily performance to `daily_performance` table.
 - Runs eval against 30-day rolling window.
 - Generates daily summary.
@@ -152,7 +162,7 @@ Five independent layers, applied in sequence:
 | **Risk Agent** | R:R below floor, position size out of bounds, stop too wide |
 | **Sector Guard** | > 3 positions in any single sector (premarket and intraday scans) |
 | **ATR Sizer** | Drops trades where ATR stop ≥ target (R:R < 1); applies ORB halving on choppy opens |
-| **Guardrails** | Duplicates, price sanity (>5% from market), daily loss limit (-$500 net P&L) |
+| **Guardrails** | Duplicates, price sanity (primary: >3% from live market; secondary: entry >25% from 30d historical avg to catch corrupted scanner data where both live price and entry are wrong), daily loss limit (-$500 net P&L) |
 | **Fill Poll** | `submit_bracket_order` polls 15 s for fill confirmation; returns (None, None) on rejection so phantom positions are never written to DB |
 
 ### 5.1 Quiet Day Mode
@@ -183,14 +193,18 @@ Triggered when Fear & Greed Index < 35.
 | `QUIET_DAY_FG_THRESHOLD` | 35 | Fear & Greed threshold for quiet day |
 | `PARTIAL_PROFIT_PCT` | 1% | Partial exit target (Leg A) |
 | `USE_NATIVE_TRAILING_STOP` | True | Alpaca native trail — fires immediately on 1% reversal, no polling gap |
-| `TRAIL_PCT` | 1% | Trail percentage from intraday peak |
+| `TRAIL_PCT` | 1.5% | Trail percentage from intraday peak (widened from 1% — 1% fired on normal chop before capturing the move) |
 | `DAILY_LOCK_IN_TARGET` | $716 | Tier 1: let winners ride |
 | `DAILY_BONUS_TARGET` | $1,000 | Tier 2: close everything |
 | `DAILY_LOSS_LIMIT` | -$500 | Pause new entries if net P&L (realized + unrealized) drops below (1% of capital) |
-| `MAX_POSITIONS` | 15 | Max concurrent positions |
-| `MAX_PER_SECTOR` | 3 | Sector concentration cap |
+| `MAX_POSITIONS` | 15 | Max concurrent open positions |
+| `MAX_DAILY_ENTRIES` | 12 | Hard cap on total new positions opened per calendar day (includes closed ones) — prevents blowout days where stops free slots faster than the per-cycle guard can catch |
+| `MAX_PER_SECTOR` | 3 | Sector concentration cap per scan batch |
 | `SCORE_THRESHOLD` | 4 | Minimum scanner score (absolute value) — raised from 1 to cut noise |
-| `STRATEGY_MIN_SCORE` | 5 | Pre-filter before Claude call (bullish only, score ≥ 5) |
+| `PREMARKET_MIN_SCORE` | 5 | Pre-filter before Claude call at premarket — candidates haven't proved today's move yet |
+| `STRATEGY_MIN_SCORE` | 4 | Pre-filter before Claude call at intraday — live momentum signals provide extra confirmation so the bar is lower |
+| `STRONG_SECTOR_THRESHOLD` | 2.0% | Sector ETF up >= this — highlighted as hot in strategy prompt; Claude prioritizes stocks in this sector |
+| `WEAK_SECTOR_THRESHOLD` | -1.0% | Sector ETF down >= 1% — flagged as weak; scanner applies -1 penalty to stocks in this sector |
 | `MIN_AVG_VOLUME` | 1,000,000 | Liquidity floor |
 | `MAX_SPREAD_PCT` | 0.5% | Bid-ask spread cap — wider spreads erode the 0.67% stop |
 | `MAX_PREMARKET_GAP_PCT` | 8% | Pre-market gap cap — stocks already extended >8% can't reach 2.5% more |
@@ -291,6 +305,7 @@ Streamlit Dashboard
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v5.22** | 2026-05-26 | Six root-cause fixes: (1) `MAX_DAILY_ENTRIES=12` hard cap on total daily positions — prevents 50-position blowups when stops free concurrent slots mid-day; (2) Sector conviction prompt — live sector ETF performance injected into strategy call so Claude prioritizes hot sectors and avoids weak ones; (3) Hard stop safety net — `portfolio.refresh_positions()` force-closes via `close_position()` if price < stop_loss after 5-min grace; (4) 30d historical avg secondary sanity — cross-checks entry against yfinance 30d mean to catch corrupted scanner data (MU at $907 vs actual ~$115); (5) Phantom STOP reclassification — positions without fill_price marked UNFILLED (not STOP) at EOD and during portfolio refresh; (6) Split min-score: `PREMARKET_MIN_SCORE=5` vs `STRATEGY_MIN_SCORE=4` — intraday bar is lower because live momentum signals provide extra confirmation |
 | **v5.21** | 2026-05-23 | Structural gap fixes: (1) Gap 1 — Anthropic retry: 3-attempt with 15/30/45 s backoff in `agents/strategy.py`; (2) Gap 2 — bracket exit reconciliation: `agents/intraday.py` `_reconcile_with_alpaca()` now calls `get_order_fill()` on filled_buys and writes close price + P&L to DB; (3) Gap 5 — EOD dedup guard (`run_eod_started` check in `scan_results`); intraday guard skips if no premarket scan today; (4) Gap 6 — `core/alerts.py` (Gmail SMTP); `_log_run()` writes start/complete/failed records; EOD alerts on crash or unclosed positions; `from __future__ import annotations` for Python 3.9 compat |
 | **v5.20** | 2026-05-23 | Friction gap reconciliation: `STRATEGY_TAG="a"` in settings; bracket orders tagged `strata_{ticker}_{ts}`; `_alpaca_order_pnl()` in performance.py computes per-strategy P&L from Alpaca order history; `friction_gap` now meaningful (per-strategy, not combined A+B equity) |
 | **v5.19** | 2026-05-23 | P1 fixes: (1) fill rate — `submit_bracket_order` polls 15 s for fill confirmation, returns `(order_id, fill_price)` tuple, blocks DB write on rejection/timeout; `fill_price` stored on positions; (2) friction breakdown — `performance.py` computes `avg_slippage_bps` / `fills_with_data` from entry vs fill price; (3) close_price=0.0 fix — replaced falsy `or` chain with `is None` check; (4) ATR quality gate — `MAX_ATR_PCT=5%` filter in scanner drops tickers before ATR sizer rejects them; (5) intraday completeness — sector guard + ATR sizer wired into `_maybe_run_intraday_scan`, market note updated |
