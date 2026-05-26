@@ -173,7 +173,7 @@ def submit_bracket_order(
     in real-time, fires on reversal without the 15-min polling gap.
     """
     import time
-    from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
+    from alpaca.trading.requests import LimitOrderRequest, TakeProfitRequest, StopLossRequest
     from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
     side = OrderSide.BUY if action == "BUY" else OrderSide.SELL
@@ -182,10 +182,12 @@ def submit_bracket_order(
         print(f"        ⚠️  Native trail requested for {ticker} but not supported by StopLossRequest — using fixed stop")
     stop_loss_req = StopLossRequest(stop_price=round(stop_price, 2))
 
-    req = MarketOrderRequest(
+    limit_px = round(entry_price * 1.002, 2)  # 0.2% above plan price — ensures fill when market ≥ entry
+    req = LimitOrderRequest(
         symbol=ticker,
         qty=shares,
         side=side,
+        limit_price=limit_px,
         time_in_force=TimeInForce.DAY,
         order_class=OrderClass.BRACKET,
         take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
@@ -193,7 +195,7 @@ def submit_bracket_order(
         client_order_id=_order_id(ticker),
     )
     order = _client().submit_order(req)
-    print(f"        Market order: {ticker} {shares} shares → {order.id}")
+    print(f"        Limit order: {ticker} {shares} shares @ ${limit_px} → {order.id}")
 
     for i in range(120):
         time.sleep(1)
