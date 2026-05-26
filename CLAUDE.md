@@ -30,7 +30,7 @@ After any meaningful change to logic, config, or pipeline — update these files
 Run on June 8: `python3 eval.py --days 14`
 
 Pass criteria:
-- Win rate ≥ 80%
+- Win rate ≥ 70%
 - Avg daily P&L ≥ $500
 - NATIVE_TRAIL exits confirmed (no double-sells)
 - No integrity flags

@@ -424,10 +424,10 @@ def _print_summary(m: dict):
         actions.append(f"Only {m['win_days']}/{days} profitable days — strategy inconsistency, review entry timing")
 
     # Trade win rate
-    if m["avg_win_rate"] >= 60:
-        wins.append(f"{m['avg_win_rate']:.0f}% trade win rate — well above 25% break-even for 3:1 R:R")
-    elif m["avg_win_rate"] >= 50:
-        watchs.append(f"{m['avg_win_rate']:.0f}% trade win rate — above break-even but room to improve")
+    if m["avg_win_rate"] >= 70:
+        wins.append(f"{m['avg_win_rate']:.0f}% trade win rate — at or above 70% gate; well above 25% break-even for 3:1 R:R")
+    elif m["avg_win_rate"] >= 55:
+        watchs.append(f"{m['avg_win_rate']:.0f}% trade win rate — above break-even but below 70% gate")
     else:
         watchs.append(f"{m['avg_win_rate']:.0f}% trade win rate — approaching break-even; tighten RSI or entry criteria")
 
@@ -529,8 +529,8 @@ def _print_metrics(m: dict):
           f"  ({win_day_pct:.0f}% — target: ≥50%)")
     print(f"  Days hitting target:  {m['target_days']} / {days}"
           f"  ({m['target_days']/days*100:.0f}% of days cleared ${DAILY_PROFIT_TARGET:,})")
-    print(f"  Avg trade win rate:   {m['avg_win_rate']:.1f}%  {_flag(m['avg_win_rate'], 60, 50)}"
-          f"  (target: ≥60%; break-even at 3:1 R:R is just 25%)")
+    print(f"  Avg trade win rate:   {m['avg_win_rate']:.1f}%  {_flag(m['avg_win_rate'], 70, 55)}"
+          f"  (target: ≥70%; break-even at 3:1 R:R is just 25%)")
     print(f"  Portfolio value:      ${m['latest_capital']:,.0f}")
     print(f"  Total return:         {m['total_return']:+.2f}%  {_flag(m['total_return'], 1.0, 0, higher=True)}")
     print(f"  Annualized return:    {m['ann_return']:+.1f}%  {_flag(m['ann_return'], 50, 20)}"
