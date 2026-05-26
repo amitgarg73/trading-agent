@@ -429,8 +429,21 @@ if page == "Summary":
                 "Est. P&L":   f"${t['estimated_profit']:,.0f}",
                 "Actual P&L": fmt_pnl(pnl_val) if pnl_val != 0 else "—",
             })
-        df_plan = pd.DataFrame(plan_rows)
-        st.dataframe(df_plan, width="stretch", hide_index=True)
+        cols = ["Status", "Ticker", "Company", "Conf.", "Entry", "Target", "Stop", "Size", "Est. P&L", "Actual P&L"]
+        header = "".join(f"<th style='padding:6px 12px;text-align:left;color:#aaa;font-size:12px;border-bottom:1px solid #333'>{c}</th>" for c in cols)
+        rows_html = ""
+        for r in plan_rows:
+            cells = "".join(
+                f"<td style='padding:6px 12px;color:#f0f0f0;font-size:13px'>{r[c]}</td>"
+                for c in cols
+            )
+            rows_html += f"<tr>{cells}</tr>"
+        st.markdown(
+            f"<table style='width:100%;border-collapse:collapse'>"
+            f"<thead><tr>{header}</tr></thead>"
+            f"<tbody>{rows_html}</tbody></table>",
+            unsafe_allow_html=True,
+        )
 
         with st.expander("💬 Claude's Reasoning"):
             for t in executed_plan:
