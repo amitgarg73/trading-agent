@@ -451,8 +451,8 @@ def premarket(broker: str = "simulation"):
               f"target=${t['target_price']:.2f}  stop=${t['stop_loss']:.2f}  "
               f"est.profit={pnl_str}  [{t['confidence']}]")
 
-    print(f"\n  Total estimated profit: ${risk_out['total_estimated_profit']:,.0f}")
-    print(f"  Total max loss:         ${risk_out['total_max_loss']:,.0f}")
+    print(f"\n  Total estimated profit: ${sum(t['estimated_profit'] for t in approved):,.0f}")
+    print(f"  Total max loss:         ${sum(t['max_loss'] for t in approved):,.0f}")
     print(f"  Risk note: {risk_out['risk_note']}\n")
 
 
