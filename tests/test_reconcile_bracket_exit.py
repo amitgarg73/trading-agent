@@ -124,8 +124,9 @@ class TestReconcileBracketExit:
         mock_update.assert_not_called()
 
     def test_pending_buy_leaves_open(self):
-        """Entry order still in flight → no DB write."""
+        """Entry order in flight (< 5 min old) → no DB write, wait for fill."""
         buy_orders = [_make_order("AAPL", "buy", "new")]
+        buy_orders[0].submitted_at = datetime.utcnow().isoformat()  # fresh — not yet stale
         mock_fill, mock_update = _run_reconcile(
             alpaca_tickers=set(),
             open_positions=[OPEN_POS],

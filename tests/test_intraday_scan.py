@@ -568,3 +568,96 @@ def test_reconcile_order_fetch_uses_after_date(mock_client, mock_tickers, mock_s
     call_args = mock_client.return_value.get_orders.call_args[0][0]
     assert call_args.after is not None, "GetOrdersRequest must include after=today_start to avoid fetching prior-day orders"
     assert isinstance(call_args.after, datetime), "after must be a datetime object"
+
+
+@patch("core.db.update")
+@patch("core.db.select")
+@patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+@patch("agents.alpaca_broker._client")
+def test_reconcile_backfills_fill_price(mock_client, mock_tickers, mock_select, mock_update):
+    """fill_price must be backfilled from Alpaca when order confirms fill after the 30s poll window."""
+    from agents.intraday import _reconcile_with_alpaca
+
+    order_id = "order-abc-123"
+    pos = _make_open_position("AAPL", order_id=order_id)
+    pos["fill_price"] = None  # pending fill
+
+    mock_select.return_value = [pos]
+
+    filled_order = _make_alpaca_order("AAPL", side="buy", status="filled")
+    filled_order.id = order_id
+    filled_order.filled_avg_price = 150.75
+    mock_client.return_value.get_orders.return_value = [filled_order]
+
+    _reconcile_with_alpaca()
+
+    fill_update_calls = [
+        c for c in mock_update.call_args_list
+        if "fill_price" in (c[0][2] if c[0] else {})
+    ]
+    assert fill_update_calls, "Expected db.update with fill_price — backfill not triggered"
+    assert fill_update_calls[0][0][2]["fill_price"] == pytest.approx(150.75)
+
+
+@patch("core.db.update")
+@patch("core.db.select")
+@patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+@patch("agents.alpaca_broker._client")
+def test_reconcile_cancels_stale_pending_order(mock_client, mock_tickers, mock_select, mock_update):
+    """Limit entry order open > 5 min without filling must be cancelled and marked UNFILLED."""
+    from agents.intraday import _reconcile_with_alpaca
+    from datetime import datetime, timedelta, timezone
+
+    order_id = "order-stale-456"
+    pos = _make_open_position("TSLA", order_id=order_id)
+    pos["fill_price"] = None
+    pos["planned_trade_id"] = "plan-stale-456"
+
+    mock_select.return_value = [pos]
+
+    stale_order = _make_alpaca_order("TSLA", side="buy", status="accepted",
+                                     submitted_at=(datetime.utcnow() - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S"))
+    stale_order.id = order_id
+    stale_order.filled_avg_price = None
+    mock_client.return_value.get_orders.return_value = [stale_order]
+
+    _reconcile_with_alpaca()
+
+    mock_client.return_value.cancel_order_by_id.assert_called_once_with(order_id)
+
+    unfilled_updates = [
+        c for c in mock_update.call_args_list
+        if (c[0][2] if c[0] else {}).get("close_reason") == "UNFILLED"
+    ]
+    assert unfilled_updates, "Expected position to be marked UNFILLED after stale cancel"
+
+
+@patch("core.db.update")
+@patch("core.db.select")
+@patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+@patch("agents.alpaca_broker._client")
+def test_reconcile_fresh_pending_order_not_cancelled(mock_client, mock_tickers, mock_select, mock_update):
+    """Pending order < 5 min old must not be cancelled — give it time to fill."""
+    from agents.intraday import _reconcile_with_alpaca
+    from datetime import datetime, timedelta
+
+    order_id = "order-fresh-789"
+    pos = _make_open_position("NVDA", order_id=order_id)
+    pos["fill_price"] = None
+
+    mock_select.return_value = [pos]
+
+    fresh_order = _make_alpaca_order("NVDA", side="buy", status="accepted",
+                                     submitted_at=(datetime.utcnow() - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S"))
+    fresh_order.id = order_id
+    fresh_order.filled_avg_price = None
+    mock_client.return_value.get_orders.return_value = [fresh_order]
+
+    _reconcile_with_alpaca()
+
+    mock_client.return_value.cancel_order_by_id.assert_not_called()
+    unfilled_updates = [
+        c for c in mock_update.call_args_list
+        if (c[0][2] if c[0] else {}).get("close_reason") == "UNFILLED"
+    ]
+    assert not unfilled_updates, "Fresh pending order must not be marked UNFILLED yet"

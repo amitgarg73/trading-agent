@@ -198,8 +198,8 @@ def submit_bracket_order(
     order = _client().submit_order(req)
     print(f"        Limit order: {ticker} {shares} shares @ ${limit_px} → {order.id}")
 
-    for i in range(5):
-        time.sleep(1)
+    for i in range(15):
+        time.sleep(2)
         try:
             o = _client().get_order_by_id(str(order.id))
             status = str(o.status).lower()
@@ -212,9 +212,9 @@ def submit_bracket_order(
         except Exception:
             pass
 
-    # Paper trading fills can take several minutes — record position immediately with
-    # order_id so intraday reconciliation can update fill_price when it confirms.
-    print(f"        ⏳ {ticker} — fill pending, recording position for intraday reconciliation")
+    # Fill still pending after 30s — record position with order_id so reconciliation
+    # backfills fill_price on the next cycle when Alpaca confirms.
+    print(f"        ⏳ {ticker} — fill pending after 30s, recording for reconciliation")
     return str(order.id), None
 
 

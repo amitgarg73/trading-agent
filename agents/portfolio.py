@@ -136,6 +136,7 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
         "alpaca_order_id":     alpaca_order_id,
         "high_watermark":      db_entry,
         "native_trail_active": native_trail,
+        "confidence":          trade.get("confidence"),
         "run_id":              run_id,
     }
     if fill_price_actual is not None:
@@ -410,11 +411,15 @@ def refresh_positions(broker: str = "simulation") -> list:
 
         if close_reason:
             sim_mechanism = "MANUAL_TRAIL" if close_reason == "STOP" and eff_stop > stop else close_reason
+            # Close at stop price on STOP exits — real bracket stop-market orders execute at the
+            # stop level, not wherever yfinance reports 15 min later (which can be much lower).
+            close_px = eff_stop if close_reason == "STOP" else price
+            pnl      = round(shares * (close_px - entry), 2) if action == "BUY" else round(shares * (entry - close_px), 2)
             db.update("positions", {"id": pos["id"]}, {
-                "current_price":  price,
+                "current_price":  close_px,
                 "unrealized_pnl": 0,
                 "realized_pnl":   pnl,
-                "close_price":    price,
+                "close_price":    close_px,
                 "close_reason":   close_reason,
                 "exit_mechanism": sim_mechanism,
                 "closed_at":      datetime.utcnow().isoformat(),

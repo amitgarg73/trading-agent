@@ -318,6 +318,31 @@ def premarket(broker: str = "simulation"):
         print(f"[ 1.85/4 ] Intraday signals: {enriched}/{len(candidates)} enriched — "
               f"{above_vwap_count} above VWAP")
 
+    elif broker == "simulation":
+        # Compute RS vs SPY via yfinance — gives Claude a relative-strength signal
+        # that would otherwise require Alpaca live quotes (alpaca mode only).
+        try:
+            import yfinance as yf
+            sim_tickers = [c["ticker"] for c in candidates] + ["SPY"]
+            hist = yf.download(sim_tickers, period="2d", progress=False, auto_adjust=True)["Close"]
+            day_ret = hist.pct_change().iloc[-1]
+            spy_ret = float(day_ret["SPY"]) if "SPY" in day_ret and day_ret["SPY"] == day_ret["SPY"] else None
+            if spy_ret:
+                enriched = 0
+                for c in candidates:
+                    tkr = c["ticker"]
+                    if tkr in day_ret and day_ret[tkr] == day_ret[tkr]:
+                        stock_ret = float(day_ret[tkr])
+                        c["rs_vs_spy"] = round(stock_ret / spy_ret, 2) if spy_ret != 0 else None
+                        c["today_pct_change"] = round(stock_ret * 100, 2)
+                        enriched += 1
+                candidates.sort(key=lambda x: -(x.get("rs_vs_spy") or 0))
+                above_spy = sum(1 for c in candidates if (c.get("rs_vs_spy") or 0) > 1.0)
+                print(f"[ 1.85/4 ] RS vs SPY (simulation): {enriched}/{len(candidates)} enriched "
+                      f"— {above_spy} outperforming SPY")
+        except Exception as e:
+            print(f"[ 1.85/4 ] RS vs SPY (simulation): skipped — {e}")
+
     # 2. Strategy
     print("[ 2/4 ] Running strategy agent...")
     full_market_summary = mkt["summary"]

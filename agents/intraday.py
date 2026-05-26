@@ -57,13 +57,23 @@ def _reconcile_with_alpaca():
             and getattr(o.status, "value", o.status) == "filled"
             and str(o.filled_at or o.submitted_at or "").startswith(today[:10])
         }
-        pending_buys = {
-            str(o.symbol)
+        # Map order_id → fill_price for positions awaiting backfill
+        filled_by_order_id = {
+            str(o.id): float(o.filled_avg_price)
+            for o in all_orders
+            if getattr(o.side, "value", o.side) == "buy"
+            and getattr(o.status, "value", o.status) == "filled"
+            and o.filled_avg_price
+        }
+        # Map ticker → order object for pending buys (to check age for stale cancellation)
+        pending_buy_orders = {
+            str(o.symbol): o
             for o in all_orders
             if getattr(o.side, "value", o.side) == "buy"
             and getattr(o.status, "value", o.status) in ("pending_new", "accepted", "new", "held", "partially_filled")
             and str(o.submitted_at or "").startswith(today[:10])
         }
+        pending_buys = set(pending_buy_orders.keys())
     except Exception as e:
         print(f"  ⚠️  Reconciliation: order fetch failed — {e}")
         ledger.log("reconcile_failed", {"error": str(e)})
@@ -79,11 +89,42 @@ def _reconcile_with_alpaca():
         )
         return
 
+    # Backfill fill_price for positions that were pending at submission time but have since filled.
+    for pos in open_positions:
+        if pos.get("fill_price") is None:
+            order_id = pos.get("alpaca_order_id")
+            if order_id and order_id in filled_by_order_id:
+                fill_px = filled_by_order_id[order_id]
+                db.update("positions", {"id": pos["id"]}, {"fill_price": fill_px})
+                print(f"  💰 fill_price backfilled: {pos['ticker']} @ ${fill_px:.2f}")
+
     for pos in open_positions:
         if pos["ticker"] not in alpaca_tickers:
             if pos["ticker"] in pending_buys:
-                # Buy still in flight — leave OPEN, check next cycle
-                print(f"  ⏳ Reconciliation: {pos['ticker']} buy order pending — waiting for fill")
+                order = pending_buy_orders[pos["ticker"]]
+                try:
+                    submitted_str = str(order.submitted_at or "")[:19].replace("Z", "")
+                    age_min = (datetime.utcnow() - datetime.fromisoformat(submitted_str)).total_seconds() / 60
+                except Exception:
+                    age_min = 0
+                if age_min <= 5:
+                    print(f"  ⏳ Reconciliation: {pos['ticker']} buy pending ({age_min:.0f}m) — waiting")
+                    continue
+                # Stale limit order: cancel in Alpaca and mark UNFILLED
+                print(f"  ⚠️  Reconciliation: {pos['ticker']} limit order stale ({age_min:.0f}m) — cancelling")
+                try:
+                    alpaca_broker._client().cancel_order_by_id(str(order.id))
+                except Exception as ce:
+                    print(f"  ⚠️  Cancel failed for {pos['ticker']}: {ce}")
+                ledger.log("trade_unfilled", {"ticker": pos["ticker"], "reason": "stale_limit",
+                                              "age_min": round(age_min, 1)})
+                db.update("positions", {"id": pos["id"]}, {
+                    "status": "CLOSED", "close_reason": "UNFILLED",
+                    "exit_mechanism": "UNFILLED",
+                    "closed_at": datetime.utcnow().isoformat(),
+                    "realized_pnl": 0, "close_price": pos.get("entry_price"),
+                })
+                db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
                 continue
             if pos["ticker"] in filled_buys:
                 # Entry filled but position gone from Alpaca — bracket exited natively.

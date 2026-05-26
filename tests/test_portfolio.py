@@ -87,10 +87,10 @@ class TestRefreshPositionsSimulation:
         assert result[0]["unrealized_pnl"] == pytest.approx(60 * (102.5 - 100.0), abs=0.01)
 
     def test_pnl_calculated_correctly_on_stop(self):
-        # 60 shares × (99.0 - 100.0) = -$60
+        # 60 shares × (99.33 - 100.0) = -$40.20  (closes at stop price, not yfinance poll price)
         pos = [make_position(entry=100.0, stop=99.33, target=102.0, shares=60)]
         result, _ = self._run_refresh(pos, price=99.0)
-        assert result[0]["unrealized_pnl"] == pytest.approx(60 * (99.0 - 100.0), abs=0.01)
+        assert result[0]["unrealized_pnl"] == pytest.approx(60 * (99.33 - 100.0), abs=0.02)
 
     def test_price_none_skips_position(self):
         pos = [make_position(entry=100.0, stop=99.33, target=102.0)]
@@ -131,6 +131,62 @@ class TestRefreshPositionsSimulation:
                              shares=60, high_watermark=104.0)]
         result, _ = self._run_refresh(pos, price=102.0)
         assert result[0]["close_reason"] == "STOP"
+
+    def test_stop_closes_at_stop_price_not_current_price(self):
+        """
+        Simulation closes STOP positions at eff_stop, not current yfinance price.
+        Real bracket stop-market orders execute at the stop level regardless of
+        how far price has fallen by the time the 15-min poll runs.
+        entry=100, hard_stop=99.33, peak=100 (no trail ratchet), current price=95.
+        eff_stop = max(99.33, 100*(1-0.015)) = max(99.33, 98.5) = 99.33
+        close_price should be 99.33, not 95.
+        pnl = 60 * (99.33 - 100) = -40.20
+        """
+        pos = [make_position(entry=100.0, stop=99.33, target=106.0,
+                             shares=60, high_watermark=100.0)]
+        result, mock_update = self._run_refresh(pos, price=95.0)
+        assert result[0]["close_reason"] == "STOP"
+        # Verify DB was updated with close_price = stop (99.33), not current (95)
+        update_calls = [c[0][2] for c in mock_update.call_args_list if "close_price" in (c[0][2] if c[0] else {})]
+        stop_updates = [c for c in update_calls if "close_price" in c]
+        assert any(abs(c["close_price"] - 99.33) < 0.01 for c in stop_updates), \
+            f"Expected close_price ≈ 99.33 (stop), got: {[c.get('close_price') for c in stop_updates]}"
+
+    def test_stop_pnl_uses_stop_price_not_current_price(self):
+        """P&L on STOP exit is computed at stop_price, not the yfinance poll price."""
+        pos = [make_position(entry=100.0, stop=99.33, target=106.0,
+                             shares=60, high_watermark=100.0)]
+        result, _ = self._run_refresh(pos, price=95.0)
+        # pnl should be 60 * (99.33 - 100.0) = -40.20, not 60 * (95 - 100) = -300
+        assert result[0]["unrealized_pnl"] == pytest.approx(60 * (99.33 - 100.0), abs=0.02)
+
+
+class TestConfidenceStoredOnPosition:
+
+    def test_confidence_stored_when_opening_position(self):
+        """_open_single_position must write confidence from the trade dict into the position row."""
+        trade = {
+            "ticker": "AAPL", "action": "BUY", "entry_price": 100.0,
+            "target_price": 104.0, "stop_loss": 99.33, "shares": 30,
+            "position_size": 3000.0, "confidence": "HIGH",
+            "reasoning": "test", "estimated_profit": 120.0,
+        }
+
+        inserted_rows = []
+        def fake_insert(table, data):
+            inserted_rows.append((table, data))
+            return {"id": f"fake-{table}", **data}
+
+        with patch("core.db.insert", side_effect=fake_insert), \
+             patch("core.db.update"), \
+             patch("core.ledger.log"), \
+             patch("agents.portfolio._current_price", return_value=100.0):
+            from agents.portfolio import _open_single_position
+            _open_single_position("plan-001", trade, price=100.0, broker="simulation", run_id="r1")
+
+        position_rows = [data for (table, data) in inserted_rows if table == "positions"]
+        assert position_rows, "No position row inserted into positions table"
+        assert position_rows[0].get("confidence") == "HIGH"
 
 
 # ── Tier logic ───────────────────────────────────────────────────────────────
