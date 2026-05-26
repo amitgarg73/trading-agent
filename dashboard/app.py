@@ -386,9 +386,9 @@ if page == "Summary":
             vwap_badge = fmt_vwap_badge(pos["ticker"], vwap_signals)
             c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 2])
             c1.markdown(f"**{icon} {label}**{leg_tag}{tail_badge}{vwap_badge}", unsafe_allow_html=True)
-            c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
-            c3.markdown(f"Now: **${pos.get('current_price', 0):.2f}**")
-            c4.markdown(f"Target ${pos['target_price']:.2f}  ·  {fmt_stop(pos, tight=in_tailwind)}")
+            c2.markdown(f"<span style='color:#f0f0f0'>Entry: <b>${pos['entry_price']:.2f}</b></span>", unsafe_allow_html=True)
+            c3.markdown(f"<span style='color:#f0f0f0'>Now: <b>${pos.get('current_price', 0):.2f}</b></span>", unsafe_allow_html=True)
+            c4.markdown(f"<span style='color:#f0f0f0'>Target ${pos['target_price']:.2f}  ·  {fmt_stop(pos, tight=in_tailwind)}</span>", unsafe_allow_html=True)
             c5.markdown(
                 f"<span style='color:{pnl_color(pnl)};font-weight:bold;font-size:16px'>{fmt_pnl(pnl)}</span>",
                 unsafe_allow_html=True
@@ -839,9 +839,9 @@ elif page == "Today":
                 else " <span style='background:#2c3e50;color:#aaa;padding:1px 5px;border-radius:3px;font-size:10px'>full</span>"
             ) if sum(1 for p in open_pos if p["ticker"] == pos["ticker"]) > 1 else ""
             c1.markdown(f"**{icon} {label}** `{pos['action']}`{_tail_badge}{_vwap_badge}{_leg_tag}", unsafe_allow_html=True)
-            c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
-            c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
-            c4.markdown(f"Target: ${pos['target_price']:.2f} | {fmt_stop(pos, tight=_in_tailwind)}")
+            c2.markdown(f"<span style='color:#f0f0f0'>Entry: <b>${pos['entry_price']:.2f}</b></span>", unsafe_allow_html=True)
+            c3.markdown(f"<span style='color:#f0f0f0'>Current: <b>${pos.get('current_price', 0):.2f}</b></span>", unsafe_allow_html=True)
+            c4.markdown(f"<span style='color:#f0f0f0'>Target: ${pos['target_price']:.2f} | {fmt_stop(pos, tight=_in_tailwind)}</span>", unsafe_allow_html=True)
             c5.markdown(
                 f"<span style='color:{pnl_color(pnl)};font-weight:bold'>{fmt_pnl(pnl)}</span>",
                 unsafe_allow_html=True
