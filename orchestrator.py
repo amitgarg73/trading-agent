@@ -435,12 +435,12 @@ def premarket(broker: str = "simulation"):
             "risk_note":               sector_out["risk_note"],
         })
 
-    run_row = db.insert("daily_runs", {
+    run_row = db.upsert("daily_runs", {
         "date":       date.today().isoformat(),
         "run_type":   "premarket",
         "run_number": 0,
         "started_at": datetime.utcnow().isoformat(),
-    })
+    }, on_conflict="date,run_number")
     opened = open_positions(plan["id"], approved, broker=broker, run_id=run_row["id"])
     db.update("daily_runs", {"id": run_row["id"]}, {"positions_opened": len(opened)})
     print(f"        Opened {len(opened)} positions\n")
