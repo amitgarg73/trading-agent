@@ -898,9 +898,11 @@ elif page == "Today":
                     [0.65, "#27ae60"], [1.0,  "#145a32"],
                 ],
                 cmid=0, showscale=True,
-                colorbar=dict(title="P&L ($)", thickness=12,
-                              tickfont=dict(color="white"),
-                              titlefont=dict(color="white")),
+                colorbar=dict(
+                    title=dict(text="P&L ($)", font=dict(color="white")),
+                    tickfont=dict(color="white"),
+                    thickness=12,
+                ),
             ),
         ))
         fig_hm.update_layout(
