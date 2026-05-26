@@ -18,12 +18,12 @@ MAX_POSITION_PCT     = 0.07       # max 7% of capital per position (fits 15 posi
 MIN_POSITION_PCT     = 0.05       # min 5% of capital per position
 MAX_POSITIONS        = 15         # max concurrent positions
 MAX_LOSS_PER_TRADE   = 0.0067     # stop loss: 0.67% of position size (maintains 3:1 R:R with 2% target)
-ATR_STOP_MULTIPLIER  = 1.2        # P0: stop = max(atr_pct × 1.2, ATR_STOP_FLOOR)
+ATR_STOP_MULTIPLIER  = 0.7        # TEMP 2026-05-26: lowered 1.2→0.7 for E2E validation; revert after
 ATR_STOP_FLOOR       = 0.005      # P0: minimum 0.5% stop — never tighter than this
 MAX_LOSS_DOLLARS     = 150        # P0: constant dollar risk per trade ($150)
 ORB_ATR_FLOOR        = 0.5        # P0: ORB/ATR ratio below this → choppy open → halve shares
-MIN_REWARD_RISK            = 2.9   # minimum reward:risk ratio — ceiling 4% / stop 0.67% = 6:1; floor ensures trail exits are still +EV
-QUIET_DAY_MIN_REWARD_RISK  = 2.0   # relaxed R:R on quiet days (Fear&Greed < 35) — 2:1 still profitable at 80% win rate
+MIN_REWARD_RISK            = 1.5   # TEMP 2026-05-26: lowered 2.9→1.5 for E2E validation; revert after
+QUIET_DAY_MIN_REWARD_RISK  = 1.0   # TEMP 2026-05-26: lowered 2.0→1.0 for E2E validation; revert after
 QUIET_DAY_FG_THRESHOLD     = 35    # Fear&Greed below this = quiet day
 TARGET_PCT           = 0.04       # 4% ceiling — trail does the actual exit; ceiling only fires on straight-line rockets
 MAX_PER_SECTOR       = 3          # V2d: max positions in any single sector
