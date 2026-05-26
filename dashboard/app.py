@@ -45,6 +45,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+st.markdown("<style>h3 { color: #FAFAFA !important; }</style>", unsafe_allow_html=True)
+
 # ── Auth ──────────────────────────────────────────────────────────
 def check_password():
     if st.session_state.get("authenticated"):
