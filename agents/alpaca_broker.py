@@ -195,7 +195,7 @@ def submit_bracket_order(
     order = _client().submit_order(req)
     print(f"        Market order: {ticker} {shares} shares → {order.id}")
 
-    for _ in range(15):
+    for _ in range(30):
         time.sleep(1)
         try:
             o = _client().get_order_by_id(str(order.id))
