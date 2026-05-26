@@ -824,6 +824,7 @@ elif page == "Today":
             "border-radius:4px;font-size:11px;margin-left:6px'>🚀 tailwind</span>"
             if _in_tailwind else ""
         )
+        _sum_ticker_seen: dict = {}
         for pos in open_pos:
             pnl  = pos.get("unrealized_pnl", 0)
             icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
@@ -831,7 +832,13 @@ elif page == "Today":
             name = COMPANY_NAMES.get(pos["ticker"], "")
             label = f"{pos['ticker']} · {name}" if name else pos["ticker"]
             _vwap_badge = fmt_vwap_badge(pos["ticker"], vwap_signals_today)
-            c1.markdown(f"**{icon} {label}** `{pos['action']}`{_tail_badge}{_vwap_badge}", unsafe_allow_html=True)
+            _sum_ticker_seen[pos["ticker"]] = _sum_ticker_seen.get(pos["ticker"], 0) + 1
+            _leg_tag = (
+                " <span style='background:#2c3e50;color:#aaa;padding:1px 5px;border-radius:3px;font-size:10px'>partial</span>"
+                if _sum_ticker_seen[pos["ticker"]] == 1
+                else " <span style='background:#2c3e50;color:#aaa;padding:1px 5px;border-radius:3px;font-size:10px'>full</span>"
+            ) if sum(1 for p in open_pos if p["ticker"] == pos["ticker"]) > 1 else ""
+            c1.markdown(f"**{icon} {label}** `{pos['action']}`{_tail_badge}{_vwap_badge}{_leg_tag}", unsafe_allow_html=True)
             c2.markdown(f"Entry: **${pos['entry_price']:.2f}**")
             c3.markdown(f"Current: **${pos.get('current_price', 0):.2f}**")
             c4.markdown(f"Target: ${pos['target_price']:.2f} | {fmt_stop(pos, tight=_in_tailwind)}")
@@ -882,21 +889,25 @@ elif page == "Today":
             hovertemplate="%{customdata}<extra></extra>",
             customdata=hm_hover,
             textinfo="text",
+            textfont=dict(color="white", size=13),
             marker=dict(
                 colors=hm_pnl,
                 colorscale=[
-                    [0.0, "#c0392b"], [0.45, "#e74c3c"],
-                    [0.5,  "#95a5a6"],
-                    [0.55, "#27ae60"], [1.0,  "#1e8449"],
+                    [0.0,  "#7b241c"], [0.35, "#e74c3c"],
+                    [0.5,  "#566573"],
+                    [0.65, "#27ae60"], [1.0,  "#145a32"],
                 ],
                 cmid=0, showscale=True,
-                colorbar=dict(title="P&L ($)", thickness=12),
+                colorbar=dict(title="P&L ($)", thickness=12,
+                              tickfont=dict(color="white"),
+                              titlefont=dict(color="white")),
             ),
         ))
         fig_hm.update_layout(
             height=320,
             margin=dict(l=0, r=0, t=10, b=0),
             paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
         )
         st.plotly_chart(fig_hm, use_container_width=True)
         st.caption("Block size = position size. Color = P&L (green = profit, red = loss, gray = flat).")
