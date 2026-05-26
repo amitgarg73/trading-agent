@@ -29,7 +29,7 @@ TARGET_PCT           = 0.04       # 4% ceiling — trail does the actual exit; c
 MAX_PER_SECTOR       = 3          # V2d: max positions in any single sector
 DAILY_LOSS_PCT       = 0.01       # 1% of capital — daily net loss limit (realized + unrealized)
 DAILY_LOSS_LIMIT     = -(TOTAL_CAPITAL * DAILY_LOSS_PCT)  # -$500 at $50K capital
-PRICE_SANITY_PCT     = 0.05       # V5: reject if entry price is >5% from current market price
+PRICE_SANITY_PCT     = 0.03       # reject if entry price is >3% from live market price (tightened from 5% — catches stale scanner data)
 DAILY_LOCK_IN_TARGET = 716        # Tier 1: realized P&L floor — stop closing positions, let winners ride
 DAILY_BONUS_TARGET   = 1_000     # Tier 2: realized+unrealized total — close everything, protect exceptional day
 LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions after Tier 1 (simulation only)
@@ -42,11 +42,13 @@ INTRADAY_ENTRY_CUTOFF_UTC       = 19          # 3:00 PM ET hard entry cutoff; la
 INTRADAY_SCAN_MAX_RUNS          = 6           # hourly: 10 AM, 11 AM, 12 PM, 1 PM, 2 PM, 3 PM ET
 INTRADAY_SCAN_MIN_INTERVAL_MINS = 55          # ~1 hr apart (55 min absorbs GH Actions delay)
 INTRADAY_TARGET_PCT             = 0.015       # 1.5% target for intraday entries — gives 2.2:1 R:R with 0.67% fixed stop
-MIN_INTRADAY_MOVE_PCT           = 4.0         # minimum % move today to qualify as momentum candidate
+MIN_INTRADAY_MOVE_PCT           = 2.5         # minimum % move today to qualify as momentum candidate (lowered from 4.0 — catch early movers)
 MIN_INTRADAY_VOLUME_RATIO       = 0.3         # minimum volume ratio for intraday entries — blocks illiquid noise
 MAX_INTRADAY_RANGE_PCT          = 5.0         # block stocks where avg(H-L)/Open > 5% — too volatile for 0.67% stop
 MAX_SPREAD_PCT                  = 0.005       # 0.5% max bid-ask spread — wider eats into the 0.67% stop
-MAX_PREMARKET_GAP_PCT           = 0.08        # 8% max pre-market gap — already too extended to hit 2.5% more
+MAX_PREMARKET_GAP_PCT           = 0.15        # 15% hard cap — gap-and-go stocks (8-15%) qualify if above VWAP + volume confirms
+GAP_AND_GO_VOLUME_MIN           = 1.5         # gap-and-go qualifier: volume ratio must be >= this (high conviction)
+STRONG_SECTOR_THRESHOLD         = 2.0         # sector ETF up >= this % → neutralise overbought/extended penalties for stocks in that sector
 MAX_ATR_PCT                     = 5.0         # skip stocks with ATR% > this — ATR sizer would produce R:R < 1
 STRATEGY_TAG                    = "a"         # prefix on every Alpaca client_order_id — enables per-strategy order filtering
 LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed

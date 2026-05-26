@@ -751,8 +751,8 @@ class TestMarketMomentumSignal:
         strong_day = _technical("TEST", df, skip_volume_surge=True, market_ctx={"spy_pct": 2.0})
         # On strong day, score must be higher (penalties removed)
         assert strong_day["technical_score"] > weak_day["technical_score"]
-        # Overbought signal reworded — should mention "strong tape"
-        assert any("strong tape" in s.lower() for s in strong_day["signals"])
+        # Overbought signal reworded — should mention "strong" and "tape" (broad or sector)
+        assert any("strong" in s.lower() and "tape" in s.lower() for s in strong_day["signals"])
 
     def test_no_market_ctx_behaves_as_before(self):
         """Passing market_ctx=None must not raise and must not change score."""

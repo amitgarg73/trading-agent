@@ -138,15 +138,15 @@ class TestPriceSanity:
         assert len(result["approved_trades"]) == 1
 
     def test_price_at_edge_of_tolerance_passes(self):
-        # entry=100, market=105 → exactly 5% deviation = PRICE_SANITY_PCT
+        # entry=100, market=102.9 → ~2.8% deviation < PRICE_SANITY_PCT (3%)
         trade = make_trade(entry=100.0)
-        result = _run([trade], market_price=105.0)
+        result = _run([trade], market_price=102.9)
         assert len(result["approved_trades"]) == 1
 
     def test_price_over_tolerance_blocked(self):
-        # entry=100, market=110 → 10% deviation > 5%
+        # entry=100, market=104 → ~3.8% deviation > PRICE_SANITY_PCT (3%)
         trade = make_trade(entry=100.0)
-        result = _run([trade], market_price=110.0)
+        result = _run([trade], market_price=104.0)
         assert len(result["approved_trades"]) == 0
         assert "Price sanity" in result["guardrail_blocked"][0]["reason"]
 

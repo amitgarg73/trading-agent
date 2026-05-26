@@ -14,7 +14,24 @@ from config.settings import (
     MIN_VOLUME_RATIO, MIN_PRICE, MIN_AVG_VOLUME, SCORE_THRESHOLD,
     LARGE_CAP_AVG_VOLUME, LARGE_CAP_VOLUME_RATIO, MAX_INTRADAY_RANGE_PCT,
     MAX_SPREAD_PCT, MAX_PREMARKET_GAP_PCT, MAX_ATR_PCT,
+    STRONG_SECTOR_THRESHOLD, GAP_AND_GO_VOLUME_MIN,
 )
+
+# Maps yfinance sector labels → SPDR sector ETF tickers
+_SECTOR_ETF_MAP: dict[str, str] = {
+    "Technology":             "XLK",
+    "Financial Services":     "XLF",
+    "Financial":              "XLF",
+    "Healthcare":             "XLV",
+    "Energy":                 "XLE",
+    "Industrials":            "XLI",
+    "Consumer Cyclical":      "XLY",
+    "Consumer Defensive":     "XLP",
+    "Basic Materials":        "XLB",
+    "Real Estate":            "XLRE",
+    "Utilities":              "XLU",
+    "Communication Services": "XLC",
+}
 
 
 def _intraday_bars_alpaca(ticker: str) -> pd.DataFrame | None:
@@ -121,20 +138,30 @@ def _fetch_alpaca(ticker: str) -> tuple[dict, pd.DataFrame | None]:
 
 
 def _get_market_context() -> dict:
-    """Fetch SPY intraday performance once per scan for the market momentum signal."""
+    """Fetch SPY + sector ETF intraday performance once per scan."""
+    ctx: dict = {}
     try:
         from alpaca.data.requests import StockSnapshotRequest
         from agents.alpaca_broker import _dclient
-        req   = StockSnapshotRequest(symbol_or_symbols=["SPY"])
+        sector_etfs = list(set(_SECTOR_ETF_MAP.values()))
+        req   = StockSnapshotRequest(symbol_or_symbols=["SPY"] + sector_etfs)
         snaps = _dclient().get_stock_snapshot(req)
         spy   = snaps.get("SPY")
-        if not spy or not spy.daily_bar:
-            return {}
-        open_px = getattr(spy.daily_bar, "open", None)
-        price   = getattr(spy.latest_trade, "price", None) or getattr(spy.daily_bar, "close", None)
-        if open_px and price and float(open_px) > 0:
-            spy_pct = (float(price) - float(open_px)) / float(open_px) * 100
-            return {"spy_pct": round(spy_pct, 2)}
+        if spy and spy.daily_bar:
+            open_px = getattr(spy.daily_bar, "open", None)
+            price   = getattr(spy.latest_trade, "price", None) or getattr(spy.daily_bar, "close", None)
+            if open_px and price and float(open_px) > 0:
+                ctx["spy_pct"] = round((float(price) - float(open_px)) / float(open_px) * 100, 2)
+        sector_pct: dict[str, float] = {}
+        for etf in sector_etfs:
+            snap = snaps.get(etf)
+            if snap and snap.daily_bar:
+                o = getattr(snap.daily_bar, "open", None)
+                p = getattr(snap.latest_trade, "price", None) or getattr(snap.daily_bar, "close", None)
+                if o and p and float(o) > 0:
+                    sector_pct[etf] = round((float(p) - float(o)) / float(o) * 100, 2)
+        ctx["sector_pct"] = sector_pct
+        return ctx
     except Exception:
         pass
     return {}
@@ -157,15 +184,21 @@ def _fetch(ticker: str) -> tuple[dict, pd.DataFrame | None]:
     return _fetch_alpaca(ticker)
 
 
-def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, market_ctx: dict | None = None) -> dict:
+def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, market_ctx: dict | None = None, ticker_sector: str = "") -> dict:
     close  = df["close"]
     volume = df["volume"]
     signals = []
     score   = 0
 
-    # On strong market days, overbought/extended signals become continuation setups, not reversals.
-    # Neutralise the three penalties so momentum leaders aren't excluded from the candidate pool.
+    # Neutralise overbought/extended penalties on strong broad-market OR strong-sector days.
+    # strong_day: SPY up >= 1% — broad tape supports momentum
+    # strong_sector_day: this stock's sector ETF up >= STRONG_SECTOR_THRESHOLD (2%) even if SPY is flat
+    #   e.g. semis run 4% on an MU earnings day while SPY is +0.1% — overbought semis are continuation, not reversal
     strong_day = bool(market_ctx and market_ctx.get("spy_pct", 0) >= 1.0)
+    sector_etf = _SECTOR_ETF_MAP.get(ticker_sector, "") if ticker_sector else ""
+    sector_pct_today = (market_ctx or {}).get("sector_pct", {}).get(sector_etf, 0) if sector_etf else 0
+    strong_sector_day = sector_pct_today >= STRONG_SECTOR_THRESHOLD
+    strong_tape = strong_day or strong_sector_day
 
     # RSI
     rsi = ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1]
@@ -173,10 +206,11 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, m
         if rsi < RSI_OVERSOLD:
             score += 2; signals.append(f"RSI oversold ({rsi:.1f})")
         elif rsi > RSI_OVERBOUGHT:
-            if not strong_day:
+            if not strong_tape:
                 score -= 2; signals.append(f"RSI overbought ({rsi:.1f})")
             else:
-                signals.append(f"RSI overbought ({rsi:.1f}) — momentum continuation on strong tape")
+                ctx_label = "sector" if (strong_sector_day and not strong_day) else "broad"
+                signals.append(f"RSI overbought ({rsi:.1f}) — momentum continuation on strong {ctx_label} tape")
 
     # MACD
     macd = ta.trend.MACD(close)
@@ -194,7 +228,7 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, m
         if bb_pct < 0.2:
             score += 2; signals.append("Near lower Bollinger (mean-reversion setup)")
         elif bb_pct > 0.8:
-            if not strong_day:
+            if not strong_tape:
                 score -= 1; signals.append("Near upper Bollinger")
 
     # Volume surge — skipped at premarket (partial day vs full-day avg is meaningless at open)
@@ -241,16 +275,19 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, m
             score += 1; signals.append("Fresh SMA20 breakout — continuation setup")
             breakout_freshness = "FRESH"
         elif dist_sma20 > 0.12:
-            if not strong_day:
+            if not strong_tape:
                 score -= 1; signals.append("Extended >12% above SMA20 — mean-reversion risk")
             breakout_freshness = "EXTENDED"
 
-    # Market momentum: +1 if SPY up >1% (broad tape reinforces bullish setups)
+    # Market/sector momentum bonus: +1 on strong broad tape or strong sector day
     if market_ctx:
         spy_pct = market_ctx.get("spy_pct", 0)
         if spy_pct >= 1.0 and score > 0:
             score += 1
             signals.append(f"Market tailwind: SPY +{spy_pct:.1f}%")
+        elif strong_sector_day and not strong_day and score > 0:
+            score += 1
+            signals.append(f"Sector tailwind: {sector_etf} +{sector_pct_today:.1f}%")
 
     return {
         "technical_score": max(-10, min(10, score)),
@@ -288,7 +325,8 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False, market_ctx: dict 
     latest_date = df.index[-1].date() if hasattr(df.index[-1], "date") else None
     if latest_date and latest_date < date.today() - timedelta(days=7):
         return None
-    tech = _technical(ticker, df, skip_volume_surge=skip_volume_surge, market_ctx=market_ctx)
+    ticker_sector = info.get("sector") or info.get("category", "ETF")
+    tech = _technical(ticker, df, skip_volume_surge=skip_volume_surge, market_ctx=market_ctx, ticker_sector=ticker_sector)
     price = tech["price"]
     if not _passes_filters(info, price):
         return None
@@ -299,7 +337,10 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False, market_ctx: dict 
         spread_pct = (ask - bid) / ask
         if spread_pct > MAX_SPREAD_PCT:
             return None
-    # Pre-market gap filter — stock already extended, 2.5% target unreachable on top
+    # Pre-market gap filter:
+    #   > 15%  → hard block (binary event, spread risk)
+    #   8-15%  → gap-and-go: allow only if above VWAP + volume confirms conviction
+    #   < 8%   → pass through; let technical scoring handle extended signals
     premarket_price = info.get("preMarketPrice")
     prev_close      = info.get("regularMarketPreviousClose")
     premarket_gap_pct = None
@@ -307,6 +348,11 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False, market_ctx: dict 
         premarket_gap_pct = round((float(premarket_price) - float(prev_close)) / float(prev_close), 4)
         if abs(premarket_gap_pct) > MAX_PREMARKET_GAP_PCT:
             return None
+        if abs(premarket_gap_pct) > 0.08:
+            # Gap-and-go window: qualify with intraday signals before allowing through
+            _gap_intra = _intraday_signals(ticker)
+            if not _gap_intra.get("above_vwap") or tech.get("volume_ratio", 0) < GAP_AND_GO_VOLUME_MIN:
+                return None
     if abs(tech["technical_score"]) < SCORE_THRESHOLD:
         return None
     # Intraday volatility filter: skip stocks whose typical H-L swing is so wide

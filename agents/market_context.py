@@ -76,7 +76,7 @@ NFP_DATES = {
 
 
 _FUTURES_MAP = {"S&P500": "ES=F", "Nasdaq": "NQ=F", "Dow": "YM=F"}
-_SECTOR_ETFS = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLC", "XLY", "XLP", "XLB", "XLRE", "XLU"]
+_SECTOR_ETFS = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLC", "XLY", "XLP", "XLB", "XLRE", "XLU", "SOXX", "SMH"]
 _INTL_MAP    = {
     "Nikkei (Japan)":  "^N225",
     "FTSE (UK)":       "^FTSE",
