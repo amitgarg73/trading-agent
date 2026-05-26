@@ -163,13 +163,20 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, m
     signals = []
     score   = 0
 
+    # On strong market days, overbought/extended signals become continuation setups, not reversals.
+    # Neutralise the three penalties so momentum leaders aren't excluded from the candidate pool.
+    strong_day = bool(market_ctx and market_ctx.get("spy_pct", 0) >= 1.0)
+
     # RSI
     rsi = ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1]
     if pd.notna(rsi):
         if rsi < RSI_OVERSOLD:
             score += 2; signals.append(f"RSI oversold ({rsi:.1f})")
         elif rsi > RSI_OVERBOUGHT:
-            score -= 2; signals.append(f"RSI overbought ({rsi:.1f})")
+            if not strong_day:
+                score -= 2; signals.append(f"RSI overbought ({rsi:.1f})")
+            else:
+                signals.append(f"RSI overbought ({rsi:.1f}) — momentum continuation on strong tape")
 
     # MACD
     macd = ta.trend.MACD(close)
@@ -187,7 +194,8 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, m
         if bb_pct < 0.2:
             score += 2; signals.append("Near lower Bollinger (mean-reversion setup)")
         elif bb_pct > 0.8:
-            score -= 1; signals.append("Near upper Bollinger")
+            if not strong_day:
+                score -= 1; signals.append("Near upper Bollinger")
 
     # Volume surge — skipped at premarket (partial day vs full-day avg is meaningless at open)
     avg_vol   = volume.rolling(20).mean().iloc[-1]
@@ -233,7 +241,8 @@ def _technical(ticker: str, df: pd.DataFrame, skip_volume_surge: bool = False, m
             score += 1; signals.append("Fresh SMA20 breakout — continuation setup")
             breakout_freshness = "FRESH"
         elif dist_sma20 > 0.12:
-            score -= 1; signals.append("Extended >12% above SMA20 — mean-reversion risk")
+            if not strong_day:
+                score -= 1; signals.append("Extended >12% above SMA20 — mean-reversion risk")
             breakout_freshness = "EXTENDED"
 
     # Market momentum: +1 if SPY up >1% (broad tape reinforces bullish setups)

@@ -719,27 +719,40 @@ class TestMarketMomentumSignal:
         df = make_price_df(trend=base_trend)
         return _technical("TEST", df, market_ctx={"spy_pct": spy_pct})
 
-    def test_strong_market_adds_one_to_bullish(self):
+    def test_strong_market_raises_bullish_score(self):
         result_neutral = self._score_with_ctx(0.0)
         result_bull    = self._score_with_ctx(1.5)
-        if result_neutral["technical_score"] > 0:
-            assert result_bull["technical_score"] == result_neutral["technical_score"] + 1
-            assert any("tailwind" in s.lower() for s in result_bull["signals"])
+        # Strong day: tailwind +1 and penalties neutralized — score must be strictly higher
+        assert result_bull["technical_score"] > result_neutral["technical_score"]
+        assert any("tailwind" in s.lower() for s in result_bull["signals"])
 
     def test_flat_market_no_bonus(self):
         result_no_ctx  = self._score_with_ctx(0.0)
         result_flat    = self._score_with_ctx(0.5)
         assert result_flat["technical_score"] == result_no_ctx["technical_score"]
 
-    def test_market_bonus_not_applied_to_bearish_candidate(self):
+    def test_market_bonus_not_applied_when_score_nonpositive(self):
         from tests.conftest import make_price_df
         from scanner.scanner import _technical
-        # Overbought extended stock (trend=0.015, low vol, skip volume surge) → score=-1
-        # RSI overbought(-2) + upper BB(-1) + extended SMA20(-1) + MACD bullish(+2) + uptrend(+1) = -1
-        df = make_price_df(trend=0.015, volatility=0.001)
+        # Flat price series (no trend, no noise): RSI overbought(neutral on strong_day) + MACD bearish(-1) = -1
+        # Score stays ≤ 0 even on a strong day — tailwind guard must not fire
+        df = make_price_df(trend=0.0, volatility=0.0)
         result = _technical("TEST", df, skip_volume_surge=True, market_ctx={"spy_pct": 2.0})
-        assert result["technical_score"] <= 0, "test setup: expected non-positive score"
+        assert result["technical_score"] <= 0, f"test setup: expected non-positive score, got {result['technical_score']}"
         assert not any("tailwind" in s.lower() for s in result["signals"])
+
+    def test_overbought_penalty_neutralized_on_strong_day(self):
+        """On SPY +1%+ day, RSI overbought / upper BB / extended SMA20 don't penalise — momentum continuation."""
+        from tests.conftest import make_price_df
+        from scanner.scanner import _technical
+        # Strong uptrend: RSI overbought, extended above SMA20, near upper BB
+        df = make_price_df(trend=0.015, volatility=0.001)
+        weak_day  = _technical("TEST", df, skip_volume_surge=True, market_ctx={"spy_pct": 0.3})
+        strong_day = _technical("TEST", df, skip_volume_surge=True, market_ctx={"spy_pct": 2.0})
+        # On strong day, score must be higher (penalties removed)
+        assert strong_day["technical_score"] > weak_day["technical_score"]
+        # Overbought signal reworded — should mention "strong tape"
+        assert any("strong tape" in s.lower() for s in strong_day["signals"])
 
     def test_no_market_ctx_behaves_as_before(self):
         """Passing market_ctx=None must not raise and must not change score."""
