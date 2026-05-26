@@ -583,7 +583,7 @@ elif page == "Today":
                 "Nasdaq": "NQ=F — Nasdaq 100 E-mini futures. Tech-heavy index direction.",
                 "Dow":    "YM=F — Dow Jones E-mini futures. Blue-chip index direction.",
             }
-            cols[i + 3].metric(name, f"${data['price']:,.0f}", delta=f"{chg:+.2f}%",
+            cols[i + 3].metric(name, f"{data['price']:,.0f}", delta=f"{chg:+.2f}%",
                                help=help_map.get(name, name))
 
         if intl:
