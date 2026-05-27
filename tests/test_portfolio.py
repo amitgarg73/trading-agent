@@ -397,15 +397,12 @@ class TestBreakevenStop:
         updates = self._stop_loss_updates_for(mock_update, "test-leg-b")
         assert len(updates) == 0, "Cross-ticker breakeven lock must not fire"
 
-    def test_breakeven_lock_alpaca_no_resubmit_with_native_trail(self):
-        """With USE_NATIVE_TRAILING_STOP=True, breakeven lock must NOT call submit_bracket_order.
-        Native trail tracks the intraday peak; resubmitting a BUY bracket on an open position
-        places a stale limit below market and strips stop protection from Leg B."""
+    def test_breakeven_lock_alpaca_never_resubmits_bracket(self):
+        """In Alpaca mode, breakeven lock must never call submit_bracket_order regardless of
+        native trail setting. Resubmitting a BUY bracket on an already-open position places a
+        stale limit below market and strips stop protection from Leg B during the polling gap.
+        The DB stop_loss update is sufficient — refresh_positions enforces it next cycle."""
         from agents.portfolio import _lock_breakeven
-        from config.settings import USE_NATIVE_TRAILING_STOP
-
-        if not USE_NATIVE_TRAILING_STOP:
-            pytest.skip("native trail is off — resubmit path is exercised instead")
 
         entry = 100.0
         leg_a, leg_b = self._make_legs(entry=entry)
@@ -413,35 +410,13 @@ class TestBreakevenStop:
         leg_b["stop_loss"] = entry - 1  # below entry — lock not yet applied
 
         with patch("agents.portfolio.db.update") as mock_update, \
-             patch("agents.alpaca_broker.cancel_order", return_value=True) as mock_cancel, \
+             patch("agents.alpaca_broker.cancel_order") as mock_cancel, \
              patch("agents.alpaca_broker.submit_bracket_order") as mock_submit:
             _lock_breakeven([leg_b], leg_a, broker="alpaca")
 
         mock_submit.assert_not_called()
         mock_cancel.assert_not_called()
         mock_update.assert_called_once()  # DB stop_loss update still fires
-
-    def test_breakeven_lock_alpaca_resubmits_without_native_trail(self):
-        """With USE_NATIVE_TRAILING_STOP=False, breakeven lock resubmits with correct params."""
-        from agents.portfolio import _lock_breakeven
-        from config.settings import TRAIL_PCT
-
-        entry = 100.0
-        leg_a, leg_b = self._make_legs(entry=entry)
-        leg_b["alpaca_order_id"] = "old-bracket-id"
-        leg_b["stop_loss"] = entry - 1
-
-        with patch("agents.portfolio.db.update"), \
-             patch("agents.portfolio.USE_NATIVE_TRAILING_STOP", False), \
-             patch("agents.alpaca_broker.cancel_order", return_value=True), \
-             patch("agents.alpaca_broker.submit_bracket_order",
-                   return_value=("new-id", 100.0)) as mock_submit:
-            _lock_breakeven([leg_b], leg_a, broker="alpaca")
-
-        mock_submit.assert_called_once()
-        _, kwargs = mock_submit.call_args
-        assert kwargs.get("use_native_trail") is False
-        assert kwargs.get("trail_pct") == TRAIL_PCT
 
 
 # ── Live-price recalculation (inverted stop prevention) ──────────────────────

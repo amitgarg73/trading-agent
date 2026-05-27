@@ -466,32 +466,14 @@ def _lock_breakeven(open_pos: list, closed_leg_a: dict, broker: str) -> None:
             leg_b["stop_loss"] = entry   # update in-memory too
             print(f"  🔒 Breakeven lock: {leg_b['ticker']} Leg B stop → ${entry:.2f}")
 
-            if broker == "alpaca" and not USE_NATIVE_TRAILING_STOP:
-                # Only resubmit when native trail is OFF. With native trail, Alpaca tracks
-                # the intraday peak in real-time — once Leg A hits +1%, a 1% reversal from
-                # peak ≈ breakeven, so no bracket resubmit is needed. Resubmitting a new BUY
-                # bracket on an already-open position places a stale limit below market and
-                # leaves Leg B without stop protection.
-                from agents import alpaca_broker
-                order_id = leg_b.get("alpaca_order_id")
-                if order_id:
-                    cancelled = alpaca_broker.cancel_order(order_id)
-                    if cancelled:
-                        new_id, _ = alpaca_broker.submit_bracket_order(
-                            ticker=leg_b["ticker"],
-                            shares=leg_b["shares"],
-                            entry_price=entry,
-                            target_price=leg_b["target_price"],
-                            stop_price=entry,
-                            action=leg_b["action"],
-                            use_native_trail=USE_NATIVE_TRAILING_STOP,
-                            trail_pct=TRAIL_PCT,
-                        )
-                        if new_id:
-                            db.update("positions", {"id": leg_b["id"]}, {"alpaca_order_id": new_id})
-                            print(f"        Resubmitted Leg B bracket with breakeven stop → {new_id}")
-            elif broker == "alpaca":
-                print(f"  🔒 Breakeven lock: {leg_b['ticker']} Leg B — native trail at peak; no resubmit needed")
+            if broker == "alpaca":
+                # DB stop_loss update above (line 465) is sufficient.
+                # refresh_positions() enforces it on the next polling cycle via the manual trail.
+                # Cancelling and resubmitting the Alpaca bracket would place a stale limit BUY
+                # at entry price after the stock has already moved +1% — that order never fills
+                # and the cancel strips the existing stop-loss leg, leaving Leg B unprotected
+                # until the next cycle.
+                print(f"  🔒 Breakeven lock: {leg_b['ticker']} Leg B — DB stop updated; Alpaca enforces next cycle")
 
 
 def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list:
