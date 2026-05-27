@@ -36,8 +36,8 @@ def _make_order(symbol: str, side: str, status: str) -> MagicMock:
     o.side.value = side
     o.status = MagicMock()
     o.status.value = status
-    o.filled_at = f"{TODAY}T10:00:00" if status == "filled" else None
-    o.submitted_at = f"{TODAY}T09:55:00"
+    o.filled_at = datetime.utcnow().isoformat() if status == "filled" else None
+    o.submitted_at = datetime.utcnow().isoformat()
     return o
 
 

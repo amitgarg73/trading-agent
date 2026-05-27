@@ -12,13 +12,14 @@ from config.settings import (
     INTRADAY_TARGET_PCT,
 )
 
-TODAY = "2026-05-20"
+TODAY = date.today().isoformat()
+_TODAY_DATE   = date.today()
 WINDOW_HOUR   = INTRADAY_SCAN_UTC_START   # 15 — first hour inside window (11 AM ET)
 OUTSIDE_HOUR  = INTRADAY_SCAN_UTC_END     # 17 — first hour outside window (1 PM ET)
 
 
 def _utc_now(hour: int) -> datetime:
-    return datetime(2026, 5, 20, hour, 30, 0)
+    return datetime(_TODAY_DATE.year, _TODAY_DATE.month, _TODAY_DATE.day, hour, 30, 0)
 
 
 def _make_closed_row(realized: float) -> dict:
@@ -31,7 +32,7 @@ def _make_open_row(unrealized: float = 0.0, ticker: str = "HELD") -> dict:
 
 def _make_prior_scan(minutes_ago: float = INTRADAY_SCAN_MIN_INTERVAL_MINS + 1) -> dict:
     """Helper: make a prior scan result that's old enough to allow another run."""
-    scanned_at = datetime(2026, 5, 20, WINDOW_HOUR, 30, 0) - __import__("datetime").timedelta(minutes=minutes_ago)
+    scanned_at = _utc_now(WINDOW_HOUR) - __import__("datetime").timedelta(minutes=minutes_ago)
     return {"scan_type": "intraday_scan", "date": TODAY,
             "results": {"scanned_at": scanned_at.isoformat()}}
 
