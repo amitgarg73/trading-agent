@@ -16,13 +16,19 @@ from config.settings import (
 
 def _current_price(ticker: str) -> float | None:
     try:
-        t = yf.Ticker(ticker)
-        data = t.history(period="1d", interval="1m")
-        if data.empty:
-            return None
-        return round(float(data["Close"].iloc[-1]), 2)
+        from agents.alpaca_broker import get_live_prices
+        prices = get_live_prices([ticker])
+        if prices.get(ticker):
+            return round(float(prices[ticker]), 2)
     except Exception:
-        return None
+        pass
+    try:
+        data = yf.Ticker(ticker).history(period="1d", interval="1m")
+        if not data.empty:
+            return round(float(data["Close"].iloc[-1]), 2)
+    except Exception:
+        pass
+    return None
 
 
 def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=None):
