@@ -265,3 +265,87 @@ def test_get_avg_daily_volumes_missing_ticker_returns_empty(mock_dclient):
     result = get_avg_daily_volumes(["AAPL"], days=20)
 
     assert result == {}
+
+
+# ── get_intraday_signals day_high/day_low ─────────────────────────────────────
+
+def _make_snapshot(price, vwap, open_px, high, low, volume=500_000, spy=False):
+    snap = MagicMock()
+    snap.daily_bar.vwap   = vwap
+    snap.daily_bar.open   = open_px
+    snap.daily_bar.high   = high
+    snap.daily_bar.low    = low
+    snap.daily_bar.volume = volume
+    snap.latest_trade.price = price
+    return snap
+
+
+@patch("agents.alpaca_broker._dclient")
+def test_get_intraday_signals_returns_day_high_and_low(mock_dclient):
+    """get_intraday_signals must include day_high and day_low from snap.daily_bar."""
+    spy_snap = _make_snapshot(520.0, 518.0, 515.0, 522.0, 513.0)
+    aapl_snap = _make_snapshot(195.0, 193.0, 190.0, 198.0, 188.0)
+
+    mock_dclient.return_value.get_stock_snapshot.return_value = {
+        "SPY": spy_snap, "AAPL": aapl_snap,
+    }
+
+    from agents.alpaca_broker import get_intraday_signals
+    result = get_intraday_signals(["AAPL"])
+
+    assert "AAPL" in result
+    assert result["AAPL"]["day_high"] == pytest.approx(198.0)
+    assert result["AAPL"]["day_low"]  == pytest.approx(188.0)
+
+
+@patch("agents.alpaca_broker._dclient")
+def test_get_intraday_signals_day_range_zero_safe(mock_dclient):
+    """day_high == day_low (flat bar) must not crash — returns 0.0 for both."""
+    spy_snap  = _make_snapshot(520.0, 518.0, 515.0, 522.0, 513.0)
+    flat_snap = _make_snapshot(100.0, 100.0, 100.0, 100.0, 100.0)
+
+    mock_dclient.return_value.get_stock_snapshot.return_value = {
+        "SPY": spy_snap, "FLAT": flat_snap,
+    }
+
+    from agents.alpaca_broker import get_intraday_signals
+    result = get_intraday_signals(["FLAT"])
+
+    assert "FLAT" in result
+    assert result["FLAT"]["day_high"] == pytest.approx(100.0)
+    assert result["FLAT"]["day_low"]  == pytest.approx(100.0)
+
+
+# ── top-of-range filter (inline logic) ───────────────────────────────────────
+
+def _pct_range(price, day_low, day_high):
+    """Replicate orchestrator top-of-range calc for unit testing."""
+    if not day_high or not day_low or (day_high - day_low) <= 0:
+        return None
+    return (price - day_low) / (day_high - day_low)
+
+
+def test_top_of_range_filter_blocks_near_high():
+    """Candidate at 90% of day range must be filtered."""
+    day_low, day_high = 100.0, 200.0
+    price = 190.0  # 90% of range
+    assert _pct_range(price, day_low, day_high) > 0.85
+
+
+def test_top_of_range_filter_passes_mid_range():
+    """Candidate at 50% of day range must pass."""
+    day_low, day_high = 100.0, 200.0
+    price = 150.0  # 50% of range
+    assert _pct_range(price, day_low, day_high) <= 0.85
+
+
+def test_top_of_range_filter_passes_at_exactly_85pct():
+    """Candidate at exactly 85% of day range must pass (threshold is exclusive >0.85)."""
+    day_low, day_high = 100.0, 200.0
+    price = 185.0  # exactly 85%
+    assert _pct_range(price, day_low, day_high) <= 0.85
+
+
+def test_top_of_range_filter_skips_when_no_day_range():
+    """Missing day_high/day_low (simulation mode) must not crash and must pass."""
+    assert _pct_range(150.0, 0.0, 0.0) is None

@@ -111,12 +111,16 @@ def get_intraday_signals(tickers: list[str]) -> dict[str, dict]:
             today_pct  = (price - open_px) / open_px if open_px > 0 else 0.0
             rs_vs_spy  = round(today_pct / spy_pct, 2) if spy_pct and abs(spy_pct) > 0.003 else None
             today_vol = int(getattr(snap.daily_bar, "volume", 0) or 0)
+            day_high  = float(getattr(snap.daily_bar, "high", 0) or 0)
+            day_low   = float(getattr(snap.daily_bar, "low",  0) or 0)
             signals[ticker] = {
                 "above_vwap":       price > vwap,
                 "vwap":             round(vwap, 2),
                 "today_pct_change": round(today_pct * 100, 2),
                 "rs_vs_spy":        rs_vs_spy,
                 "today_volume":     today_vol,
+                "day_high":         round(day_high, 2),
+                "day_low":          round(day_low, 2),
             }
         return signals
     except Exception as e:

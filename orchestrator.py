@@ -340,6 +340,22 @@ def premarket(broker: str = "simulation"):
         if dropped_orb:
             print(f"[ 1.87/4 ] ORB filter: dropped {dropped_orb} inside-range candidate(s)")
 
+        # Drop stocks priced in the top 15% of today's day range — entering near the high means
+        # little upside left and outsized retracement risk.
+        pre_top = len(candidates)
+        candidates = [
+            c for c in candidates
+            if not (
+                c.get("day_high") and c.get("day_low")
+                and (c["day_high"] - c["day_low"]) > 0
+                and ((c.get("current_price") or c.get("price") or 0) - c["day_low"]) /
+                    (c["day_high"] - c["day_low"]) > 0.85
+            )
+        ]
+        dropped_top = pre_top - len(candidates)
+        if dropped_top:
+            print(f"[ 1.88/4 ] Top-of-range filter: dropped {dropped_top} near-day-high candidate(s)")
+
     elif broker == "simulation":
         # Compute RS vs SPY via yfinance — gives Claude a relative-strength signal
         # that would otherwise require Alpaca live quotes (alpaca mode only).
