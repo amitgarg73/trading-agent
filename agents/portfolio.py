@@ -142,7 +142,6 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
         "alpaca_order_id":     alpaca_order_id,
         "high_watermark":      db_entry,
         "native_trail_active": native_trail,
-        "confidence":          trade.get("confidence"),
         "run_id":              run_id,
     }
     if fill_price_actual is not None:

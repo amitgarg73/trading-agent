@@ -184,9 +184,9 @@ class TestConfidenceStoredOnPosition:
             from agents.portfolio import _open_single_position
             _open_single_position("plan-001", trade, price=100.0, broker="simulation", run_id="r1")
 
-        position_rows = [data for (table, data) in inserted_rows if table == "positions"]
-        assert position_rows, "No position row inserted into positions table"
-        assert position_rows[0].get("confidence") == "HIGH"
+        planned_rows = [data for (table, data) in inserted_rows if table == "planned_trades"]
+        assert planned_rows, "No planned_trade row inserted"
+        assert planned_rows[0].get("confidence") == "HIGH"
 
 
 # ── Tier logic ───────────────────────────────────────────────────────────────
