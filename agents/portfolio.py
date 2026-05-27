@@ -109,8 +109,8 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                 effective_target = round(limit_px * (1 + plan_target_pct), 2)
                 if qt and limit_px < qt["ask"]:
                     spread_saved = round((qt["ask"] - limit_px) * trade["shares"], 2)
-                    print(f"        Mid-price limit: {ticker} ask={qt['ask']:.2f} "
-                          f"mid={limit_px:.2f} saves ~${spread_saved:.2f}")
+                    print(f"        Passive limit: {ticker} ask={qt['ask']:.2f} bid={qt['bid']:.2f} "
+                          f"limit={limit_px:.2f} (~${spread_saved:.2f} below ask) [VALIDATE: track fill vs ask]")
 
             alpaca_order_id, fill_price_actual = alpaca_broker.submit_bracket_order(
                 ticker=ticker,
