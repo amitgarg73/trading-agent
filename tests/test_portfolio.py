@@ -449,7 +449,7 @@ class TestLivePriceRecalculation:
             return {**data, "id": "pos-1"}
 
         with patch("agents.portfolio._current_price", return_value=live_price), \
-             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": live_price}), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={"AAPL": {"ask": live_price, "bid": live_price}}), \
              patch("agents.alpaca_broker.submit_bracket_order", return_value=("order-123", live_price)), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"):
@@ -470,7 +470,7 @@ class TestLivePriceRecalculation:
         inserts, updates = [], []
 
         with patch("agents.portfolio._current_price", return_value=live_price), \
-             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": live_price}), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={"AAPL": {"ask": live_price, "bid": live_price}}), \
              patch("agents.alpaca_broker.submit_bracket_order") as mock_submit, \
              patch("core.db.insert", side_effect=lambda t, d: (inserts.append(t), {**d, "id": "x"})[1]), \
              patch("core.db.update", side_effect=lambda t, m, d: updates.append(d)):
@@ -500,7 +500,7 @@ class TestLivePriceRecalculation:
             return ("order-xyz", live_price)
 
         with patch("agents.portfolio._current_price", return_value=live_price), \
-             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": live_price}), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={"AAPL": {"ask": live_price, "bid": live_price}}), \
              patch("agents.alpaca_broker.submit_bracket_order", side_effect=capture_submit), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"):
@@ -625,7 +625,7 @@ class TestPhantomPositionGuard:
 
         with patch("agents.alpaca_broker.submit_bracket_order",
                    side_effect=RuntimeError("order rejected")), \
-             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": 100.0}), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={"AAPL": {"ask": 100.0, "bid": 100.0}}), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update", side_effect=capture_update), \
              patch("agents.portfolio._current_price", return_value=100.0):
@@ -647,7 +647,7 @@ class TestPhantomPositionGuard:
             return {**data, "id": f"fake-{table}"}
 
         with patch("agents.alpaca_broker.submit_bracket_order", return_value=("order-xyz", 100.0)), \
-             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": 100.0}), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={"AAPL": {"ask": 100.0, "bid": 100.0}}), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"), \
              patch("agents.portfolio._current_price", return_value=100.0):
@@ -722,7 +722,7 @@ class TestNativeTrailingStop:
 
         with patch("agents.alpaca_broker.submit_bracket_order", return_value=("bracket-id", 500.0)), \
              patch("agents.alpaca_broker.submit_trailing_stop", return_value="trail-id-123"), \
-             patch("agents.alpaca_broker.get_live_prices", return_value={"NVDA": 500.0}), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={"NVDA": {"ask": 500.0, "bid": 500.0}}), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"), \
              patch("agents.portfolio._current_price", return_value=500.0), \
@@ -744,7 +744,7 @@ class TestNativeTrailingStop:
 
         with patch("agents.alpaca_broker.submit_bracket_order", return_value=("bracket-id", 500.0)), \
              patch("agents.alpaca_broker.submit_trailing_stop", return_value=None), \
-             patch("agents.alpaca_broker.get_live_prices", return_value={"NVDA": 500.0}), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={"NVDA": {"ask": 500.0, "bid": 500.0}}), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"), \
              patch("agents.portfolio._current_price", return_value=500.0), \

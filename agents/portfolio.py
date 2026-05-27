@@ -77,8 +77,12 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
             # (potentially stale) scanner price.  When a stock reverses 2-4%
             # between scan and execution, a stop calculated from the scan price
             # ends up above the fill price and fires the bracket immediately.
-            live = alpaca_broker.get_live_prices([ticker])
-            live_px = live.get(ticker)
+            # Also use bid/ask spread to set the best limit price:
+            #   tight spread (<0.1%) → mid-price limit saves half the spread
+            #   wide spread (>0.2%)  → skip, spread alone destroys R:R
+            quotes = alpaca_broker.get_live_quotes([ticker])
+            qt = quotes.get(ticker)
+            live_px = qt["ask"] if qt else None
             if live_px and live_px > 0 and trade["entry_price"] > 0:
                 deviation = abs(live_px - trade["entry_price"]) / trade["entry_price"]
                 if deviation > PRICE_SANITY_PCT:
@@ -88,15 +92,25 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                     ledger.log("trade_cancelled", {"ticker": ticker, "reason": "price_drift",
                                                    "plan_price": trade["entry_price"], "live_price": live_px})
                     return None
-                # Anchor stop/target to live price, preserving the plan's % offsets.
-                # Without this, a 3% reversal within the sanity window would produce a
-                # plan stop (e.g. 99.33) above the actual fill price (97.0), firing the
-                # bracket immediately.
+                limit_px = alpaca_broker.hybrid_limit_price(qt["ask"], qt["bid"]) if qt else live_px
+                if limit_px is None:
+                    spread_pct = (qt["ask"] - qt["bid"]) / qt["ask"] * 100
+                    print(f"        ⚠️ Wide spread: {ticker} ask={qt['ask']:.2f} bid={qt['bid']:.2f} "
+                          f"spread={spread_pct:.2f}% — skipping")
+                    db.update("planned_trades", {"id": planned["id"]}, {"status": "CANCELLED"})
+                    ledger.log("trade_cancelled", {"ticker": ticker, "reason": "wide_spread",
+                                                   "ask": qt["ask"], "bid": qt["bid"],
+                                                   "spread_pct": round(spread_pct, 3)})
+                    return None
                 plan_stop_pct    = (trade["entry_price"] - trade["stop_loss"]) / trade["entry_price"]
                 plan_target_pct  = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]
-                effective_entry  = live_px
-                effective_stop   = round(live_px * (1 - plan_stop_pct), 2)
-                effective_target = round(live_px * (1 + plan_target_pct), 2)
+                effective_entry  = limit_px
+                effective_stop   = round(limit_px * (1 - plan_stop_pct), 2)
+                effective_target = round(limit_px * (1 + plan_target_pct), 2)
+                if qt and limit_px < qt["ask"]:
+                    spread_saved = round((qt["ask"] - limit_px) * trade["shares"], 2)
+                    print(f"        Mid-price limit: {ticker} ask={qt['ask']:.2f} "
+                          f"mid={limit_px:.2f} saves ~${spread_saved:.2f}")
 
             alpaca_order_id, fill_price_actual = alpaca_broker.submit_bracket_order(
                 ticker=ticker,

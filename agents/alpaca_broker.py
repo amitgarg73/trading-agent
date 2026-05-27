@@ -72,6 +72,43 @@ def get_live_prices(tickers: list[str]) -> dict[str, float]:
         return {}
 
 
+def get_live_quotes(tickers: list[str]) -> dict[str, dict]:
+    """Return {ticker: {"ask": float, "bid": float}} for order-time pricing."""
+    if not tickers:
+        return {}
+    try:
+        from alpaca.data.requests import StockLatestQuoteRequest
+        req    = StockLatestQuoteRequest(symbol_or_symbols=tickers)
+        quotes = _dclient().get_stock_latest_quote(req)
+        result = {}
+        for ticker, quote in quotes.items():
+            ask = getattr(quote, "ask_price", None)
+            bid = getattr(quote, "bid_price", None)
+            if ask and bid and float(ask) > 0 and float(bid) > 0:
+                result[ticker] = {"ask": round(float(ask), 4), "bid": round(float(bid), 4)}
+        return result
+    except Exception as e:
+        print(f"        ⚠️  Live quote fetch failed: {e}")
+        return {}
+
+
+def hybrid_limit_price(ask: float, bid: float) -> float | None:
+    """
+    Best limit price for a BUY given current bid/ask spread.
+      spread < 0.10%  → mid-price: tight market, passive fill likely within seconds
+      spread 0.10–0.20% → ask: moderate spread, don't risk missing the move
+      spread > 0.20%  → None (skip): spread alone destroys R:R before entry
+    """
+    if ask <= 0 or bid <= 0 or ask < bid:
+        return round(ask, 2) if ask > 0 else None
+    spread_pct = (ask - bid) / ask
+    if spread_pct > 0.002:
+        return None
+    if spread_pct < 0.001:
+        return round((ask + bid) / 2, 2)
+    return round(ask, 2)
+
+
 def get_intraday_signals(tickers: list[str]) -> dict[str, dict]:
     """
     Fetch intraday signals via Alpaca snapshot API: VWAP position, relative strength vs SPY.

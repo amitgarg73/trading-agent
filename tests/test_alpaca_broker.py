@@ -349,3 +349,35 @@ def test_top_of_range_filter_passes_at_exactly_85pct():
 def test_top_of_range_filter_skips_when_no_day_range():
     """Missing day_high/day_low (simulation mode) must not crash and must pass."""
     assert _pct_range(150.0, 0.0, 0.0) is None
+
+
+# ── hybrid_limit_price ────────────────────────────────────────────────────────
+
+from agents.alpaca_broker import hybrid_limit_price
+
+def test_hybrid_tight_spread_returns_mid():
+    """Spread < 0.10% → mid-price."""
+    ask, bid = 100.10, 100.00  # spread = 0.10/100.10 ≈ 0.0999% → just under 0.1%
+    result = hybrid_limit_price(ask, bid)
+    assert result == round((ask + bid) / 2, 2)
+
+def test_hybrid_moderate_spread_returns_ask():
+    """Spread 0.10–0.20% → ask price."""
+    ask, bid = 100.15, 100.00  # spread = 0.15/100.15 ≈ 0.15%
+    result = hybrid_limit_price(ask, bid)
+    assert result == round(ask, 2)
+
+def test_hybrid_wide_spread_returns_none():
+    """Spread > 0.20% → None (skip trade)."""
+    ask, bid = 100.30, 100.00  # spread = 0.30/100.30 ≈ 0.30%
+    result = hybrid_limit_price(ask, bid)
+    assert result is None
+
+def test_hybrid_zero_ask_returns_none():
+    """Zero/invalid ask → None fallback."""
+    assert hybrid_limit_price(0.0, 99.0) is None
+
+def test_hybrid_ask_less_than_bid_returns_ask():
+    """Crossed market (ask < bid) → return ask as safe fallback."""
+    result = hybrid_limit_price(99.0, 100.0)
+    assert result == round(99.0, 2)
