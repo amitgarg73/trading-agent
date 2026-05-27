@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.25 · **Updated:** 2026-05-26
+**Version:** v5.26 · **Updated:** 2026-05-27
 
 ---
 
@@ -49,6 +49,8 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 | **1.76 ML Scoring** | Predicts P(stock hits +2% intraday). Re-ranks candidates by ML score. |
 | **1.8 Live Prices** | Refreshes entry prices from Alpaca ask quotes (Alpaca mode only). |
 | **1.85 VWAP Signals** | Enriches candidates with VWAP position, today's % change, RS vs SPY. In Alpaca mode: Alpaca snapshot API. In simulation mode: yfinance batch download (all candidates + SPY, last 2 trading days) computes `today_pct_change` and `rs_vs_spy` for each candidate so simulation rankings match live behavior. |
+| **1.89 SPY Gate** | Checks SPY `today_pct_change` (from Alpaca snapshot). If negative, reduces `max_positions` by 3 for the session. Soft gate — premarket pipeline continues at reduced capacity. On SPY check failure, proceeds without reduction. |
+| **1.9 Candidate Cap** | Sorts candidates by ML score descending; retains top `MAX_DAILY_ENTRIES` (10) before the Claude call. Enforces the daily entries ceiling at the selection stage and keeps the strategy prompt bounded on high-conviction days. |
 | **2. Strategy (Claude)** | Selects trades, assigns confidence (HIGH/MEDIUM/LOW), sets entry/target/stop using fixed formulas. |
 | **3. Risk Validation** | Enforces R:R floor, position size bounds, max loss per trade. Quiet day: R:R floor drops to 2.0. |
 | **3.5 Sector Guard** | Caps exposure at 3 positions per sector. |
@@ -62,10 +64,11 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 - **Intraday scan guards (checked in order):**
   - UTC hour in window, max `INTRADAY_SCAN_MAX_RUNS` runs, min interval since last run
   - Open position count below `MAX_POSITIONS` (15)
-  - **Daily entry cap:** total positions opened today (including closed ones) below `MAX_DAILY_ENTRIES` (12). Prevents 50-position blowups on volatile days where stops free concurrent slots faster than the cap can guard.
+  - **Daily entry cap:** total positions opened today (including closed ones) below `MAX_DAILY_ENTRIES` (10). Prevents 50-position blowups on volatile days where stops free concurrent slots faster than the cap can guard.
+  - **SPY intraday gate:** SPY `today_pct_change` must be >= `MIN_SPY_MOVE_PCT` (0.3%) to proceed. Blocks scans on flat or negative SPY days. Gate failure is logged to `scan_results` with the SPY reading at skip time; Alpaca mode only (simulation passes through).
   - Net P&L above `DAILY_LOSS_LIMIT`, not already at `DAILY_BONUS_TARGET`
 - **Sector conviction:** Before calling Claude, fetches live performance of 7 sector ETFs (XLK, XLF, XLE, XLV, XLI, XLC, XLY). Hot sectors (up >= `STRONG_SECTOR_THRESHOLD` = 2%) are highlighted as priorities; weak sectors (down >= 1%) are flagged for avoidance. Injected into the strategy prompt so Claude biases toward the sectors actually moving today.
-- **Intraday pre-filter:** Score >= `STRATEGY_MIN_SCORE` = 4 (lower than premarket's 5 — live momentum signals provide extra confirmation).
+- **Intraday pre-filter:** Score >= `STRATEGY_MIN_SCORE` = 5 (raised from 4 — live momentum signals provide confirmation but a quality floor of 5 blocks marginal setups).
 - **Approved trades** pass through sector guard (MAX_PER_SECTOR cap) and ATR sizer before `open_positions`.
 - **Hard stop safety net:** If `current_price < stop_loss` and the position is still in Alpaca after a 5-minute grace period, `portfolio.refresh_positions()` forces a market close via `close_position()`. Prevents positions that slip through the bracket order from bleeding beyond the stop.
 - **Phantom STOP prevention:** When a position disappears from Alpaca with no fill price, it is classified as UNFILLED ($0 P&L) instead of STOP. Prevents the exit count and P&L statistics from being distorted by entries that never executed.
@@ -103,7 +106,7 @@ Confidence is assigned by Claude based on technical score, VWAP position, and re
 ```
 entry_price    = current ask price (Alpaca) or scanner close price
 target_price   = round(entry * 1.04, 2)          # +4% ceiling (limit order on Leg B)
-partial_target = round(entry * 1.01, 2)           # +1% partial exit (Leg A)
+partial_target = round(entry * 1.005, 2)          # +0.5% partial exit (Leg A)
 
 # ATR-based stop (P0) — applied by atr_sizer.py after sector guard:
 stop_pct    = max(atr_pct * 1.2, 0.5%)           # stop is outside the noise band
@@ -119,11 +122,11 @@ Trades with stop_pct ≥ 4% (ATR so wide that stop ≥ target) are dropped befor
 
 Each trade opens as **two bracket orders**:
 
-- **Leg A** — half the shares, target = +1%. Locks in profit on smaller moves.
+- **Leg A** — half the shares, target = +0.5%. Captures profit on the first move before potential reversal.
 - **Leg B** — remaining shares, target = +4% ceiling. Rides the full move with native trailing stop.
 - Both legs share the same stop price.
 
-**Why:** Converts all-or-nothing bracket outcomes into graduated P&L. On quiet days where large moves are rare, Leg A frequently hits while Leg B trails out positive — net positive vs. net zero under the old design.
+**Why:** Converts all-or-nothing bracket outcomes into graduated P&L. 0.5% moves happen more often than 1% moves — Leg A closes early, cutting full stop-out frequency. Leg B continues trailing without interruption.
 
 ### 4.4 Native Trailing Stop
 
@@ -149,6 +152,22 @@ The ceiling is not a "close here" target in the traditional sense — it only fi
 When Leg A hits +1%, Leg B's stop is resubmitted at entry price (breakeven). The resubmit explicitly passes `use_native_trail=True` and `trail_pct` so Leg B continues trailing from breakeven rather than reverting to a fixed stop.
 
 **After Tier 1 lock-in ($716 realized):** trail tightens to 0.5% on remaining open positions to protect the day's gains.
+
+### 4.5 Entry Limit Pricing
+
+At execution time, `hybrid_limit_price(ask, bid)` sets the bracket order limit price based on the live bid-ask spread. Passive-first — the stock must come to us rather than us chasing the ask.
+
+| Spread | Limit Price | Rationale |
+|--------|-------------|-----------|
+| < 0.10% of ask | bid | Ultra-tight market; fills within seconds on any normal tick |
+| 0.10–0.20% | mid | Moderate spread; mid fills on normal intraday dips |
+| > 0.20% | skip (None) | Wide spread destroys R:R before entry |
+
+**Crossed market (ask < bid):** returns ask as a safe fallback.
+
+**Why passive-first:** Entries near the 10am open tend to be at peak momentum exhaustion — early buyers ran the stock 9:30–10am and take profits at 10am. Setting the limit at bid or mid means we only enter if the stock dips back down, filtering out chased entries. Tradeoff: higher unfill rate on straight-line breakout days; better average entry on mean-reversion days.
+
+Log line at execution: `Passive limit: {ticker} ask={ask} bid={bid} limit={limit} (~${spread_saved} below ask) [VALIDATE: track fill vs ask]`
 
 ---
 
@@ -194,18 +213,19 @@ Triggered when Fear & Greed Index < 35.
 | `MIN_REWARD_RISK` | 2.9 | Normal day R:R floor |
 | `QUIET_DAY_MIN_REWARD_RISK` | 2.0 | Quiet day R:R floor |
 | `QUIET_DAY_FG_THRESHOLD` | 35 | Fear & Greed threshold for quiet day |
-| `PARTIAL_PROFIT_PCT` | 1% | Partial exit target (Leg A) |
+| `PARTIAL_PROFIT_PCT` | 0.5% | Partial exit target (Leg A) — lowered from 1% to capture profit before reversals |
 | `USE_NATIVE_TRAILING_STOP` | True | Alpaca native trail — fires immediately on 1% reversal, no polling gap |
 | `TRAIL_PCT` | 1.5% | Trail percentage from intraday peak (widened from 1% — 1% fired on normal chop before capturing the move) |
 | `DAILY_LOCK_IN_TARGET` | $716 | Tier 1: let winners ride |
 | `DAILY_BONUS_TARGET` | $1,000 | Tier 2: close everything |
 | `DAILY_LOSS_LIMIT` | -$500 | Pause new entries if net P&L (realized + unrealized) drops below (1% of capital) |
 | `MAX_POSITIONS` | 15 | Max concurrent open positions |
-| `MAX_DAILY_ENTRIES` | 12 | Hard cap on total new positions opened per calendar day (includes closed ones) — prevents blowout days where stops free slots faster than the per-cycle guard can catch |
+| `MAX_DAILY_ENTRIES` | 10 | Hard cap on total new positions opened per calendar day (includes closed ones) — prevents blowout days where stops free slots faster than the per-cycle guard can catch |
 | `MAX_PER_SECTOR` | 3 | Sector concentration cap per scan batch |
 | `SCORE_THRESHOLD` | 4 | Minimum scanner score (absolute value) — raised from 1 to cut noise |
 | `PREMARKET_MIN_SCORE` | 5 | Pre-filter before Claude call at premarket — candidates haven't proved today's move yet |
-| `STRATEGY_MIN_SCORE` | 4 | Pre-filter before Claude call at intraday — live momentum signals provide extra confirmation so the bar is lower |
+| `MIN_SPY_MOVE_PCT` | 0.3% | Minimum SPY gain to allow intraday scan — blocks flat/down-SPY days |
+| `STRATEGY_MIN_SCORE` | 5 | Pre-filter before Claude call at intraday — raised from 4; quality floor prevents marginal setups from clearing |
 | `STRONG_SECTOR_THRESHOLD` | 2.0% | Sector ETF up >= this — highlighted as hot in strategy prompt; Claude prioritizes stocks in this sector |
 | `WEAK_SECTOR_THRESHOLD` | -1.0% | Sector ETF down >= 1% — flagged as weak; scanner applies -1 penalty to stocks in this sector |
 | `MIN_AVG_VOLUME` | 1,000,000 | Liquidity floor |
@@ -308,6 +328,7 @@ Streamlit Dashboard
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v5.26** | 2026-05-27 | Five win-rate fixes + passive entry pricing: (1) `STRATEGY_MIN_SCORE` raised 4→5 — 35.7% win rate at score=4 was well below target; marginal setups no longer clear; (2) `MAX_DAILY_ENTRIES` 12→10 — tighter daily cap reduces overtrading on volatile days; (3) `PARTIAL_PROFIT_PCT` 1%→0.5% — Leg A now captures profit at the first 0.5% move before mean-reversion, reducing full stop-outs; (4) SPY intraday gate: `MIN_SPY_MOVE_PCT=0.3%` — intraday scan is blocked when SPY is flat or negative; logged to `scan_results`; (5) Premarket SPY gate (step 1.89) — soft gate: if SPY negative, `max_positions` reduced by 3; (6) Premarket candidate cap (step 1.9) — top 10 by ML score before Claude call; (7) `hybrid_limit_price` passive-first: bid on tight spread (<0.1%), mid on moderate (0.1–0.2%), None on wide (>0.2%) — limit is set below the ask so the stock must come to us, not us chasing it. 433 tests passing. |
 | **v5.25** | 2026-05-26 | Test suite audit: (1) Hardcoded date `2026-05-20` replaced with `date.today()` in `test_intraday_scan.py` (`TODAY`, `_utc_now()`, `_make_prior_scan()`) — previously mixed with dynamic `_make_closed_row()`, creating a latent mismatch; (2) Fixed `T09:55:00` suffix in `test_reconcile_bracket_exit._make_order()` factory replaced with `datetime.utcnow().isoformat()` — orders always appear fresh regardless of test run time; (3) Added `test_orchestrator_halt_reasons.py` — 3 tests calling `premarket()` with `guardrail_blocked` as dicts, verifying no TypeError and `halt_reasons` are strings; (4) Added `test_db_filters.py` — 6 tests for `core/db.select()` `filters_gte`/`filters_lte` verifying Supabase query chain receives correct `.gte()`/`.lte()` calls. 416 tests passing. |
 | **v5.24** | 2026-05-26 | Five behavioral correctness fixes: (1) LOCK_IN P&L excluded from `_today_realized_pnl` — after `close_all_positions(reason=LOCK_IN)` fired, bonus-target guard saw stale total and opened new positions; now LOCK_IN is counted; (2) `halt_reasons` TypeError crash — `guardrail_blocked` (list of dicts) was joined directly into a string; now string-extracted before join; (3) Breakeven lock Alpaca resubmit eliminated — DB stop_loss update is sufficient; `refresh_positions` enforces it next cycle; resubmitting placed a stale limit BUY below market and stripped Leg B stop protection; `USE_NATIVE_TRAILING_STOP=False` (alpaca-py SDK limitation); (4) quiet_day note appended to intraday strategy market_note so Claude sees quiet-day confidence criteria during intraday scans; (5) `db.select()` gains `filters_gte`/`filters_lte`; date filters pushed to Supabase on all 5 historical CLOSED-position queries — eliminates full-table scans that grow linearly with trading history |
 | **v5.23** | 2026-05-26 | Five structural accuracy fixes: (1) Simulation STOP exits now close at `eff_stop` (the trail stop price), not the yfinance poll price — fixes gap-down P&L overstatement; (2) Fill poll extended from 5s to 30s (15 × 2s); fill_price backfill added to reconcile for positions still showing NULL; (3) Stale order detection in `_reconcile_with_alpaca` — pending buy orders >5min are cancelled and marked UNFILLED, preventing momentum stocks from accumulating dead limit orders; (4) `confidence` (HIGH/MEDIUM/LOW) now stored on position row at open — enables confidence-slice win rate analysis; (5) Simulation premarket enrichment — yfinance batch download computes `rs_vs_spy` and `today_pct_change` in simulation mode so candidate rankings match live behavior |
