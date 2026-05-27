@@ -40,13 +40,13 @@ _EXCLUDE_CLOSE_REASONS = {"CLEANUP", "UNFILLED"}
 
 def _today_realized_pnl() -> float:
     today = date.today().isoformat()
-    closed = db.select("positions", filters={"status": "CLOSED"})
-    today_closed = [
-        p for p in closed
-        if (p.get("closed_at") or "").startswith(today)
-        and p.get("close_reason") not in _EXCLUDE_CLOSE_REASONS
-    ]
-    return sum(p.get("realized_pnl", 0) or 0 for p in today_closed)
+    closed = db.select("positions", filters={"status": "CLOSED"},
+                       filters_gte={"closed_at": f"{today}T00:00:00"})
+    return sum(
+        p.get("realized_pnl", 0) or 0
+        for p in closed
+        if p.get("close_reason") not in _EXCLUDE_CLOSE_REASONS
+    )
 
 
 def filter_trades(approved_trades: list, broker: str = "simulation",
@@ -91,13 +91,9 @@ def filter_trades(approved_trades: list, broker: str = "simulation",
     # were stopped out and re-queued in the same scan batch (parallel run race condition),
     # and blocks same-day re-entry after a stop without waiting for the next reconcile cycle.
     today_str = date.today().isoformat()
-    open_pos  = db.select("positions", filters={"status": "OPEN"})
-    all_pos   = db.select("positions")
-    traded_today = {
-        p["ticker"] for p in all_pos
-        if p.get("status") == "OPEN"
-        or (p.get("opened_at") or "").startswith(today_str)
-    }
+    open_pos   = db.select("positions", filters={"status": "OPEN"})
+    today_pos  = db.select("positions", filters_gte={"opened_at": f"{today_str}T00:00:00"})
+    traded_today = {p["ticker"] for p in open_pos} | {p["ticker"] for p in today_pos}
 
     passed, blocked = [], []
     for trade in approved_trades:

@@ -661,3 +661,51 @@ def test_reconcile_fresh_pending_order_not_cancelled(mock_client, mock_tickers, 
         if (c[0][2] if c[0] else {}).get("close_reason") == "UNFILLED"
     ]
     assert not unfilled_updates, "Fresh pending order must not be marked UNFILLED yet"
+
+
+# ── Fix 1: LOCK_IN P&L included in realized total ────────────────────────────
+
+def test_lock_in_pnl_counts_toward_bonus_target():
+    """LOCK_IN closed positions must count in realized P&L so the bonus-target guard
+    correctly skips new entries after close_all_positions(reason='LOCK_IN') fires."""
+    lock_in_row = {
+        "realized_pnl": float(DAILY_BONUS_TARGET),
+        "closed_at": date.today().isoformat() + "T13:00:00",
+        "close_reason": "LOCK_IN",
+    }
+    result, _ = _run_scan(closed_rows=[lock_in_row])
+    assert result is None, "Scan should skip when LOCK_IN P&L already reaches bonus target"
+
+
+# ── Fix 4: quiet_day appended to strategy market_note ───────────────────────
+
+def test_quiet_day_note_included_in_strategy_market_note():
+    """When market_context returns quiet_day=True, strategy.run must receive a
+    market_summary containing the quiet-day confidence criteria."""
+    captured = {}
+
+    def capture_strategy(candidates, market_summary="", **kw):
+        captured["market_summary"] = market_summary
+        return {"trades": [], "market_context": ""}
+
+    with patch("agents.intraday.datetime") as mock_dt, \
+         patch("core.db.select", side_effect=lambda t, **kw: (
+             [_make_closed_row(100.0)] if kw.get("filters", {}).get("status") == "CLOSED" else []
+         )), \
+         patch("core.db.insert", return_value={"id": "x"}), \
+         patch("core.db.update"), \
+         patch("agents.market_context.run", return_value={"quiet_day": True, "summary": "quiet"}), \
+         patch("scanner.intraday_momentum.scan", return_value=[]), \
+         patch("scanner.scanner.run_scan", return_value=[
+             {"ticker": "AAPL", "technical_score": 5, "action": "BUY"}
+         ]), \
+         patch("agents.strategy.run", side_effect=capture_strategy):
+        mock_dt.utcnow.return_value = _utc_now(WINDOW_HOUR)
+        mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
+        from agents.intraday import _maybe_run_intraday_scan
+        _maybe_run_intraday_scan(broker="simulation")
+
+    assert "market_summary" in captured, "strategy.run must have been called"
+    assert "QUIET DAY" in captured["market_summary"], (
+        "market_summary must include quiet-day guidance when quiet_day=True"
+    )

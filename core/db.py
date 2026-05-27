@@ -36,11 +36,18 @@ def delete(table: str, match: dict) -> list:
 
 
 def select(table: str, filters: Optional[dict] = None, order: Optional[str] = None,
-           limit: Optional[int] = None, desc: bool = True) -> list:
+           limit: Optional[int] = None, desc: bool = True,
+           filters_gte: Optional[dict] = None, filters_lte: Optional[dict] = None) -> list:
     q = get_client().table(table).select("*")
     if filters:
         for col, val in filters.items():
             q = q.eq(col, val)
+    if filters_gte:
+        for col, val in filters_gte.items():
+            q = q.gte(col, val)
+    if filters_lte:
+        for col, val in filters_lte.items():
+            q = q.lte(col, val)
     if order:
         q = q.order(order, desc=desc)
     if limit:

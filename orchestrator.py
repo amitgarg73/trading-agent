@@ -429,7 +429,7 @@ def premarket(broker: str = "simulation"):
             [r.get("reason") or str(r) for r in rejected] +
             [s.get("reason") or str(s) for s in sector_blocked] +
             atr_dropped +
-            guardrail_blocked
+            [g.get("reason") or str(g) for g in guardrail_blocked]
         )
 
     db.update("scan_results", {"id": scan_row["id"]}, {

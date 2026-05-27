@@ -365,12 +365,12 @@ def refresh_positions(broker: str = "simulation") -> list:
     # Simulation mode — yfinance price checks
     # Determine effective trail: tighter after Tier 1 lock-in to protect gains while letting winners run
     today = date.today().isoformat()
-    _today_closed = db.select("positions", filters={"status": "CLOSED"})
+    _today_closed = db.select("positions", filters={"status": "CLOSED"},
+                               filters_gte={"closed_at": f"{today}T00:00:00"})
     _today_realized = sum(
         p.get("realized_pnl", 0) or 0
         for p in _today_closed
-        if (p.get("closed_at") or "").startswith(today)
-        and p.get("close_reason") not in ("CLEANUP", "UNFILLED", "LOCK_IN")
+        if p.get("close_reason") not in ("CLEANUP", "UNFILLED")
     )
     effective_trail = LOCK_IN_TRAIL_PCT if _today_realized >= DAILY_LOCK_IN_TARGET else TRAIL_PCT
 
@@ -466,7 +466,12 @@ def _lock_breakeven(open_pos: list, closed_leg_a: dict, broker: str) -> None:
             leg_b["stop_loss"] = entry   # update in-memory too
             print(f"  🔒 Breakeven lock: {leg_b['ticker']} Leg B stop → ${entry:.2f}")
 
-            if broker == "alpaca":
+            if broker == "alpaca" and not USE_NATIVE_TRAILING_STOP:
+                # Only resubmit when native trail is OFF. With native trail, Alpaca tracks
+                # the intraday peak in real-time — once Leg A hits +1%, a 1% reversal from
+                # peak ≈ breakeven, so no bracket resubmit is needed. Resubmitting a new BUY
+                # bracket on an already-open position places a stale limit below market and
+                # leaves Leg B without stop protection.
                 from agents import alpaca_broker
                 order_id = leg_b.get("alpaca_order_id")
                 if order_id:
@@ -485,6 +490,8 @@ def _lock_breakeven(open_pos: list, closed_leg_a: dict, broker: str) -> None:
                         if new_id:
                             db.update("positions", {"id": leg_b["id"]}, {"alpaca_order_id": new_id})
                             print(f"        Resubmitted Leg B bracket with breakeven stop → {new_id}")
+            elif broker == "alpaca":
+                print(f"  🔒 Breakeven lock: {leg_b['ticker']} Leg B — native trail at peak; no resubmit needed")
 
 
 def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list:

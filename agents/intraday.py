@@ -172,12 +172,12 @@ def _reconcile_with_alpaca():
 
 def _today_realized_pnl() -> float:
     today = date.today().isoformat()
-    closed = db.select("positions", filters={"status": "CLOSED"})
+    closed = db.select("positions", filters={"status": "CLOSED"},
+                       filters_gte={"closed_at": f"{today}T00:00:00"})
     return sum(
         p.get("realized_pnl", 0) or 0
         for p in closed
-        if (p.get("closed_at") or "").startswith(today)
-        and p.get("close_reason") not in ("CLEANUP", "UNFILLED", "LOCK_IN")
+        if p.get("close_reason") not in ("CLEANUP", "UNFILLED")
     )
 
 
@@ -259,8 +259,8 @@ def _maybe_run_intraday_scan(broker: str):
         return None
 
     # Daily entry cap — prevents 50+ positions on high-volatility days where stops free slots quickly
-    all_pos_today = db.select("positions")
-    daily_opened  = sum(1 for p in all_pos_today if (p.get("opened_at") or "").startswith(today))
+    all_pos_today = db.select("positions", filters_gte={"opened_at": f"{today}T00:00:00"})
+    daily_opened  = len(all_pos_today)
     if daily_opened >= MAX_DAILY_ENTRIES:
         print(f"  📊 Intraday scan skipped: daily entry cap hit ({daily_opened}/{MAX_DAILY_ENTRIES})")
         return None
@@ -350,8 +350,13 @@ def _maybe_run_intraday_scan(broker: str):
             if _weak:
                 sector_note += f"\nWEAK sectors (≤{WEAK_SECTOR_THRESHOLD}%): {', '.join(_weak)} — max 1 pick each."
 
+        quiet_note = (
+            "\nQUIET DAY (Fear & Greed < 35): apply quiet-day confidence criteria — "
+            "above_vwap=True AND rs_vs_spy ≥ 1.5 qualifies as MEDIUM even at technical_score 3–4."
+            if quiet_day else ""
+        )
         market_note = (
-            f"{mkt.get('summary', '')}{sector_note}\n\n"
+            f"{mkt.get('summary', '')}{sector_note}{quiet_note}\n\n"
             f"INTRADAY SCAN #{run_num}: Focus on momentum plays already moving today. "
             f"Prefer stocks with today_pct_change > {int(MIN_INTRADAY_MOVE_PCT)}% and rs_vs_spy > 1.5. "
             f"Set stop ~1% below entry and target ~{int(INTRADAY_TARGET_PCT * 100)}% above entry."
