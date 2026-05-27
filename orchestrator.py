@@ -332,6 +332,14 @@ def premarket(broker: str = "simulation"):
         if dropped:
             print(f"[ 1.86/4 ] Extension filter: dropped {dropped} extended-low-vol candidate(s)")
 
+        # Drop stocks still inside the opening range — no breakout confirmed.
+        # above_orb=False means price is below the ORB high; entering is buying consolidation, not momentum.
+        pre_orb = len(candidates)
+        candidates = [c for c in candidates if c.get("above_orb") is not False]
+        dropped_orb = pre_orb - len(candidates)
+        if dropped_orb:
+            print(f"[ 1.87/4 ] ORB filter: dropped {dropped_orb} inside-range candidate(s)")
+
     elif broker == "simulation":
         # Compute RS vs SPY via yfinance — gives Claude a relative-strength signal
         # that would otherwise require Alpaca live quotes (alpaca mode only).
