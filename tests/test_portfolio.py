@@ -692,3 +692,67 @@ class TestClosePriceZeroFix:
         assert len(closed_calls) == 1
         assert closed_calls[0]["close_price"] == 0.0, \
             "close_price 0.0 must not be replaced by current_price or entry_price fallback"
+
+
+# ── Native trailing stop (Layer 1 fix) ───────────────────────────────────────
+
+class TestNativeTrailingStop:
+    """
+    When USE_NATIVE_TRAILING_STOP=True, _open_single_position must:
+      1. Call submit_trailing_stop after a successful bracket order.
+      2. Store trail_order_id and native_trail_active=True in the positions row.
+    When submit_trailing_stop fails, native_trail_active must be False.
+    """
+
+    def _make_trade(self):
+        return {
+            "ticker": "NVDA", "action": "BUY",
+            "entry_price": 500.0, "target_price": 510.0, "stop_loss": 496.0,
+            "position_size": 3000, "shares": 6,
+            "estimated_profit": 60.0, "max_loss": 24.0,
+            "confidence": "HIGH", "reasoning": "test",
+        }
+
+    def test_trail_order_stored_when_submission_succeeds(self):
+        inserts = []
+
+        def capture_insert(table, data):
+            inserts.append((table, data))
+            return {**data, "id": f"fake-{table}"}
+
+        with patch("agents.alpaca_broker.submit_bracket_order", return_value=("bracket-id", 500.0)), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="trail-id-123"), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"NVDA": 500.0}), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update"), \
+             patch("agents.portfolio._current_price", return_value=500.0), \
+             patch("config.settings.USE_NATIVE_TRAILING_STOP", True):
+            from agents.portfolio import _open_single_position
+            result = _open_single_position("plan-1", self._make_trade(), 500.0, broker="alpaca")
+
+        pos_rows = [d for t, d in inserts if t == "positions"]
+        assert len(pos_rows) == 1
+        assert pos_rows[0].get("trail_order_id") == "trail-id-123"
+        assert pos_rows[0].get("native_trail_active") is True
+
+    def test_native_trail_false_when_submission_fails(self):
+        inserts = []
+
+        def capture_insert(table, data):
+            inserts.append((table, data))
+            return {**data, "id": f"fake-{table}"}
+
+        with patch("agents.alpaca_broker.submit_bracket_order", return_value=("bracket-id", 500.0)), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value=None), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"NVDA": 500.0}), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update"), \
+             patch("agents.portfolio._current_price", return_value=500.0), \
+             patch("config.settings.USE_NATIVE_TRAILING_STOP", True):
+            from agents.portfolio import _open_single_position
+            result = _open_single_position("plan-1", self._make_trade(), 500.0, broker="alpaca")
+
+        pos_rows = [d for t, d in inserts if t == "positions"]
+        assert len(pos_rows) == 1
+        assert pos_rows[0].get("trail_order_id") is None
+        assert pos_rows[0].get("native_trail_active") is False

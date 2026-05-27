@@ -42,7 +42,10 @@ Do not deploy real capital until all criteria pass.
 
 ### P0 — Pre-real-money
 - **P&L reconciliation:** Pull Alpaca `get_account().equity` at EOD as source of truth; replace fill-price calc. Add `friction_breakdown` dict (commission, spread, slippage, entry buffer) to daily_performance.
+- **Stop-loss: reduce monitoring interval (Layer 2):** Change GHA cron and cron-job.org from `*/15` to `*/5` minutes. Reduces exposure window from 15 min to 5 min for positions using bracket hard stop only. No code change needed; update `.github/workflows` YAML and external cron schedule.
+- **Stop-loss: WebSocket real-time monitor (Layer 3):** Replace polling cron with a persistent process subscribed to Alpaca's trade update stream. Reacts in seconds. Major architectural change — requires 2-week paper validation before enabling on real capital.
 
 ### P1 — Capability expansion
 - **Intraday trade entries:** Run scan + strategy + risk + order flow inside the intraday agent (every 30 min). Only enter if: (a) daily realized P&L is not negative, (b) open position count is below MAX_POSITIONS, (c) sector guard passes. Factor time-of-day into targets — shorter window to close means tighter targets. Adds compounding risk; validate on paper for 2 weeks before enabling on real capital.
+- **Replace yfinance with Alpaca for price data:** yfinance hits rate limits under repeated/concurrent runs. Move `_current_price()` (portfolio.py) and intraday momentum price/VWAP checks to Alpaca snapshot + bars API. Keep yfinance only for what Alpaca can't serve: futures (ES=F, NQ=F, YM=F), VIX (^VIX), international indices, and the scanner's 50-200 bar technical history (SMA/RSI/MACD).
 

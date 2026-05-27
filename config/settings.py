@@ -57,7 +57,7 @@ MAX_ATR_PCT                     = 5.0         # skip stocks with ATR% > this —
 STRATEGY_TAG                    = "a"         # prefix on every Alpaca client_order_id — enables per-strategy order filtering
 LARGE_CAP_AVG_VOLUME            = 15_000_000  # avg volume above which volume ratio threshold is relaxed
 LARGE_CAP_VOLUME_RATIO          = 0.5         # relaxed volume ratio for mega-caps (vs MIN_VOLUME_RATIO=1.5)
-USE_NATIVE_TRAILING_STOP    = False       # Disabled: StopLossRequest(trail_percent=) not supported by alpaca-py SDK; using manual high-watermark trail instead
+USE_NATIVE_TRAILING_STOP    = True        # After bracket fill, submit standalone TrailingStopOrderRequest — Alpaca tracks peak server-side, fires on reversal in real-time
 POSITION_SIZE_BY_CONFIDENCE = {           # Position size mapped to Claude confidence level
     "HIGH":   3_500,
     "MEDIUM": 3_000,

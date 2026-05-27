@@ -125,7 +125,22 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
         ledger.log("trade_cancelled", {"ticker": ticker, "reason": "order_failed", "leg": leg_label})
         return None
 
-    native_trail = broker == "alpaca" and USE_NATIVE_TRAILING_STOP
+    # Submit a standalone trailing stop after the bracket fills.
+    # Alpaca tracks the high-watermark server-side — fires on reversal in real-time, no polling gap.
+    # The bracket's fixed stop-loss leg remains as a hard floor for catastrophic gaps.
+    trail_order_id = None
+    if USE_NATIVE_TRAILING_STOP and broker == "alpaca" and alpaca_order_id:
+        trail_order_id = alpaca_broker.submit_trailing_stop(
+            ticker=ticker,
+            shares=trade["shares"],
+            trail_pct=TRAIL_PCT,
+        )
+        if trail_order_id:
+            print(f"        Trail stop active: {ticker} {TRAIL_PCT*100:.1f}% trail → {trail_order_id}")
+        else:
+            print(f"        ⚠️  Trail stop failed for {ticker} — bracket hard stop only")
+
+    native_trail = trail_order_id is not None
     db_entry = effective_entry if broker == "alpaca" else price
     pos_row = {
         "planned_trade_id":    planned["id"],
@@ -146,6 +161,8 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
     }
     if fill_price_actual is not None:
         pos_row["fill_price"] = fill_price_actual
+    if trail_order_id is not None:
+        pos_row["trail_order_id"] = trail_order_id
     try:
         inserted = db.insert("positions", pos_row)
     except Exception:

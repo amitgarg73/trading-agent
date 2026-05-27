@@ -74,6 +74,15 @@ def _reconcile_with_alpaca():
             and str(o.submitted_at or "").startswith(today[:10])
         }
         pending_buys = set(pending_buy_orders.keys())
+        # Map trail_order_id → fill_price for native trailing stop exits
+        trail_orders_filled = {
+            str(o.id): float(o.filled_avg_price)
+            for o in all_orders
+            if getattr(o.side, "value", o.side) == "sell"
+            and "trailing" in str(getattr(o, "order_type", "") or "").lower()
+            and getattr(o.status, "value", o.status) == "filled"
+            and o.filled_avg_price
+        }
     except Exception as e:
         print(f"  ⚠️  Reconciliation: order fetch failed — {e}")
         ledger.log("reconcile_failed", {"error": str(e)})
@@ -90,13 +99,17 @@ def _reconcile_with_alpaca():
         return
 
     # Backfill fill_price for positions that were pending at submission time but have since filled.
+    # fill_price column is a P0 post-June-8 addition; skip gracefully if not yet in schema.
     for pos in open_positions:
         if pos.get("fill_price") is None:
             order_id = pos.get("alpaca_order_id")
             if order_id and order_id in filled_by_order_id:
                 fill_px = filled_by_order_id[order_id]
-                db.update("positions", {"id": pos["id"]}, {"fill_price": fill_px})
-                print(f"  💰 fill_price backfilled: {pos['ticker']} @ ${fill_px:.2f}")
+                try:
+                    db.update("positions", {"id": pos["id"]}, {"fill_price": fill_px})
+                    print(f"  fill_price backfilled: {pos['ticker']} @ ${fill_px:.2f}")
+                except Exception:
+                    pass
 
     for pos in open_positions:
         if pos["ticker"] not in alpaca_tickers:
@@ -126,6 +139,33 @@ def _reconcile_with_alpaca():
                 })
                 db.update("planned_trades", {"id": pos["planned_trade_id"]}, {"status": "CLOSED"})
                 continue
+            # Check trailing stop exit before bracket — trail fires in real-time,
+            # so if both trail and bracket-stop triggered in the same cycle, trail wins.
+            trail_id = pos.get("trail_order_id")
+            if trail_id and trail_id in trail_orders_filled:
+                close_price = trail_orders_filled[trail_id]
+                entry  = float(pos.get("fill_price") or pos["entry_price"])
+                shares = int(pos["shares"])
+                pnl    = round(shares * (close_price - entry), 2)
+                alpaca_broker.cancel_order(pos.get("alpaca_order_id", ""))  # cancel bracket legs
+                db.update("positions", {"id": pos["id"]}, {
+                    "status":         "CLOSED",
+                    "close_reason":   "NATIVE_TRAIL",
+                    "exit_mechanism": "NATIVE_TRAIL",
+                    "close_price":    close_price,
+                    "realized_pnl":   pnl,
+                    "closed_at":      datetime.utcnow().isoformat(),
+                })
+                ledger.log("trade_closed", {
+                    "ticker":      pos["ticker"],
+                    "mechanism":   "NATIVE_TRAIL",
+                    "close_price": close_price,
+                    "pnl":         pnl,
+                    "shares":      shares,
+                })
+                print(f"  🔒 Native trail exit: {pos['ticker']} @ ${close_price:.2f} P&L=${pnl:+.2f}")
+                continue
+
             if pos["ticker"] in filled_buys:
                 # Entry filled but position gone from Alpaca — bracket exited natively.
                 # Resolve the exit price and mechanism via the parent order's filled legs.
@@ -136,6 +176,9 @@ def _reconcile_with_alpaca():
                         entry  = float(pos.get("fill_price") or pos["entry_price"])
                         shares = int(pos["shares"])
                         pnl    = round(shares * (close_price - entry), 2)
+                        # Cancel trailing stop order if it exists — bracket already exited
+                        if pos.get("trail_order_id"):
+                            alpaca_broker.cancel_order(pos["trail_order_id"])
                         db.update("positions", {"id": pos["id"]}, {
                             "status":         "CLOSED",
                             "close_reason":   mechanism or "BRACKET",

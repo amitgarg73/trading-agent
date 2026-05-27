@@ -218,6 +218,38 @@ def submit_bracket_order(
     return str(order.id), None
 
 
+def submit_trailing_stop(ticker: str, shares: int, trail_pct: float) -> str | None:
+    """
+    Submit a standalone trailing stop sell order for an open position.
+    Alpaca tracks the high-watermark server-side and fires on reversal — no polling gap.
+    Returns order ID or None on failure.
+    """
+    from alpaca.trading.requests import TrailingStopOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    try:
+        req = TrailingStopOrderRequest(
+            symbol=ticker,
+            qty=shares,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+            trail_percent=round(trail_pct * 100, 2),
+            client_order_id=_order_id(ticker),
+        )
+        order = _client().submit_order(req)
+        return str(order.id)
+    except Exception as e:
+        print(f"        ⚠️  Trailing stop submission failed for {ticker}: {e}")
+        return None
+
+
+def cancel_order(order_id: str) -> None:
+    """Cancel a specific order by ID. Swallows errors — used for cleanup."""
+    try:
+        _client().cancel_order_by_id(order_id)
+    except Exception:
+        pass
+
+
 def get_open_tickers() -> set:
     """Return set of ticker symbols currently held in Alpaca."""
     positions = _client().get_all_positions()

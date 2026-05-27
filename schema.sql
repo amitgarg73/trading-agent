@@ -52,12 +52,14 @@ create table positions (
     high_watermark      numeric,  -- Trailing stop: highest price seen since entry (updated each intraday cycle)
     native_trail_active boolean DEFAULT FALSE,  -- TRUE when Alpaca native trailing stop bracket leg was used
     exit_mechanism      text,                   -- NATIVE_TRAIL, TARGET, MANUAL_TRAIL, STOP, EOD, MANUAL
-    fill_price          numeric                 -- Actual Alpaca fill price (backfilled by intraday reconciliation)
+    fill_price          numeric,                -- Actual Alpaca fill price (backfilled by intraday reconciliation)
+    trail_order_id      text                    -- Alpaca trailing stop order ID (standalone, submitted after bracket fill)
 );
 -- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS high_watermark NUMERIC;
 -- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS native_trail_active BOOLEAN DEFAULT FALSE;
 -- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS exit_mechanism TEXT;
 -- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS fill_price NUMERIC;
+-- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS trail_order_id TEXT;
 
 -- Daily P&L performance
 create table daily_performance (
