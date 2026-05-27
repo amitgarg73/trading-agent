@@ -98,8 +98,9 @@ def _reconcile_with_alpaca():
         )
         return
 
-    # Backfill fill_price for positions that were pending at submission time but have since filled.
-    # fill_price column is a P0 post-June-8 addition; skip gracefully if not yet in schema.
+    # Backfill fill_price (and submit trail order) for positions whose entry was still
+    # pending at submission time but have since filled.
+    from config.settings import USE_NATIVE_TRAILING_STOP, TRAIL_PCT
     for pos in open_positions:
         if pos.get("fill_price") is None:
             order_id = pos.get("alpaca_order_id")
@@ -110,6 +111,22 @@ def _reconcile_with_alpaca():
                     print(f"  fill_price backfilled: {pos['ticker']} @ ${fill_px:.2f}")
                 except Exception:
                     pass
+                # Submit trailing stop now that entry is confirmed filled.
+                if USE_NATIVE_TRAILING_STOP and not pos.get("trail_order_id"):
+                    trail_id = alpaca_broker.submit_trailing_stop(
+                        ticker=pos["ticker"],
+                        shares=int(pos["shares"]),
+                        trail_pct=TRAIL_PCT,
+                    )
+                    if trail_id:
+                        try:
+                            db.update("positions", {"id": pos["id"]}, {
+                                "trail_order_id":      trail_id,
+                                "native_trail_active": True,
+                            })
+                            print(f"  Trail stop submitted (post-fill): {pos['ticker']} {TRAIL_PCT*100:.1f}% → {trail_id}")
+                        except Exception:
+                            pass
 
     for pos in open_positions:
         if pos["ticker"] not in alpaca_tickers:
