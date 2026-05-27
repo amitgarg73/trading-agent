@@ -260,7 +260,7 @@ class TestBreakevenStop:
         leg_a = make_position(
             ticker="AAPL",
             entry=entry,
-            target=round(entry * 1.01, 2),   # 1% partial target
+            target=round(entry * 1.005, 2),   # 0.5% partial target (PARTIAL_PROFIT_PCT)
             stop=round(entry * 0.9933, 2),
             shares=30,
         )

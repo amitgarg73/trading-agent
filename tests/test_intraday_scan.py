@@ -710,3 +710,69 @@ def test_quiet_day_note_included_in_strategy_market_note():
     assert "QUIET DAY" in captured["market_summary"], (
         "market_summary must include quiet-day guidance when quiet_day=True"
     )
+
+
+# ── SPY gate tests ────────────────────────────────────────────────────────────
+
+def _run_scan_alpaca(spy_pct: float, closed_rows=None):
+    """
+    Run _maybe_run_intraday_scan in alpaca mode with SPY pct mocked.
+    Returns (result, mock_momentum_scan) so tests can check whether the
+    scan pipeline was reached (gate passed) or not (gate blocked).
+    """
+    closed_rows = closed_rows or [_make_closed_row(100.0)]
+    spy_sig = {"SPY": {"today_pct_change": spy_pct}}
+
+    def db_select(table, **kw):
+        f    = kw.get("filters", {})
+        fgte = kw.get("filters_gte", {})
+        if f.get("scan_type") == "intraday_scan":
+            return []
+        if f.get("status") == "OPEN":
+            return []
+        if f.get("status") == "CLOSED":
+            return closed_rows
+        if fgte:
+            return []
+        return []
+
+    mock_momentum = MagicMock(return_value=[])
+
+    with patch("agents.intraday.datetime") as mock_dt, \
+         patch("core.db.select",   side_effect=db_select), \
+         patch("core.db.insert",   return_value={"id": "x"}), \
+         patch("core.db.update"), \
+         patch("agents.alpaca_broker.get_intraday_signals", return_value=spy_sig), \
+         patch("agents.market_context.run", return_value={"quiet_day": False, "summary": ""}), \
+         patch("scanner.intraday_momentum.scan", mock_momentum), \
+         patch("scanner.scanner.run_scan", return_value=[]):
+        mock_dt.utcnow.return_value = _utc_now(WINDOW_HOUR)
+        mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
+        from agents.intraday import _maybe_run_intraday_scan
+        result = _maybe_run_intraday_scan(broker="alpaca")
+
+    return result, mock_momentum
+
+
+class TestSPYGate:
+    """SPY ≥0.3% gate must block intraday scans on flat/down market days."""
+
+    def test_spy_gate_blocks_negative_spy(self):
+        """SPY -0.5% → gate blocks before momentum scan runs."""
+        _, mock_momentum = _run_scan_alpaca(spy_pct=-0.5)
+        mock_momentum.assert_not_called()
+
+    def test_spy_gate_blocks_flat_spy(self):
+        """SPY +0.1% (below 0.3% threshold) → gate blocks."""
+        _, mock_momentum = _run_scan_alpaca(spy_pct=0.1)
+        mock_momentum.assert_not_called()
+
+    def test_spy_gate_passes_at_threshold(self):
+        """SPY exactly +0.3% → gate passes, momentum scan runs."""
+        _, mock_momentum = _run_scan_alpaca(spy_pct=0.3)
+        mock_momentum.assert_called_once()
+
+    def test_spy_gate_passes_strong_up_day(self):
+        """SPY +0.8% → gate passes, momentum scan runs."""
+        _, mock_momentum = _run_scan_alpaca(spy_pct=0.8)
+        mock_momentum.assert_called_once()

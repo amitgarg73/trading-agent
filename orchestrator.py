@@ -16,8 +16,8 @@ from agents.intraday import run as run_intraday
 from core import db, ledger
 from core.alerts import send_alert
 from config.settings import (UNIVERSE, STRATEGY_MIN_SCORE, PREMARKET_MIN_SCORE, TOTAL_CAPITAL,
-                             MAX_POSITIONS, POSITION_SIZE_BY_CONFIDENCE, STRATEGY_TAG,
-                             STRONG_SECTOR_THRESHOLD, WEAK_SECTOR_THRESHOLD)
+                             MAX_POSITIONS, MAX_DAILY_ENTRIES, POSITION_SIZE_BY_CONFIDENCE,
+                             STRATEGY_TAG, STRONG_SECTOR_THRESHOLD, WEAK_SECTOR_THRESHOLD)
 from agents import alpaca_broker
 
 
@@ -287,7 +287,7 @@ def premarket(broker: str = "simulation"):
     intraday_sigs = {}
     if broker == "alpaca":
         tickers = [c["ticker"] for c in candidates]
-        signal_tickers = list(set(tickers + _SECTOR_ETFS))
+        signal_tickers = list(set(tickers + _SECTOR_ETFS + ["SPY"]))
         with ThreadPoolExecutor(max_workers=2) as executor:
             f_prices  = executor.submit(alpaca_broker.get_live_prices, tickers)
             f_signals = executor.submit(alpaca_broker.get_intraday_signals, signal_tickers)
@@ -356,6 +356,16 @@ def premarket(broker: str = "simulation"):
         if dropped_top:
             print(f"[ 1.88/4 ] Top-of-range filter: dropped {dropped_top} near-day-high candidate(s)")
 
+        # SPY premarket gate — if SPY is already negative at 10am, all intraday momentum fails.
+        # market_context handles VIX/futures; this is a live-price check on the open itself.
+        _spy_pct = intraday_sigs.get("SPY", {}).get("today_pct_change", None)
+        if _spy_pct is not None and _spy_pct < 0:
+            print(f"[ 1.89/4 ] ⚠️  SPY premarket: {_spy_pct:+.2f}% — market opened negative. "
+                  f"Reducing max positions to avoid momentum entries on down-market day.")
+            today_max_positions = max(0, today_max_positions - 3)
+        elif _spy_pct is not None:
+            print(f"[ 1.89/4 ] SPY premarket: {_spy_pct:+.2f}% ✅")
+
     elif broker == "simulation":
         # Compute RS vs SPY via yfinance — gives Claude a relative-strength signal
         # that would otherwise require Alpaca live quotes (alpaca mode only).
@@ -380,6 +390,13 @@ def premarket(broker: str = "simulation"):
                       f"— {above_spy} outperforming SPY")
         except Exception as e:
             print(f"[ 1.85/4 ] RS vs SPY (simulation): skipped — {e}")
+
+    # 1.9 Trade cap — keep only the top MAX_DAILY_ENTRIES candidates by score before sending to Claude.
+    # Prevents Claude from wasting tokens on weak candidates and caps daily exposure.
+    if len(candidates) > MAX_DAILY_ENTRIES:
+        candidates.sort(key=lambda x: (x.get("ml_score") or x.get("technical_score") or 0), reverse=True)
+        candidates = candidates[:MAX_DAILY_ENTRIES]
+        print(f"[ 1.9/4 ] Trade cap: top {MAX_DAILY_ENTRIES} candidates by score sent to Claude")
 
     # 2. Strategy
     print("[ 2/4 ] Running strategy agent...")

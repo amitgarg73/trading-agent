@@ -12,7 +12,7 @@ from config.settings import (
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
     INTRADAY_TARGET_PCT, INTRADAY_STOP_PCT, MIN_INTRADAY_MOVE_PCT,
     STRATEGY_MIN_SCORE, STRONG_SECTOR_THRESHOLD, WEAK_SECTOR_THRESHOLD,
-    UNIVERSE, TOTAL_CAPITAL, MAX_PER_SECTOR,
+    UNIVERSE, TOTAL_CAPITAL, MAX_PER_SECTOR, MIN_SPY_MOVE_PCT,
 )
 
 
@@ -337,6 +337,21 @@ def _maybe_run_intraday_scan(broker: str):
     if total >= DAILY_BONUS_TARGET:
         print(f"  🏆 Intraday scan skipped: exceptional day (${total:,.2f}) — protecting gains")
         return None
+
+    # SPY gate — require SPY up ≥MIN_SPY_MOVE_PCT% for intraday entries.
+    # Prevents opening positions on flat/down market days where momentum fails.
+    if broker == "alpaca":
+        try:
+            from agents import alpaca_broker as _ab
+            _spy_pct = _ab.get_intraday_signals(["SPY"]).get("SPY", {}).get("today_pct_change", 0)
+            _threshold = MIN_SPY_MOVE_PCT * 100  # settings stores 0.003; today_pct_change is already in %
+            if _spy_pct < _threshold:
+                print(f"  ⛔ Intraday scan skipped: SPY {_spy_pct:+.2f}% < {_threshold:.1f}% gate")
+                _save_scan_result(today, now_utc, {"candidates": 0, "reason": f"SPY gate {_spy_pct:+.2f}%"})
+                return None
+            print(f"  ✅ SPY gate: {_spy_pct:+.2f}% ≥ {_threshold:.1f}% — intraday scan allowed")
+        except Exception as _e:
+            print(f"  ⚠️  SPY gate check failed: {_e} — proceeding anyway")
 
     run_num         = len(prior_runs) + 1
     available_slots = min(MAX_POSITIONS - open_count, MAX_DAILY_ENTRIES - daily_opened)

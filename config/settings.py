@@ -17,7 +17,7 @@ DAILY_PROFIT_TARGET  = 500
 MAX_POSITION_PCT     = 0.07       # max 7% of capital per position (fits 15 positions)
 MIN_POSITION_PCT     = 0.05       # min 5% of capital per position
 MAX_POSITIONS        = 15         # max concurrent positions
-MAX_DAILY_ENTRIES    = 12         # hard cap: total new positions opened per calendar day across all scans
+MAX_DAILY_ENTRIES    = 10         # hard cap: total new positions opened per calendar day across all scans
 MAX_LOSS_PER_TRADE   = 0.0067     # stop loss: 0.67% of position size (maintains 3:1 R:R with 2% target)
 ATR_STOP_MULTIPLIER  = 0.8        # 0.8× ATR for stop — allows 3-4% ATR stocks to clear 2:1 R:R
 ATR_STOP_FLOOR       = 0.005      # P0: minimum 0.5% stop — never tighter than this
@@ -37,8 +37,8 @@ LOCK_IN_TRAIL_PCT    = 0.005     # Tighter 0.5% trail applied to open positions 
 TRAIL_PCT                   = 0.015       # Trailing stop: close if price drops 1.5% from highest seen since entry (widened from 1% — 1% fired on normal chop before capturing the move)
 INTRADAY_STOP_PCT           = 0.01        # Intraday entry stop: 1% below entry (replaces fixed 0.67% — survives normal chop on 2-4% ATR stocks)
 ENTRY_BUFFER_PCT            = 0.003       # Limit order buffer above plan price: 0.3% (was hardcoded 0.2% — wider to cut 44% unfill rate)
-PARTIAL_PROFIT_ENABLED      = True        # partial exit at 1% move locks in half the position
-PARTIAL_PROFIT_PCT          = 0.01        # 1% partial exit — locks in half the position on a smaller move
+PARTIAL_PROFIT_ENABLED      = True        # partial exit at 0.5% move locks in half the position early
+PARTIAL_PROFIT_PCT          = 0.005       # 0.5% partial exit — captures gains before reversal (tightened from 1%)
 INTRADAY_SCAN_UTC_START         = 14          # 10:00 AM ET (after premarket finishes)
 INTRADAY_SCAN_UTC_END           = 20          # outer scheduling window end
 INTRADAY_ENTRY_CUTOFF_UTC       = 19          # 3:00 PM ET hard entry cutoff; late entries are negative EV
@@ -47,6 +47,7 @@ INTRADAY_SCAN_MIN_INTERVAL_MINS = 12          # 12 min minimum — matches */15 
 INTRADAY_TARGET_PCT             = 0.02        # 2% target for intraday entries — gives 2:1 R:R with new 1% stop (raised from 1.5%)
 MIN_INTRADAY_MOVE_PCT           = 2.5         # minimum % move today to qualify as momentum candidate (lowered from 4.0 — catch early movers)
 MIN_INTRADAY_VOLUME_RATIO       = 0.3         # minimum volume ratio for intraday entries — blocks illiquid noise
+MIN_SPY_MOVE_PCT                = 0.003       # SPY must be up ≥0.3% for intraday entries — blocks flat/down market scans
 MAX_INTRADAY_RANGE_PCT          = 5.0         # block stocks where avg(H-L)/Open > 5% — too volatile for 0.67% stop
 MAX_SPREAD_PCT                  = 0.005       # 0.5% max bid-ask spread — wider eats into the 0.67% stop
 MAX_PREMARKET_GAP_PCT           = 0.15        # 15% hard cap — gap-and-go stocks (8-15%) qualify if above VWAP + volume confirms
@@ -92,8 +93,8 @@ SCORE_THRESHOLD      = 4          # minimum score to be a scanner candidate (abs
 #
 # NOTE: This filters to score >= STRATEGY_MIN_SCORE (positive), not abs(score).
 #   Bearish candidates (negative scores) are always excluded — correct for a BUY-only system.
-STRATEGY_MIN_SCORE   = 4          # intraday pre-filter: score ≥ this (intraday has live momentum signals as extra confirmation)
-PREMARKET_MIN_SCORE  = 4          # premarket pre-filter: matches STRATEGY_MIN_SCORE
+STRATEGY_MIN_SCORE   = 5          # intraday pre-filter: score ≥ this (raised from 4 — 35.7% win rate at 4 was too loose)
+PREMARKET_MIN_SCORE  = 5          # premarket pre-filter: matches STRATEGY_MIN_SCORE
 
 # Stock + ETF universe
 # Removed drags: PYPL, META, ARKK, IWM, JPM, IBM, MA, ROOT, PSA, TWLO
