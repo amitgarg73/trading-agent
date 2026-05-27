@@ -93,7 +93,7 @@ SCORE_THRESHOLD      = 4          # minimum score to be a scanner candidate (abs
 # NOTE: This filters to score >= STRATEGY_MIN_SCORE (positive), not abs(score).
 #   Bearish candidates (negative scores) are always excluded — correct for a BUY-only system.
 STRATEGY_MIN_SCORE   = 4          # intraday pre-filter: score ≥ this (intraday has live momentum signals as extra confirmation)
-PREMARKET_MIN_SCORE  = 5          # premarket pre-filter: higher bar — candidates haven't proved today's move yet
+PREMARKET_MIN_SCORE  = 4          # premarket pre-filter: matches STRATEGY_MIN_SCORE
 
 # Stock + ETF universe
 # Removed drags: PYPL, META, ARKK, IWM, JPM, IBM, MA, ROOT, PSA, TWLO
