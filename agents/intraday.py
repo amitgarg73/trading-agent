@@ -242,6 +242,7 @@ def _maybe_run_intraday_scan(broker: str):
     today = now_utc.date().isoformat()
 
     prior_scans = db.select("scan_results", filters={"date": today, "scan_type": "intraday_scan"})
+    prior_runs  = db.select("daily_runs",   filters={"date": today, "run_type": "intraday"})
 
     # Max-runs guard
     if len(prior_scans) >= INTRADAY_SCAN_MAX_RUNS:
@@ -277,7 +278,7 @@ def _maybe_run_intraday_scan(broker: str):
         print(f"  🏆 Intraday scan skipped: exceptional day (${total:,.2f}) — protecting gains")
         return None
 
-    run_num         = len(prior_scans) + 1
+    run_num         = len(prior_runs) + 1
     available_slots = min(MAX_POSITIONS - open_count, MAX_DAILY_ENTRIES - daily_opened)
     print(f"\n  🔍 Intraday scan #{run_num}: {open_count}/{MAX_POSITIONS} slots used | "
           f"{daily_opened}/{MAX_DAILY_ENTRIES} daily entries | "
