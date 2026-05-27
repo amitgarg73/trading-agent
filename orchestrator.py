@@ -318,6 +318,20 @@ def premarket(broker: str = "simulation"):
         print(f"[ 1.85/4 ] Intraday signals: {enriched}/{len(candidates)} enriched — "
               f"{above_vwap_count} above VWAP")
 
+        # Drop stocks that are already extended from open on weak volume.
+        # >3% above open + volume < 0.7x = chasing exhausted momentum; skip.
+        pre_ext = len(candidates)
+        candidates = [
+            c for c in candidates
+            if not (
+                (c.get("today_pct_change") or 0) > 3.0
+                and (c.get("volume_ratio") or 0) < 0.7
+            )
+        ]
+        dropped = pre_ext - len(candidates)
+        if dropped:
+            print(f"[ 1.86/4 ] Extension filter: dropped {dropped} extended-low-vol candidate(s)")
+
     elif broker == "simulation":
         # Compute RS vs SPY via yfinance — gives Claude a relative-strength signal
         # that would otherwise require Alpaca live quotes (alpaca mode only).
