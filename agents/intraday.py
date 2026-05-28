@@ -518,13 +518,17 @@ def _save_scan_result(today: str, now_utc: datetime, result: dict) -> None:
     })
 
 
+def run_entry_scan(broker: str = "simulation"):
+    """Run the intraday entry scan only — called by the hourly entry_scan workflow."""
+    return _maybe_run_intraday_scan(broker=broker)
+
+
 def run(broker: str = "simulation") -> dict:
+    """Position monitor: reconcile exits, sync P&L, enforce stops. No Claude call."""
     now = datetime.utcnow().isoformat()
 
     if broker == "alpaca":
         _reconcile_with_alpaca()
-
-    _maybe_run_intraday_scan(broker=broker)
 
     updated = refresh_positions(broker=broker)
 

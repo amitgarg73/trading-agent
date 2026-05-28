@@ -12,7 +12,7 @@ from scanner.scanner import run_scan
 from scanner.ml_scorer import score_candidates as ml_score_candidates, is_available as ml_available
 from agents import strategy, risk, sector_guard, guardrails, performance, market_context, news_intel, universe_refresh, daily_summary
 from agents.portfolio import open_positions
-from agents.intraday import run as run_intraday
+from agents.intraday import run as run_intraday, run_entry_scan
 from core import db, ledger
 from core.alerts import send_alert
 from config.settings import (UNIVERSE, STRATEGY_MIN_SCORE, PREMARKET_MIN_SCORE, TOTAL_CAPITAL,
@@ -579,6 +579,22 @@ def intraday(broker: str = "simulation"):
         print(f"  {icon} {c['ticker']} closed ({c['reason']}): ${c['realized_pnl']:,.2f}")
 
 
+def entry_scan(broker: str = "simulation"):
+    print(f"\n[ ENTRY SCAN ] {datetime.now().strftime('%H:%M ET')} [{broker}]")
+    if _is_halted():
+        return
+    today_iso = date.today().isoformat()
+    premarket_today = db.select("scan_results", filters={"date": today_iso, "scan_type": "premarket"})
+    if not premarket_today:
+        print(f"  ⚠️  ENTRY SCAN SKIPPED — no premarket scan found for {today_iso}.")
+        return
+    result = run_entry_scan(broker=broker)
+    if result:
+        print(f"  ✅ Entry scan complete: {result.get('opened', 0)} new position(s) opened")
+    else:
+        print(f"  📊 Entry scan: no trades opened")
+
+
 def eod(broker: str = "simulation"):
     print(f"\n{'='*60}")
     print(f"  EOD RUN — {datetime.now().strftime('%Y-%m-%d %H:%M ET')} [{broker}]")
@@ -653,7 +669,7 @@ def eod(broker: str = "simulation"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["premarket", "intraday", "eod", "universe_refresh"],
+    parser.add_argument("--mode", choices=["premarket", "intraday", "eod", "entry_scan", "universe_refresh"],
                         required=True)
     parser.add_argument("--broker", choices=["simulation", "alpaca"], default="simulation",
                         help="Execution broker (default: simulation)")
@@ -663,6 +679,8 @@ def main():
         premarket(broker=args.broker)
     elif args.mode == "intraday":
         intraday(broker=args.broker)
+    elif args.mode == "entry_scan":
+        entry_scan(broker=args.broker)
     elif args.mode == "eod":
         eod(broker=args.broker)
     elif args.mode == "universe_refresh":
