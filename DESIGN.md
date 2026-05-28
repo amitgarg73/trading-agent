@@ -1,5 +1,5 @@
 # Trading Agent — System Design
-**Version:** v5.26 · **Updated:** 2026-05-27
+**Version:** v5.27 · **Updated:** 2026-05-27
 
 ---
 
@@ -17,7 +17,7 @@ An autonomous day-trading system that runs on a daily cron schedule, scans a cur
 cron-job.org (external scheduler)
        │
        ▼
-GitHub Actions (3 modes: premarket · intraday · EOD)
+GitHub Actions (4 modes: premarket · intraday · entry_scan · EOD)
        │
        ▼
 orchestrator.py  ──►  Scanner  ──►  ML Scorer
@@ -58,11 +58,25 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 | **3.75 Guardrails** | Blocks duplicates, price sanity check (>5% from market = reject), daily loss limit. |
 | **4. Execute** | Opens bracket orders in Alpaca. Each trade splits into two legs (partial profit design). |
 
-### 3.2 Intraday — Every 15 min, 10:00 AM–3:45 PM ET
+### 3.2 Intraday Position Monitor — Every 15 min, 10:00 AM–3:45 PM ET
+
+No Claude call. Pure position management — deterministic Python only.
 
 - **Reconcile:** Detects positions closed by Alpaca bracket (stop/target fired). Records real exit price and P&L. `_reconcile_with_alpaca()` in `agents/intraday.py` fetches with `limit=500` and `after=today_start` to prevent UNFILLED misclassification on busy days. Three passes per cycle: (1) fill_price backfill — positions with `fill_price=NULL` are matched to their filled buy order and updated; (2) stale order cancellation — pending buy orders older than 5 minutes are cancelled via Alpaca and marked UNFILLED in DB; (3) main reconcile — classifies each open position as TARGET/STOP/NATIVE_TRAIL/UNFILLED based on Alpaca order state. The stale order pass prevents momentum stocks from accumulating phantom orders when the stock moves past the limit before Alpaca fills.
+- **Hard stop safety net:** If `current_price < stop_loss` and the position is still in Alpaca after a 5-minute grace period, `portfolio.refresh_positions()` forces a market close via `close_position()`. Prevents positions that slip through the bracket order from bleeding beyond the stop.
+- **Phantom STOP prevention:** When a position disappears from Alpaca with no fill price, it is classified as UNFILLED ($0 P&L) instead of STOP. Prevents the exit count and P&L statistics from being distorted by entries that never executed.
+- **Confidence stored on open:** When a new position is written to DB, the `confidence` field (HIGH/MEDIUM/LOW) from the strategy agent is stored on the position row. Enables win-rate analysis sliced by confidence tier after the eval gate.
+- **Refresh:** Syncs current price and unrealized P&L for open positions. In simulation mode, STOP exits close at `eff_stop` (the actual trail stop price), not the yfinance poll price — prevents gap-down losses from overstating P&L impact relative to what the real stop would have caught.
+- **Lock-in logic:** Tier 1 ($716 realized) — let winners ride. Tier 2 ($1,000 total) — close everything. LOCK_IN P&L is now counted in `_today_realized_pnl()` — previously excluded, which caused the bonus-target guard to see a stale total after `close_all_positions(reason=LOCK_IN)` fired and open new positions in violation of the lock.
+- **Date-filtered DB queries:** All historical CLOSED-position queries (bonus-target guard, daily entry cap, guardrails traded-today, guardrails P&L, simulation refresh) push a date-range filter to Supabase via `filters_gte`/`filters_lte` instead of loading all history and filtering in Python.
+
+### 3.3 Intraday Entry Scan — Hourly, 10:30 AM–2:30 PM ET (max 5 runs)
+
+Claude call. Fires once per hour via a separate `entry_scan.yml` GitHub Actions workflow. Reads current DB state written by the 15-min monitor; no coordination needed between the two workflows.
+
+- **Premarket guard:** Skips if no premarket scan result exists for today — entry scan has no basis without a morning candidate list.
 - **Intraday scan guards (checked in order):**
-  - UTC hour in window, max `INTRADAY_SCAN_MAX_RUNS` runs, min interval since last run
+  - UTC hour in window, max `INTRADAY_SCAN_MAX_RUNS` (6) runs, min `INTRADAY_SCAN_MIN_INTERVAL_MINS` (50 min) since last run
   - Open position count below `MAX_POSITIONS` (15)
   - **Daily entry cap:** total positions opened today (including closed ones) below `MAX_DAILY_ENTRIES` (10). Prevents 50-position blowups on volatile days where stops free concurrent slots faster than the cap can guard.
   - **SPY intraday gate:** SPY `today_pct_change` must be >= `MIN_SPY_MOVE_PCT` (0.3%) to proceed. Blocks scans on flat or negative SPY days. Gate failure is logged to `scan_results` with the SPY reading at skip time; Alpaca mode only (simulation passes through).
@@ -70,15 +84,9 @@ Runs once before market opens (delayed from 9:00 AM to allow spreads to stabiliz
 - **Sector conviction:** Before calling Claude, fetches live performance of 7 sector ETFs (XLK, XLF, XLE, XLV, XLI, XLC, XLY). Hot sectors (up >= `STRONG_SECTOR_THRESHOLD` = 2%) are highlighted as priorities; weak sectors (down >= 1%) are flagged for avoidance. Injected into the strategy prompt so Claude biases toward the sectors actually moving today.
 - **Intraday pre-filter:** Score >= `STRATEGY_MIN_SCORE` = 5 (raised from 4 — live momentum signals provide confirmation but a quality floor of 5 blocks marginal setups).
 - **Approved trades** pass through sector guard (MAX_PER_SECTOR cap) and ATR sizer before `open_positions`.
-- **Hard stop safety net:** If `current_price < stop_loss` and the position is still in Alpaca after a 5-minute grace period, `portfolio.refresh_positions()` forces a market close via `close_position()`. Prevents positions that slip through the bracket order from bleeding beyond the stop.
-- **Phantom STOP prevention:** When a position disappears from Alpaca with no fill price, it is classified as UNFILLED ($0 P&L) instead of STOP. Prevents the exit count and P&L statistics from being distorted by entries that never executed.
-- **Confidence stored on open:** When a new position is written to DB, the `confidence` field (HIGH/MEDIUM/LOW) from the strategy agent is stored on the position row. Enables win-rate analysis sliced by confidence tier after the eval gate.
-- **Refresh:** Syncs current price and unrealized P&L for open positions. In simulation mode, STOP exits close at `eff_stop` (the actual trail stop price), not the yfinance poll price — prevents gap-down losses from overstating P&L impact relative to what the real stop would have caught.
-- **Lock-in logic:** Tier 1 ($716 realized) — let winners ride. Tier 2 ($1,000 total) — close everything. LOCK_IN P&L is now counted in `_today_realized_pnl()` — previously excluded, which caused the bonus-target guard to see a stale total after `close_all_positions(reason=LOCK_IN)` fired and open new positions in violation of the lock.
 - **Quiet-day criteria in strategy prompt:** When `quiet_day=True` (Fear & Greed < 35), a criteria note is appended to the market summary before the strategy call so Claude applies tighter confidence rules during the intraday scan.
-- **Date-filtered DB queries:** All historical CLOSED-position queries (bonus-target guard, daily entry cap, guardrails traded-today, guardrails P&L, simulation refresh) push a date-range filter to Supabase via `filters_gte`/`filters_lte` instead of loading all history and filtering in Python.
 
-### 3.3 EOD — 4:30 PM ET
+### 3.4 EOD — 4:30 PM ET
 
 - **Dedup guard:** checks `scan_results` for `run_eod_started` before proceeding — prevents double-run if GitHub Actions fires twice.
 - **Observability:** `_log_run("eod", "started/completed/failed")` writes a status record to `scan_results`; EOD sends an email alert via `core/alerts.py` if positions are still open after close, or if the run crashes.
