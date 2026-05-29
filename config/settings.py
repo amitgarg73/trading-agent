@@ -26,7 +26,7 @@ ORB_ATR_FLOOR        = 0.5        # P0: ORB/ATR ratio below this → choppy open
 MIN_REWARD_RISK            = 2.0   # minimum 2:1 R:R — balances trade quality vs opportunity count
 QUIET_DAY_MIN_REWARD_RISK  = 1.5   # relaxed R:R on quiet days (Fear&Greed < 35)
 QUIET_DAY_FG_THRESHOLD     = 35    # Fear&Greed below this = quiet day
-TARGET_PCT           = 0.04       # 4% ceiling — trail does the actual exit; ceiling only fires on straight-line rockets
+TARGET_PCT           = 0.08       # 8% ceiling — trail (1.5%) does the actual exit; ceiling is a safety net for strong rockets
 MAX_PER_SECTOR       = 3          # V2d: max positions in any single sector
 DAILY_LOSS_PCT       = 0.01       # 1% of capital — daily net loss limit (realized + unrealized)
 DAILY_LOSS_LIMIT     = -(TOTAL_CAPITAL * DAILY_LOSS_PCT)  # -$500 at $50K capital
