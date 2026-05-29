@@ -519,7 +519,9 @@ def close_all_positions(reason: str = "EOD", broker: str = "simulation") -> list
 
     if broker == "alpaca":
         from agents import alpaca_broker
+        import time
         alpaca_broker.cancel_all_orders()
+        time.sleep(8)  # wait for Alpaca to process cancellations before closing
 
     for pos in open_pos:
         ticker = pos["ticker"]
