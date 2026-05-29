@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 import json
 import argparse
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from scanner.scanner import run_scan
@@ -579,7 +580,76 @@ def intraday(broker: str = "simulation"):
         print(f"  {icon} {c['ticker']} closed ({c['reason']}): ${c['realized_pnl']:,.2f}")
 
 
+def _write_summary(md: str) -> None:
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if path:
+        try:
+            with open(path, "a") as f:
+                f.write(md + "\n")
+        except Exception:
+            pass
+
+
+def _entry_scan_summary(run_time: str, result: dict | None) -> str:
+    if not result:
+        return f"## Strategy A Entry Scan — {run_time}\n\n**No trades opened** (scan returned no result — check gates above in log)"
+
+    mkt      = result.get("market_context", {})
+    fg       = mkt.get("fear_greed", "?")
+    fg_lbl   = mkt.get("fear_greed_label", "")
+    vix      = mkt.get("vix_level", "?")
+    spy_pct  = result.get("spy_pct", "?")
+    n_scan   = result.get("n_candidates_scanned", "?")
+    n_sent   = result.get("n_sent_to_claude", "?")
+    opened   = result.get("opened", 0)
+    trades   = result.get("trades", [])
+    rejected = result.get("rejected", [])
+    reasoning = result.get("reasoning", "")
+    gates    = result.get("gates", {})
+
+    lines = [
+        f"## Strategy A Entry Scan — {run_time}",
+        "",
+        "### Market",
+        "| Signal | Value |",
+        "|--------|-------|",
+        f"| SPY | {spy_pct:+.2f}% |" if isinstance(spy_pct, float) else f"| SPY | {spy_pct} |",
+        f"| VIX | {vix} |",
+        f"| Fear & Greed | {fg} — {fg_lbl} |",
+        "",
+        "### Gates",
+    ]
+    for gate, status in gates.items():
+        icon = "✅" if status else "⛔"
+        lines.append(f"- {icon} {gate}")
+
+    lines += [
+        "",
+        "### Candidate Pipeline",
+        "| Stage | Count |",
+        "|-------|-------|",
+        f"| Scanner candidates | {n_scan} |",
+        f"| Sent to Claude | {n_sent} |",
+        f"| **Trades opened** | **{opened}** |",
+    ]
+
+    if rejected:
+        lines += ["", "### Rejected by Risk/Guardrails", ", ".join(rejected)]
+
+    if reasoning:
+        lines += ["", "### Claude's Reasoning", f"> {reasoning[:600].replace(chr(10), ' ')}"]
+
+    if trades:
+        lines += ["", "### Trades Opened"]
+        for t in trades:
+            lines.append(f"- **{t.get('ticker')}** entry ${t.get('entry_price','?')} | "
+                         f"target ${t.get('target_price','?')} | stop ${t.get('stop_loss','?')}")
+
+    return "\n".join(lines)
+
+
 def entry_scan(broker: str = "simulation"):
+    run_time = datetime.now().strftime("%Y-%m-%d %H:%M ET")
     print(f"\n[ ENTRY SCAN ] {datetime.now().strftime('%H:%M ET')} [{broker}]")
     if _is_halted():
         return
@@ -587,12 +657,14 @@ def entry_scan(broker: str = "simulation"):
     premarket_today = db.select("scan_results", filters={"date": today_iso, "scan_type": "premarket"})
     if not premarket_today:
         print(f"  ⚠️  ENTRY SCAN SKIPPED — no premarket scan found for {today_iso}.")
+        _write_summary(f"## Strategy A Entry Scan — {run_time}\n\n⚠️ **Skipped** — no premarket scan found for {today_iso}")
         return
     result = run_entry_scan(broker=broker)
     if result:
         print(f"  ✅ Entry scan complete: {result.get('opened', 0)} new position(s) opened")
     else:
         print(f"  📊 Entry scan: no trades opened")
+    _write_summary(_entry_scan_summary(run_time, result))
 
 
 def eod(broker: str = "simulation"):

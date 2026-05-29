@@ -340,6 +340,7 @@ def _maybe_run_intraday_scan(broker: str):
 
     # SPY gate — require SPY up ≥MIN_SPY_MOVE_PCT% for intraday entries.
     # Prevents opening positions on flat/down market days where momentum fails.
+    _spy_pct: float | None = None
     if broker == "alpaca":
         try:
             from agents import alpaca_broker as _ab
@@ -501,6 +502,21 @@ def _maybe_run_intraday_scan(broker: str):
         result = {
             "candidates": len(merged), "momentum": len(momentum_candidates),
             "approved": len(approved), "opened": len(opened),
+            # enriched for GitHub summary
+            "n_candidates_scanned": len(merged),
+            "n_sent_to_claude":     len(merged),
+            "spy_pct":              _spy_pct if "_spy_pct" in dir() else None,
+            "market_context":       mkt,
+            "trades":               approved,
+            "rejected":             [t["ticker"] for t in trades if t not in approved],
+            "reasoning":            strategy_out.get("reasoning", ""),
+            "gates": {
+                "SPY gate":       True,
+                "Entry window":   True,
+                "Position slots": open_count < MAX_POSITIONS,
+                "Daily cap":      daily_opened < MAX_DAILY_ENTRIES,
+                "P&L floor":      total > DAILY_LOSS_LIMIT,
+            },
         }
         _save_scan_result(today, now_utc, result)
         return result

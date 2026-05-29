@@ -745,7 +745,8 @@ def _run_scan_alpaca(spy_pct: float, closed_rows=None):
          patch("agents.alpaca_broker.get_intraday_signals", return_value=spy_sig), \
          patch("agents.market_context.run", return_value={"quiet_day": False, "summary": ""}), \
          patch("scanner.intraday_momentum.scan", mock_momentum), \
-         patch("scanner.scanner.run_scan", return_value=[]):
+         patch("scanner.scanner.run_scan", return_value=[]), \
+         patch("agents.intraday.MIN_SPY_MOVE_PCT", 0.003):
         mock_dt.utcnow.return_value = _utc_now(WINDOW_HOUR)
         mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
         from agents.intraday import _maybe_run_intraday_scan
