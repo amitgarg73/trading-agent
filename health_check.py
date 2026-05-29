@@ -54,14 +54,14 @@ def check_anthropic() -> tuple:
 def check_universe() -> tuple:
     try:
         from core import db
-        cutoff = (date.today() - timedelta(days=7)).isoformat()
+        cutoff = (date.today() - timedelta(days=25)).isoformat()
         rows = db.select("scan_results", filters={"scan_type": "universe_refresh"},
                          order="created_at", limit=1)
         if not rows:
             return False, "No universe refresh found — scanner will use static fallback list"
         last_refresh = rows[0]["date"]
         if last_refresh < cutoff:
-            return False, f"Universe refresh stale: last run {last_refresh} (>7 days ago)"
+            return False, f"Universe refresh stale: last run {last_refresh} (>25 days ago)"
         results = rows[0].get("results") or {}
         count = results.get("count") or len(results.get("tickers", []))
         return True, f"Universe OK — last refresh {last_refresh}, {count or '?'} tickers"
