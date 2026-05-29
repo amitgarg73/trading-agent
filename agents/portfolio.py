@@ -94,14 +94,23 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                     return None
                 limit_px = alpaca_broker.hybrid_limit_price(qt["ask"], qt["bid"]) if qt else live_px
                 if limit_px is None:
-                    # Wide spread — fall back to plan price rather than skipping.
-                    # Momentum plays hit wide spreads on high-volatility days; the
-                    # strategy agent validated R:R at plan_price so entry is still valid.
                     spread_pct = (qt["ask"] - qt["bid"]) / qt["ask"] * 100
-                    print(f"        ⚠️ Wide spread: {ticker} {spread_pct:.2f}% — using plan price {trade['entry_price']:.2f}")
+                    if spread_pct > 5.0:
+                        # Extreme spread — quote data is unreliable (IEX stale, halt, etc.).
+                        # Cannot safely set stop; cancel rather than risk immediate stop trigger.
+                        print(f"        ⚠️ Extreme spread: {ticker} {spread_pct:.2f}% — skipping (bad quote data)")
+                        db.update("planned_trades", {"id": planned["id"]}, {"status": "CANCELLED"})
+                        return None
+                    # Moderate wide spread (0.2–5%) — use plan price as limit but anchor
+                    # stop/target to the live bid. BUY limits fill at market price (≤ limit),
+                    # so the fill can land anywhere down to bid. Anchoring to bid guarantees
+                    # stop < fill and prevents the bracket from firing immediately on entry.
+                    plan_stop_pct    = (trade["entry_price"] - trade["stop_loss"]) / trade["entry_price"]
+                    plan_target_pct  = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]
                     effective_entry  = round(trade["entry_price"], 2)
-                    effective_stop   = round(trade["stop_loss"], 2)
-                    effective_target = round(trade["target_price"], 2)
+                    effective_stop   = round(qt["bid"] * (1 - plan_stop_pct), 2)
+                    effective_target = round(qt["bid"] * (1 + plan_target_pct), 2)
+                    print(f"        ⚠️ Wide spread: {ticker} {spread_pct:.2f}% — limit={effective_entry:.2f} stop={effective_stop:.2f} (bid-anchored)")
                 else:
                     plan_stop_pct    = (trade["entry_price"] - trade["stop_loss"]) / trade["entry_price"]
                     plan_target_pct  = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]

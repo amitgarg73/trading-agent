@@ -530,35 +530,63 @@ class TestLivePriceRecalculation:
         assert inserted.get("entry_price") == live_price
 
 
-    def test_wide_spread_uses_plan_price_not_skip(self):
-        """Wide spread (>0.20%) must use plan price and still submit the order."""
+    def test_wide_spread_uses_bid_anchored_stop(self):
+        """Wide spread (0.2–5%): entry=plan price, stop/target anchored to bid to prevent immediate trigger."""
+        # entry=150, stop=148.5 (1% below), target=153 (2% above)
         trade = self._make_trade(entry=150.0, target=153.0, stop=148.5)
         live_price = 150.0
 
         submitted = {}
         def capture_submit(**kwargs):
             submitted.update(kwargs)
-            return ("order-wide", 150.0)
+            return ("order-wide", 149.0)  # fill at 149 — below plan price
 
         inserted = {}
         def capture_insert(table, data):
             inserted.update(data)
             return {**data, "id": "pos-wide"}
 
-        # ask=150.50, bid=150.00 → 0.33% spread → hybrid_limit_price returns None
+        # ask=150.50, bid=149.50 → 0.66% spread → hybrid_limit_price returns None
         with patch("agents.portfolio._current_price", return_value=live_price), \
              patch("agents.alpaca_broker.get_live_quotes",
-                   return_value={"AAPL": {"ask": 150.50, "bid": 150.00}}), \
+                   return_value={"AAPL": {"ask": 150.50, "bid": 149.50}}), \
              patch("agents.alpaca_broker.submit_bracket_order", side_effect=capture_submit), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"):
             from agents.portfolio import _open_single_position
             result = _open_single_position("plan-1", trade, live_price, broker="alpaca")
 
-        assert result is not None, "Wide spread must not skip the order"
-        assert submitted.get("entry_price") == pytest.approx(150.0, abs=0.01), \
-            "Plan price used when spread is wide"
-        assert "positions" in inserted.get("ticker", "") or inserted.get("entry_price") == pytest.approx(150.0, abs=0.01)
+        assert result is not None, "Wide spread must not cancel the order"
+        # Entry should be plan price
+        assert submitted.get("entry_price") == pytest.approx(150.0, abs=0.01)
+        # Stop must be anchored to bid (149.50), not plan entry (150.0)
+        # plan_stop_pct = (150 - 148.5) / 150 = 0.01 → stop = 149.50 * 0.99 = 148.01
+        stop = submitted.get("stop_price")
+        assert stop == pytest.approx(149.50 * (1 - 0.01), abs=0.02), \
+            f"Stop {stop} should be bid-anchored ~148.01, not plan stop 148.5"
+        # Critically: stop must be below the actual fill price (149.0)
+        assert stop < 149.0, "Stop must be below fill price — bracket must not fire immediately"
+
+    def test_extreme_spread_cancels_trade(self):
+        """Extreme spread (>5%) must cancel — quote data is unreliable."""
+        trade = self._make_trade(entry=150.0, target=153.0, stop=148.5)
+        live_price = 150.0
+
+        updates = []
+
+        # ask=150.0, bid=142.0 → 5.3% spread (extreme)
+        with patch("agents.portfolio._current_price", return_value=live_price), \
+             patch("agents.alpaca_broker.get_live_quotes",
+                   return_value={"AAPL": {"ask": 150.0, "bid": 142.0}}), \
+             patch("agents.alpaca_broker.submit_bracket_order") as mock_submit, \
+             patch("core.db.insert"), \
+             patch("core.db.update", side_effect=lambda t, m, d: updates.append(d)):
+            from agents.portfolio import _open_single_position
+            result = _open_single_position("plan-1", trade, live_price, broker="alpaca")
+
+        assert result is None, "Extreme spread must return None"
+        mock_submit.assert_not_called()
+        assert any(d.get("status") == "CANCELLED" for d in updates)
 
 
 # ── Fix 1: race-condition guard ───────────────────────────────────────────────
