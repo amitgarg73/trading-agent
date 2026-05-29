@@ -94,23 +94,24 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                     return None
                 limit_px = alpaca_broker.hybrid_limit_price(qt["ask"], qt["bid"]) if qt else live_px
                 if limit_px is None:
+                    # Wide spread — fall back to plan price rather than skipping.
+                    # Momentum plays hit wide spreads on high-volatility days; the
+                    # strategy agent validated R:R at plan_price so entry is still valid.
                     spread_pct = (qt["ask"] - qt["bid"]) / qt["ask"] * 100
-                    print(f"        ⚠️ Wide spread: {ticker} ask={qt['ask']:.2f} bid={qt['bid']:.2f} "
-                          f"spread={spread_pct:.2f}% — skipping")
-                    db.update("planned_trades", {"id": planned["id"]}, {"status": "CANCELLED"})
-                    ledger.log("trade_cancelled", {"ticker": ticker, "reason": "wide_spread",
-                                                   "ask": qt["ask"], "bid": qt["bid"],
-                                                   "spread_pct": round(spread_pct, 3)})
-                    return None
-                plan_stop_pct    = (trade["entry_price"] - trade["stop_loss"]) / trade["entry_price"]
-                plan_target_pct  = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]
-                effective_entry  = limit_px
-                effective_stop   = round(limit_px * (1 - plan_stop_pct), 2)
-                effective_target = round(limit_px * (1 + plan_target_pct), 2)
-                if qt and limit_px < qt["ask"]:
-                    spread_saved = round((qt["ask"] - limit_px) * trade["shares"], 2)
-                    print(f"        Passive limit: {ticker} ask={qt['ask']:.2f} bid={qt['bid']:.2f} "
-                          f"limit={limit_px:.2f} (~${spread_saved:.2f} below ask) [VALIDATE: track fill vs ask]")
+                    print(f"        ⚠️ Wide spread: {ticker} {spread_pct:.2f}% — using plan price {trade['entry_price']:.2f}")
+                    effective_entry  = round(trade["entry_price"], 2)
+                    effective_stop   = round(trade["stop_loss"], 2)
+                    effective_target = round(trade["target_price"], 2)
+                else:
+                    plan_stop_pct    = (trade["entry_price"] - trade["stop_loss"]) / trade["entry_price"]
+                    plan_target_pct  = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]
+                    effective_entry  = limit_px
+                    effective_stop   = round(limit_px * (1 - plan_stop_pct), 2)
+                    effective_target = round(limit_px * (1 + plan_target_pct), 2)
+                    if qt and limit_px < qt["ask"]:
+                        spread_saved = round((qt["ask"] - limit_px) * trade["shares"], 2)
+                        print(f"        Passive limit: {ticker} ask={qt['ask']:.2f} bid={qt['bid']:.2f} "
+                              f"limit={limit_px:.2f} (~${spread_saved:.2f} below ask) [VALIDATE: track fill vs ask]")
 
             alpaca_order_id, fill_price_actual = alpaca_broker.submit_bracket_order(
                 ticker=ticker,

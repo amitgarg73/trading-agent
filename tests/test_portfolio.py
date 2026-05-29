@@ -530,6 +530,37 @@ class TestLivePriceRecalculation:
         assert inserted.get("entry_price") == live_price
 
 
+    def test_wide_spread_uses_plan_price_not_skip(self):
+        """Wide spread (>0.20%) must use plan price and still submit the order."""
+        trade = self._make_trade(entry=150.0, target=153.0, stop=148.5)
+        live_price = 150.0
+
+        submitted = {}
+        def capture_submit(**kwargs):
+            submitted.update(kwargs)
+            return ("order-wide", 150.0)
+
+        inserted = {}
+        def capture_insert(table, data):
+            inserted.update(data)
+            return {**data, "id": "pos-wide"}
+
+        # ask=150.50, bid=150.00 → 0.33% spread → hybrid_limit_price returns None
+        with patch("agents.portfolio._current_price", return_value=live_price), \
+             patch("agents.alpaca_broker.get_live_quotes",
+                   return_value={"AAPL": {"ask": 150.50, "bid": 150.00}}), \
+             patch("agents.alpaca_broker.submit_bracket_order", side_effect=capture_submit), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update"):
+            from agents.portfolio import _open_single_position
+            result = _open_single_position("plan-1", trade, live_price, broker="alpaca")
+
+        assert result is not None, "Wide spread must not skip the order"
+        assert submitted.get("entry_price") == pytest.approx(150.0, abs=0.01), \
+            "Plan price used when spread is wide"
+        assert "positions" in inserted.get("ticker", "") or inserted.get("entry_price") == pytest.approx(150.0, abs=0.01)
+
+
 # ── Fix 1: race-condition guard ───────────────────────────────────────────────
 
 class TestRaceConditionGuard:
