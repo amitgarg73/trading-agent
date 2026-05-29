@@ -143,7 +143,7 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
     # Alpaca tracks the high-watermark server-side — fires on reversal in real-time, no polling gap.
     # The bracket's fixed stop-loss leg remains as a hard floor for catastrophic gaps.
     trail_order_id = None
-    if USE_NATIVE_TRAILING_STOP and broker == "alpaca" and alpaca_order_id:
+    if USE_NATIVE_TRAILING_STOP and broker == "alpaca" and alpaca_order_id and fill_price_actual is not None:
         trail_order_id = alpaca_broker.submit_trailing_stop(
             ticker=ticker,
             shares=trade["shares"],
