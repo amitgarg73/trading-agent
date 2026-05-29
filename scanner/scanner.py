@@ -17,6 +17,11 @@ from config.settings import (
     STRONG_SECTOR_THRESHOLD, WEAK_SECTOR_THRESHOLD, GAP_AND_GO_VOLUME_MIN,
 )
 
+# Populated once per scan by _prefetch_batch(); each thread reads from here
+# instead of making individual yfinance calls.
+# Structure: {ticker: {"df": pd.DataFrame, "info": dict}}
+_batch_data_cache: dict[str, dict] = {}
+
 # Maps yfinance sector labels → SPDR sector ETF tickers
 _SECTOR_ETF_MAP: dict[str, str] = {
     "Technology":             "XLK",
@@ -167,7 +172,101 @@ def _get_market_context() -> dict:
     return {}
 
 
+def _prefetch_batch(tickers: list[str]) -> None:
+    """
+    Replace sequential yfinance calls with 2 Alpaca batch API calls before the
+    ThreadPoolExecutor runs. Results are stored in _batch_data_cache; each
+    _fetch() call reads from the cache instead of hitting yfinance.
+
+    Call 1 — StockBarsRequest daily (all tickers, ~70 bars): 3 months of OHLCV
+              for RSI/MACD/Bollinger/ATR/SMA. Also computes 20-day avg volume.
+    Call 2 — StockSnapshotRequest (all tickers): current bid/ask (spread filter),
+              today's daily bar open (premarket gap reference), prev-day close
+              (premarket gap pct).
+
+    Fields Alpaca cannot supply (sector, beta, forwardPE, marketCap, longName)
+    are left absent from the cached info dict; _scan_ticker handles missing values
+    gracefully via .get() with defaults.
+    """
+    from alpaca.data.requests import StockBarsRequest, StockSnapshotRequest
+    from alpaca.data.timeframe import TimeFrame
+    from agents.alpaca_broker import _dclient
+    global _batch_data_cache
+    _batch_data_cache = {}
+
+    # --- Call 1: ~70 calendar days of daily bars (covers 3 trading months) ---
+    hist_start = (datetime.utcnow() - timedelta(days=100)).date().isoformat()
+    bars_by_ticker: dict[str, pd.DataFrame] = {}
+    avg_vols: dict[str, int] = {}
+    try:
+        resp = _dclient().get_stock_bars(
+            StockBarsRequest(
+                symbol_or_symbols=list(tickers),
+                timeframe=TimeFrame.Day,
+                start=hist_start,
+            )
+        )
+        bars_dict = resp.data if hasattr(resp, "data") else (dict(resp) if resp else {})
+        for ticker, bar_list in bars_dict.items():
+            if len(bar_list) < 20:
+                continue
+            df = pd.DataFrame([{
+                "open": b.open, "high": b.high, "low": b.low,
+                "close": b.close, "volume": b.volume,
+            } for b in bar_list], index=pd.DatetimeIndex([b.timestamp for b in bar_list]))
+            df.index = pd.to_datetime(df.index)
+            bars_by_ticker[ticker] = df
+            avg_vols[ticker] = int(df["volume"].tail(20).mean())
+        print(f"[scanner] batch daily bars: {len(bars_by_ticker)}/{len(tickers)} tickers returned")
+    except Exception as e:
+        print(f"[scanner] batch daily bars failed: {e}")
+
+    # --- Call 2: snapshots for bid/ask and premarket gap ---
+    snapshots: dict = {}
+    try:
+        clean = [t for t in tickers if "-" not in t]
+        snapshots = _dclient().get_stock_snapshot(
+            StockSnapshotRequest(symbol_or_symbols=clean)
+        ) or {}
+        print(f"[scanner] batch snapshots: {len(snapshots)}/{len(clean)} symbols returned")
+    except Exception as e:
+        print(f"[scanner] batch snapshots failed: {e}")
+
+    # --- Build per-ticker cache entries ---
+    for ticker in tickers:
+        df = bars_by_ticker.get(ticker)
+        if df is None:
+            continue
+        snap = snapshots.get(ticker)
+        info: dict = {"averageVolume": avg_vols.get(ticker, 0)}
+        if snap:
+            latest_trade = getattr(snap, "latest_trade", None)
+            latest_quote = getattr(snap, "latest_quote", None)
+            prev_day     = getattr(snap, "prev_day_bar", None)
+            if latest_quote:
+                bid = float(getattr(latest_quote, "bid_price", 0) or 0)
+                ask = float(getattr(latest_quote, "ask_price", 0) or 0)
+                if bid > 0:
+                    info["bid"] = bid
+                if ask > 0:
+                    info["ask"] = ask
+            if prev_day:
+                prev_close = float(getattr(prev_day, "close", 0) or 0)
+                if prev_close > 0:
+                    info["regularMarketPreviousClose"] = prev_close
+            if latest_trade:
+                cur_price = float(getattr(latest_trade, "price", 0) or 0)
+                if cur_price > 0:
+                    info["preMarketPrice"] = cur_price
+        _batch_data_cache[ticker] = {"df": df, "info": info}
+
+
 def _fetch(ticker: str) -> tuple[dict, pd.DataFrame | None]:
+    # Read from batch cache when available (populated by _prefetch_batch before run_scan)
+    cached = _batch_data_cache.get(ticker)
+    if cached is not None:
+        return cached["info"], cached["df"]
+
     for attempt in range(2):
         try:
             t = yf.Ticker(ticker)
@@ -408,6 +507,16 @@ def _scan_ticker(ticker: str, skip_volume_surge: bool = False, market_ctx: dict 
 def run_scan(universe=None, skip_volume_surge: bool = False) -> list[dict]:
     tickers    = universe if universe is not None else UNIVERSE
     market_ctx = _get_market_context()
+
+    # Batch-prefetch all tickers before launching threads. Replaces 450+ sequential
+    # yfinance calls with 2 Alpaca batch API calls, eliminating rate-limit retries.
+    try:
+        import os
+        if os.getenv("ALPACA_API_KEY"):
+            _prefetch_batch(tickers)
+    except Exception as e:
+        print(f"[scanner] batch prefetch failed — falling back to yfinance per-ticker: {e}")
+
     candidates = []
     with ThreadPoolExecutor(max_workers=20) as executor:
         futs = {executor.submit(_scan_ticker, t, skip_volume_surge, market_ctx): t for t in tickers}

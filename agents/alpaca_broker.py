@@ -305,6 +305,26 @@ def get_open_tickers() -> set:
     return {p.symbol for p in positions}
 
 
+def get_all_positions_data() -> dict[str, dict]:
+    """
+    Fetch all open positions in one Alpaca API call.
+    Returns {ticker: {"current_price": float, "unrealized_pnl": float}}.
+    Use this before a position loop to avoid N per-ticker calls.
+    """
+    try:
+        positions = _client().get_all_positions()
+        return {
+            p.symbol: {
+                "current_price":  float(p.current_price),
+                "unrealized_pnl": float(p.unrealized_pl),
+            }
+            for p in positions
+        }
+    except Exception as e:
+        print(f"        ⚠️  get_all_positions_data failed: {e}")
+        return {}
+
+
 def get_position_data(ticker: str) -> Optional[dict]:
     """Return current_price and unrealized_pnl for an open position from Alpaca."""
     try:

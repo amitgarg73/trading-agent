@@ -54,6 +54,10 @@ class TestFreshnessCheck:
 
 class TestFetchRetry:
 
+    def setup_method(self):
+        import scanner.scanner as s
+        s._batch_data_cache = {}
+
     def test_success_on_first_attempt(self):
         df = make_price_df()
         mock_ticker = MagicMock()

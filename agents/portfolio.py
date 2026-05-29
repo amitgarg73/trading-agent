@@ -244,14 +244,16 @@ def refresh_positions(broker: str = "simulation") -> list:
 
     if broker == "alpaca":
         from agents import alpaca_broker
-        alpaca_open = alpaca_broker.get_open_tickers()
+        # Fetch all Alpaca positions in one call instead of one per position.
+        all_alpaca_data = alpaca_broker.get_all_positions_data()
+        alpaca_open = set(all_alpaca_data.keys())
 
         for pos in open_pos:
             ticker = pos["ticker"]
 
             if ticker in alpaca_open:
                 # Still open in Alpaca — sync price and P&L
-                data = alpaca_broker.get_position_data(ticker)
+                data = all_alpaca_data.get(ticker)
                 if data:
                     current     = data["current_price"]
                     entry       = pos["entry_price"]

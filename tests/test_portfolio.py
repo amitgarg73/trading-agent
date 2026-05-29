@@ -548,7 +548,7 @@ class TestRaceConditionGuard:
         return pos
 
     @patch("agents.alpaca_broker.get_order_fill", return_value=(None, None))
-    @patch("agents.alpaca_broker.get_open_tickers", return_value=set())   # gone from Alpaca
+    @patch("agents.alpaca_broker.get_all_positions_data", return_value={})   # gone from Alpaca
     @patch("core.db.update")
     @patch("core.db.select")
     def test_new_position_left_open_when_fill_missing(
@@ -572,7 +572,7 @@ class TestRaceConditionGuard:
                 "Should not mark position CLOSED during race-condition window"
 
     @patch("agents.alpaca_broker.get_order_fill", return_value=(None, None))
-    @patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+    @patch("agents.alpaca_broker.get_all_positions_data", return_value={})
     @patch("core.db.update")
     @patch("core.db.select")
     def test_old_position_closed_with_fallback_when_fill_missing(
@@ -673,7 +673,7 @@ class TestClosePriceZeroFix:
         return pos
 
     @patch("agents.alpaca_broker.get_order_fill", return_value=(0.0, "STOP"))
-    @patch("agents.alpaca_broker.get_open_tickers", return_value=set())
+    @patch("agents.alpaca_broker.get_all_positions_data", return_value={})
     @patch("core.db.update")
     @patch("core.db.select")
     def test_zero_close_price_not_replaced_by_fallback(
