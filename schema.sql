@@ -46,8 +46,10 @@ create table positions (
     opened_at           timestamptz default now(),
     closed_at           timestamptz,
     close_price         numeric,
+    exit_price          numeric,   -- mirrors close_price; use for auditability queries
     realized_pnl        numeric,
     close_reason        text,  -- TARGET, STOP, EOD, MANUAL
+    exit_reason         text,  -- mirrors close_reason; use for auditability queries
     alpaca_order_id     text,  -- Alpaca parent bracket order ID (null in simulation mode)
     high_watermark      numeric,  -- Trailing stop: highest price seen since entry (updated each intraday cycle)
     native_trail_active boolean DEFAULT FALSE,  -- TRUE when Alpaca native trailing stop bracket leg was used
@@ -60,6 +62,8 @@ create table positions (
 -- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS exit_mechanism TEXT;
 -- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS fill_price NUMERIC;
 -- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS trail_order_id TEXT;
+-- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS exit_price NUMERIC;
+-- Existing databases: ALTER TABLE positions ADD COLUMN IF NOT EXISTS exit_reason TEXT;
 
 -- Daily P&L performance
 create table daily_performance (
