@@ -465,11 +465,12 @@ class TestIntradaySectorGuardAndAtrSizer:
         from config.settings import MAX_PER_SECTOR
 
         def _t(i):
+            # R:R = 2% target / 1% stop = 2.0 — meets MIN_REWARD_RISK after target cap
             return {
                 "ticker": f"T{i}", "action": "BUY", "entry_price": 100.0,
-                "target_price": 101.0, "stop_loss": 99.33, "shares": 30,
+                "target_price": 103.0, "stop_loss": 99.00, "shares": 30,
                 "position_size": 3000.0, "confidence": "MEDIUM",
-                "reasoning": "test", "estimated_profit": 30.0,
+                "reasoning": "test", "estimated_profit": 60.0,
                 "sector": "Technology",
             }
 
@@ -496,16 +497,16 @@ class TestIntradaySectorGuardAndAtrSizer:
         trades = [
             {
                 "ticker": "AAPL", "action": "BUY", "entry_price": 100.0,
-                "target_price": 101.0, "stop_loss": 99.33, "shares": 30,
+                "target_price": 103.0, "stop_loss": 99.00, "shares": 30,
                 "position_size": 3000.0, "confidence": "MEDIUM",
-                "reasoning": "test", "estimated_profit": 30.0,
+                "reasoning": "test", "estimated_profit": 60.0,
                 "sector": "Technology",
             },
             {
                 "ticker": "JPM", "action": "BUY", "entry_price": 150.0,
-                "target_price": 151.5, "stop_loss": 148.99, "shares": 20,
+                "target_price": 153.0, "stop_loss": 148.50, "shares": 20,
                 "position_size": 3000.0, "confidence": "MEDIUM",
-                "reasoning": "test", "estimated_profit": 30.0,
+                "reasoning": "test", "estimated_profit": 60.0,
                 "sector": "Financials",
             },
         ]
