@@ -10,9 +10,10 @@ from config.settings import (
     MAX_POSITIONS, MAX_DAILY_ENTRIES, DAILY_LOSS_LIMIT,
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END, INTRADAY_ENTRY_CUTOFF_UTC,
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
-    INTRADAY_TARGET_PCT, INTRADAY_STOP_PCT, MIN_INTRADAY_MOVE_PCT,
+    MIN_INTRADAY_MOVE_PCT,
     STRATEGY_MIN_SCORE, STRONG_SECTOR_THRESHOLD, WEAK_SECTOR_THRESHOLD,
     UNIVERSE, TOTAL_CAPITAL, MAX_PER_SECTOR, MIN_SPY_MOVE_PCT,
+    ATR_STOP_MULTIPLIER, ATR_STOP_FLOOR, TARGET_PCT, TRAIL_PCT,
 )
 
 
@@ -241,21 +242,40 @@ def _today_realized_pnl() -> float:
     )
 
 
-def _cap_intraday_targets(trades: list) -> list:
+def _fetch_atr_for_tickers(tickers: list) -> dict:
     """
-    Cap target_price at INTRADAY_TARGET_PCT (1%) for intraday entries.
-    Less time remaining in the day means smaller achievable targets.
-    Also clamps estimated_profit to match the adjusted target.
+    Batch-fetch 14-day ATR% via yfinance for a small set of tickers.
+    Returns {ticker: atr_pct} — None for any that fail.
     """
-    result = []
-    for t in trades:
-        entry      = t["entry_price"]
-        max_target = round(entry * (1 + INTRADAY_TARGET_PCT), 2)
-        if t.get("target_price", 0) > max_target:
-            t = {**t,
-                 "target_price":     max_target,
-                 "estimated_profit": round(t.get("shares", 0) * (max_target - entry), 2)}
-        result.append(t)
+    import yfinance as yf
+    result = {t: None for t in tickers}
+    if not tickers:
+        return result
+    try:
+        raw = yf.download(
+            tickers, period="20d", interval="1d",
+            auto_adjust=True, progress=False, threads=True, group_by="ticker",
+        )
+        for ticker in tickers:
+            try:
+                hist = raw[ticker] if len(tickers) > 1 else raw
+                hist = hist.dropna(subset=["Close"])
+                if len(hist) < 10:
+                    continue
+                h, l, c = hist["High"], hist["Low"], hist["Close"]
+                prev_c  = c.shift(1)
+                tr      = (h - l).abs().combine((h - prev_c).abs(), max).combine((l - prev_c).abs(), max)
+                atr     = float(tr.iloc[-14:].mean())
+                price   = float(c.iloc[-1])
+                if price > 0:
+                    result[ticker] = round(atr / price * 100, 2)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"  📊 ATR fetch failed: {e}")
+    for t, v in result.items():
+        if v is None:
+            print(f"  📊 {t}: no ATR data — Claude stop kept")
     return result
 
 
@@ -436,7 +456,7 @@ def _maybe_run_intraday_scan(broker: str):
             f"{mkt.get('summary', '')}{sector_note}{quiet_note}\n\n"
             f"INTRADAY SCAN #{run_num}: Focus on momentum plays already moving today. "
             f"Prefer stocks with today_pct_change > {int(MIN_INTRADAY_MOVE_PCT)}% and rs_vs_spy > 1.5. "
-            f"Set stop ~1% below entry and target ~{int(INTRADAY_TARGET_PCT * 100)}% above entry."
+            f"Use {int(TARGET_PCT * 100)}% targets — the trailing stop ({TRAIL_PCT*100:.0f}%) is the real exit, target is a safety ceiling."
         )
         strategy_out = strategy.run(merged, market_summary=market_note,
                                     max_positions=strategy_slots)
@@ -452,27 +472,6 @@ def _maybe_run_intraday_scan(broker: str):
         risk_out     = risk.run(strategy_out, quiet_day=quiet_day)
         approved     = risk_out.get("approved_trades") or []
 
-        # Cap targets at 1% after risk validation — risk sees original targets,
-        # but actual entries use the tighter intraday cap.
-        # Re-check R:R after capping: if target reduction pushes R:R below the floor,
-        # drop the trade rather than placing it with a misleading entry.
-        from config.settings import MIN_REWARD_RISK, QUIET_DAY_MIN_REWARD_RISK
-        _intraday_min_rr = QUIET_DAY_MIN_REWARD_RISK if quiet_day else MIN_REWARD_RISK
-        approved_before_cap = approved
-        approved = _cap_intraday_targets(approved)
-        post_cap = []
-        for t in approved:
-            entry  = float(t.get("entry_price") or 0)
-            target = float(t.get("target_price") or 0)
-            stop   = float(t.get("stop_loss") or 0)
-            if entry > stop > 0 and (target - entry) > 0:
-                rr = (target - entry) / (entry - stop)
-                if rr < _intraday_min_rr:
-                    print(f"  📊 {t['ticker']}: R:R {rr:.2f} below {_intraday_min_rr} after target cap — dropped")
-                    continue
-            post_cap.append(t)
-        approved = post_cap
-
         # Sector guard — prevent overweighting one sector in this scan batch
         approved_by_sector: dict[str, int] = {}
         sector_passed = []
@@ -485,14 +484,16 @@ def _maybe_run_intraday_scan(broker: str):
                 print(f"  📊 Sector guard: {t['ticker']} blocked — {sector} at {MAX_PER_SECTOR} limit")
         approved = sector_passed
 
-        # ATR sizer skipped for intraday. Instead apply INTRADAY_STOP_PCT (1%) override:
-        # Claude sets 0.67% stop (MAX_LOSS_PER_TRADE default). We widen to 1% here so
-        # normal intraday chop on 2-4% ATR stocks doesn't fire the stop before the move.
-        # Target is already capped at INTRADAY_TARGET_PCT (2%) by _cap_intraday_targets().
+        # Apply ATR-based stops so intraday positions survive normal noise.
+        # Claude uses 0.67% formula stop; real ATR for blue chips is 1-3%, so that stop
+        # fires within minutes. Fetch real 14-day ATR and use 0.8× ATR with 0.5% floor.
+        _atr_map = _fetch_atr_for_tickers([t["ticker"] for t in approved])
         for t in approved:
-            entry = t.get("entry_price", 0)
-            if entry > 0 and t.get("signal_type") == "INTRADAY_MOMENTUM":
-                t["stop_loss"] = round(entry * (1 - INTRADAY_STOP_PCT), 2)
+            entry   = float(t.get("entry_price") or 0)
+            atr_pct = _atr_map.get(t["ticker"])
+            if entry > 0 and atr_pct and atr_pct > 0:
+                stop_pct      = max((atr_pct / 100.0) * ATR_STOP_MULTIPLIER, ATR_STOP_FLOOR)
+                t["stop_loss"] = round(entry * (1 - stop_pct), 2)
 
         if not approved:
             print("  📊 Intraday scan: all trades rejected by risk/sector")

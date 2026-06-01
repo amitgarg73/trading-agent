@@ -9,7 +9,7 @@ from config.settings import (
     MAX_POSITIONS, MAX_DAILY_ENTRIES, DAILY_LOSS_LIMIT, DAILY_BONUS_TARGET,
     INTRADAY_SCAN_UTC_START, INTRADAY_SCAN_UTC_END,
     INTRADAY_SCAN_MAX_RUNS, INTRADAY_SCAN_MIN_INTERVAL_MINS,
-    INTRADAY_TARGET_PCT,
+    ATR_STOP_MULTIPLIER, ATR_STOP_FLOOR,
 )
 
 TODAY = date.today().isoformat()
@@ -39,7 +39,7 @@ def _make_prior_scan(minutes_ago: float = INTRADAY_SCAN_MIN_INTERVAL_MINS + 1) -
 
 def _run_scan(hour=WINDOW_HOUR, prior_scans=None, open_rows=None, closed_rows=None,
               all_today_rows=None, candidates=None, trades=None, approved=None,
-              opened_count=1, momentum_candidates=None):
+              opened_count=1, momentum_candidates=None, atr_data=None):
     """
     Run _maybe_run_intraday_scan with full pipeline mocked.
     Returns the function result and the mock_open_positions call args.
@@ -83,6 +83,7 @@ def _run_scan(hour=WINDOW_HOUR, prior_scans=None, open_rows=None, closed_rows=No
          patch("scanner.intraday_momentum.scan", return_value=momentum_candidates), \
          patch("agents.strategy.run",           return_value={"trades": trades, "market_context": ""}), \
          patch("agents.risk.run",               return_value={"approved_trades": approved, "rejected_trades": []}), \
+         patch("agents.intraday._fetch_atr_for_tickers", return_value=atr_data or {}), \
          patch("agents.portfolio.open_positions", mock_open_positions):
         mock_dt.utcnow.return_value = _utc_now(hour)
         mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
@@ -194,24 +195,28 @@ class TestIntradayScanPipeline:
         result, mock_open = _run_scan(closed_rows=self._good_closed_rows())
         assert mock_open.call_args[1].get("enable_partial") is False
 
-    def test_target_capped_at_intraday_target_pct(self):
-        """Approved trades with target > 1% must be capped before opening."""
-        high_target_trade = {
+    def test_atr_stop_applied_for_intraday_trades(self):
+        """ATR-based stop must replace Claude's 0.67% formula stop before opening."""
+        trade = {
             "ticker": "AAPL", "action": "BUY", "entry_price": 180.0,
-            "target_price": 183.6,  # 2% target → should be capped at 1%
-            "stop_loss": 178.8, "shares": 33, "position_size": 5940.0,
-            "confidence": "MEDIUM", "reasoning": "test", "estimated_profit": 118.8
+            "target_price": 194.4,  # 8% ceiling
+            "stop_loss": 178.8,     # Claude's 0.67% formula stop
+            "shares": 33, "position_size": 5940.0,
+            "confidence": "MEDIUM", "reasoning": "test", "estimated_profit": 475.2,
         }
+        # Simulate ATR fetch returning 2.0% for AAPL
+        fake_atr = {"AAPL": 2.0}
+        expected_stop_pct = max((2.0 / 100.0) * ATR_STOP_MULTIPLIER, ATR_STOP_FLOOR)
+        expected_stop = round(180.0 * (1 - expected_stop_pct), 2)
+
         result, mock_open = _run_scan(
-            trades=[high_target_trade],
-            approved=[high_target_trade],
-            closed_rows=self._good_closed_rows()
+            trades=[trade],
+            approved=[trade],
+            closed_rows=self._good_closed_rows(),
+            atr_data=fake_atr,
         )
-        # The trade passed to open_positions should have target capped at entry * 1.01
-        opened_trades = mock_open.call_args[0][1]  # 2nd positional arg = approved_trades
-        for t in opened_trades:
-            expected_max = round(t["entry_price"] * (1 + INTRADAY_TARGET_PCT), 2)
-            assert t["target_price"] <= expected_max + 0.01
+        opened_trades = mock_open.call_args[0][1]
+        assert opened_trades[0]["stop_loss"] == expected_stop
 
     def test_momentum_candidates_merged_with_technical(self):
         """Momentum candidates appear before technical candidates in the merged list."""
