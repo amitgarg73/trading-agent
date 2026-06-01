@@ -1,8 +1,8 @@
 """
 Tests for RF-5: INTRADAY_ENTRY_CUTOFF_UTC gate in _maybe_run_intraday_scan().
 
-Late entries (3:00 PM ET = UTC 19 and beyond) are negative EV — insufficient
-time to reach the 1% target. The cutoff guard must block new scans at or after hour 19.
+Entries after 12:00 PM ET (UTC 16) are negative EV — 14-day data shows 0 targets
+and 12-25% win rates from noon onward. Cutoff moved from 3 PM (UTC 19) to noon (UTC 16).
 """
 import pytest
 from unittest.mock import patch, MagicMock
@@ -43,22 +43,22 @@ class TestEntryCutoff:
         """10:00 AM ET — well within window, scan should proceed to guard checks."""
         assert _run_scan_at_hour(14) is True
 
-    def test_scan_allowed_at_hour_18(self):
-        """2:00 PM ET — still before cutoff."""
-        assert _run_scan_at_hour(18) is True
+    def test_scan_blocked_at_hour_16(self):
+        """12:00 PM ET — exactly at new cutoff, must return early."""
+        assert _run_scan_at_hour(16) is False
+
+    def test_scan_blocked_at_hour_18(self):
+        """2:00 PM ET — past cutoff, must return early."""
+        assert _run_scan_at_hour(18) is False
 
     def test_scan_blocked_at_hour_19(self):
-        """3:00 PM ET — exactly at cutoff, must return early."""
+        """3:00 PM ET — well past cutoff."""
         assert _run_scan_at_hour(19) is False
 
     def test_scan_blocked_at_hour_20(self):
-        """4:00 PM ET — past cutoff, must return early."""
+        """4:00 PM ET — well past cutoff."""
         assert _run_scan_at_hour(20) is False
 
-    def test_scan_blocked_at_hour_21(self):
-        """5:00 PM ET — well past cutoff."""
-        assert _run_scan_at_hour(21) is False
-
-    def test_cutoff_constant_is_19(self):
+    def test_cutoff_constant_is_16(self):
         from config.settings import INTRADAY_ENTRY_CUTOFF_UTC
-        assert INTRADAY_ENTRY_CUTOFF_UTC == 19
+        assert INTRADAY_ENTRY_CUTOFF_UTC == 16
