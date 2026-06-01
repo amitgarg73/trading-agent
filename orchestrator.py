@@ -451,10 +451,13 @@ def premarket(broker: str = "simulation"):
     atr_dropped = []
     if approved:
         from agents import atr_sizer
+        from config.settings import QUIET_DAY_MIN_REWARD_RISK
         candidates_atr = {c["ticker"]: c.get("atr_pct") for c in candidates}
-        approved, atr_dropped = atr_sizer.apply(approved, candidates_atr)
+        _min_rr = QUIET_DAY_MIN_REWARD_RISK if quiet_day else None  # None = atr_sizer default (MIN_REWARD_RISK)
+        approved, atr_dropped = atr_sizer.apply(approved, candidates_atr,
+                                                 **({'min_rr': _min_rr} if _min_rr else {}))
         if atr_dropped:
-            print(f"[ 3.6/4 ] ATR sizer dropped {len(atr_dropped)} trade(s) (R:R < 1 after ATR stop)")
+            print(f"[ 3.6/4 ] ATR sizer dropped {len(atr_dropped)} trade(s) (R:R or size below floor after ATR stop)")
         else:
             print(f"[ 3.6/4 ] ATR sizer applied to {len(approved)} trade(s)")
 

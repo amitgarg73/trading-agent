@@ -453,8 +453,25 @@ def _maybe_run_intraday_scan(broker: str):
         approved     = risk_out.get("approved_trades") or []
 
         # Cap targets at 1% after risk validation — risk sees original targets,
-        # but actual entries use the tighter intraday cap
+        # but actual entries use the tighter intraday cap.
+        # Re-check R:R after capping: if target reduction pushes R:R below the floor,
+        # drop the trade rather than placing it with a misleading entry.
+        from config.settings import MIN_REWARD_RISK, QUIET_DAY_MIN_REWARD_RISK
+        _intraday_min_rr = QUIET_DAY_MIN_REWARD_RISK if quiet_day else MIN_REWARD_RISK
+        approved_before_cap = approved
         approved = _cap_intraday_targets(approved)
+        post_cap = []
+        for t in approved:
+            entry  = float(t.get("entry_price") or 0)
+            target = float(t.get("target_price") or 0)
+            stop   = float(t.get("stop_loss") or 0)
+            if entry > stop > 0 and (target - entry) > 0:
+                rr = (target - entry) / (entry - stop)
+                if rr < _intraday_min_rr:
+                    print(f"  📊 {t['ticker']}: R:R {rr:.2f} below {_intraday_min_rr} after target cap — dropped")
+                    continue
+            post_cap.append(t)
+        approved = post_cap
 
         # Sector guard — prevent overweighting one sector in this scan batch
         approved_by_sector: dict[str, int] = {}
