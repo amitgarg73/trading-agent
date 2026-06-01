@@ -277,6 +277,24 @@ def refresh_positions(broker: str = "simulation") -> list:
                         })
                         updated.append({**pos, **data, "close_reason": None})
                     else:
+                        # Try to promote to native trail before falling into manual trail.
+                        # Happens when fill came in after the 5s placement poll — cancel the
+                        # bracket stop leg (which blocks the trail) and submit trail now.
+                        if USE_NATIVE_TRAILING_STOP and not pos.get("trail_order_id"):
+                            order_id = pos.get("alpaca_order_id")
+                            if order_id:
+                                alpaca_broker._cancel_bracket_stop_leg(order_id)
+                            trail_id = alpaca_broker.submit_trailing_stop(ticker, pos["shares"], TRAIL_PCT)
+                            if trail_id:
+                                print(f"        Trail stop active (backfill): {ticker} → {trail_id}")
+                                db.update("positions", {"id": pos["id"]}, {
+                                    "current_price":       current,
+                                    "unrealized_pnl":      data["unrealized_pnl"],
+                                    "native_trail_active": True,
+                                    "trail_order_id":      trail_id,
+                                })
+                                updated.append({**pos, **data, "close_reason": None})
+                                continue
                         # Manual trailing stop: track high watermark, fire if price pulls back
                         high_wm     = float(pos.get("high_watermark") or entry)
                         new_high_wm = max(high_wm, current)

@@ -815,3 +815,61 @@ class TestNativeTrailingStop:
         assert len(pos_rows) == 1
         assert pos_rows[0].get("trail_order_id") is None
         assert pos_rows[0].get("native_trail_active") is False
+
+
+class TestNativeTrailBackfillIntraday:
+    """Intraday loop promotes pending positions to native trail when trail_order_id is unset."""
+
+    def _make_pos(self):
+        return {
+            "id": "pos-bt-001",
+            "ticker": "NVDA",
+            "planned_trade_id": "pt-001",
+            "alpaca_order_id": "ord-bt-001",
+            "trail_order_id": None,
+            "native_trail_active": False,
+            "fill_price": 500.0,
+            "entry_price": 500.0,
+            "stop_loss": 490.0,
+            "shares": 6,
+            "action": "BUY",
+            "high_watermark": 500.0,
+            "opened_at": "2026-06-01T14:00:00",
+        }
+
+    def test_backfill_submits_trail_and_updates_db(self):
+        pos = self._make_pos()
+
+        updates = {}
+        def capture_update(table, filt, data):
+            updates.update(data)
+
+        with patch("core.db.select", return_value=[pos]), \
+             patch("core.db.update", side_effect=capture_update), \
+             patch("agents.alpaca_broker.get_all_positions_data",
+                   return_value={"NVDA": {"current_price": 505.0, "unrealized_pnl": 30.0}}), \
+             patch("agents.alpaca_broker._cancel_bracket_stop_leg") as mock_cancel, \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="trail-bt-001"), \
+             patch("agents.portfolio.USE_NATIVE_TRAILING_STOP", True), \
+             patch("agents.portfolio.TRAIL_PCT", 0.008):
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="alpaca")
+
+        mock_cancel.assert_called_once_with("ord-bt-001")
+        assert updates.get("native_trail_active") is True
+        assert updates.get("trail_order_id") == "trail-bt-001"
+
+    def test_backfill_falls_to_manual_trail_when_submit_fails(self):
+        """If trail submission still fails, position continues with manual trail — no crash."""
+        pos = self._make_pos()
+
+        with patch("core.db.select", return_value=[pos]), \
+             patch("core.db.update"), \
+             patch("agents.alpaca_broker.get_all_positions_data",
+                   return_value={"NVDA": {"current_price": 505.0, "unrealized_pnl": 30.0}}), \
+             patch("agents.alpaca_broker._cancel_bracket_stop_leg"), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value=None), \
+             patch("agents.portfolio.USE_NATIVE_TRAILING_STOP", True), \
+             patch("agents.portfolio.TRAIL_PCT", 0.008):
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="alpaca")  # must not raise

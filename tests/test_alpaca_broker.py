@@ -381,3 +381,75 @@ def test_hybrid_ask_less_than_bid_returns_ask():
     """Crossed market (ask < bid) → return ask as safe fallback."""
     result = hybrid_limit_price(99.0, 100.0)
     assert result == round(99.0, 2)
+
+
+# ── _cancel_bracket_stop_leg ─────────────────────────────────────────────────
+
+def _make_leg_with_id(order_type, status, leg_id="leg-stop-001"):
+    leg = MagicMock()
+    leg.order_type = order_type
+    leg.status     = status
+    leg.id         = leg_id
+    return leg
+
+
+@patch("agents.alpaca_broker._client")
+def test_cancel_bracket_stop_leg_cancels_open_stop(mock_client):
+    """Open stop leg must be cancelled so trailing stop can be submitted."""
+    stop_leg = _make_leg_with_id("stop", "new")
+    order = MagicMock()
+    order.symbol = "AAPL"
+    order.legs = [stop_leg]
+    mock_client.return_value.get_order_by_id.return_value = order
+
+    from agents.alpaca_broker import _cancel_bracket_stop_leg
+    _cancel_bracket_stop_leg("ord-001")
+
+    mock_client.return_value.cancel_order_by_id.assert_called_once_with("leg-stop-001")
+
+
+@patch("agents.alpaca_broker._client")
+def test_cancel_bracket_stop_leg_skips_already_cancelled(mock_client):
+    stop_leg = _make_leg_with_id("stop", "canceled")
+    order = MagicMock(); order.symbol = "AAPL"; order.legs = [stop_leg]
+    mock_client.return_value.get_order_by_id.return_value = order
+
+    from agents.alpaca_broker import _cancel_bracket_stop_leg
+    _cancel_bracket_stop_leg("ord-001")
+
+    mock_client.return_value.cancel_order_by_id.assert_not_called()
+
+
+@patch("agents.alpaca_broker._client")
+def test_cancel_bracket_stop_leg_skips_trailing_leg(mock_client):
+    """trailing_stop leg must never be cancelled — only fixed stop."""
+    trail_leg = _make_leg_with_id("trailing_stop", "new")
+    order = MagicMock(); order.symbol = "AAPL"; order.legs = [trail_leg]
+    mock_client.return_value.get_order_by_id.return_value = order
+
+    from agents.alpaca_broker import _cancel_bracket_stop_leg
+    _cancel_bracket_stop_leg("ord-001")
+
+    mock_client.return_value.cancel_order_by_id.assert_not_called()
+
+
+@patch("agents.alpaca_broker._client")
+def test_submit_bracket_order_cancels_stop_leg_after_fill(mock_client):
+    """After bracket fills, the open stop leg must be cancelled before returning."""
+    stop_leg = _make_leg_with_id("stop", "new")
+    order = MagicMock(); order.id = "ord-fill"
+    mock_client.return_value.submit_order.return_value = order
+
+    filled = MagicMock()
+    filled.status = "filled"
+    filled.filled_avg_price = 101.0
+    filled.legs = [stop_leg]
+    mock_client.return_value.get_order_by_id.return_value = filled
+
+    from agents.alpaca_broker import submit_bracket_order
+    with patch("time.sleep"):
+        order_id, fill_price = submit_bracket_order("AAPL", 10, 100.0, 104.0, 99.0)
+
+    assert order_id == "ord-fill"
+    assert fill_price == pytest.approx(101.0)
+    mock_client.return_value.cancel_order_by_id.assert_called_once_with("leg-stop-001")

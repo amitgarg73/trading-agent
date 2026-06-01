@@ -228,8 +228,6 @@ def submit_bracket_order(
 
     side = OrderSide.BUY if action == "BUY" else OrderSide.SELL
 
-    if use_native_trail:
-        print(f"        ⚠️  Native trail requested for {ticker} but not supported by StopLossRequest — using fixed stop")
     stop_loss_req = StopLossRequest(stop_price=round(stop_price, 2))
 
     limit_px = round(entry_price, 2)  # bid/mid already computed upstream by portfolio.py — no additional buffer
@@ -254,6 +252,17 @@ def submit_bracket_order(
             status = str(o.status).lower()
             if status in ("filled", "partially_filled"):
                 fill_price = float(o.filled_avg_price) if o.filled_avg_price else None
+                # Cancel fixed stop leg so trailing stop can be submitted without conflict
+                for leg in (o.legs or []):
+                    lt = str(leg.order_type).lower()
+                    ls = str(leg.status).lower()
+                    if "stop" in lt and "trailing" not in lt and "cancel" not in ls and "fill" not in ls:
+                        try:
+                            _client().cancel_order_by_id(str(leg.id))
+                            print(f"        [alpaca] {ticker} stop leg cancelled — trail will replace it")
+                        except Exception:
+                            pass
+                        break
                 return str(order.id), fill_price
             if status in ("cancelled", "rejected", "expired"):
                 print(f"        ⚠️ {ticker} order {status} — blocking DB write")
@@ -297,6 +306,22 @@ def cancel_order(order_id: str) -> None:
         _client().cancel_order_by_id(order_id)
     except Exception:
         pass
+
+
+def _cancel_bracket_stop_leg(order_id: str) -> None:
+    """Cancel the bracket's fixed stop-loss leg so a trailing stop can be submitted without conflict."""
+    try:
+        o = _client().get_order_by_id(order_id)
+        for leg in (o.legs or []):
+            leg_type   = str(leg.order_type).lower()
+            leg_status = str(leg.status).lower()
+            if "stop" in leg_type and "trailing" not in leg_type:
+                if "cancel" not in leg_status and "fill" not in leg_status:
+                    _client().cancel_order_by_id(str(leg.id))
+                    print(f"        [alpaca] {o.symbol} stop leg cancelled — trail will replace it")
+                break
+    except Exception as e:
+        print(f"        [alpaca] _cancel_bracket_stop_leg: {e}")
 
 
 def get_open_tickers() -> set:
