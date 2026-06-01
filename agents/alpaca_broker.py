@@ -94,28 +94,19 @@ def get_live_quotes(tickers: list[str]) -> dict[str, dict]:
 
 def hybrid_limit_price(ask: float, bid: float) -> float | None:
     """
-    Passive-first limit price for a BUY — set below the current ask so the
-    stock has to come to us rather than us chasing it.
+    Fill-first limit price for a BUY — set at ask so momentum entries fill
+    immediately rather than waiting for the stock to dip to bid or mid.
 
-      spread < 0.10%  → bid: ultra-tight market, bid fills within seconds on
-                         any normal tick; saves the full half-spread vs mid
-      spread 0.10–0.20% → mid: moderate spread, mid is aggressive enough to
-                         fill on normal intraday dips without paying full ask
-      spread > 0.20%  → None (skip): spread destroys R:R before entry
-
-    One tier below the previous ask/mid approach. Unfill rate rises slightly
-    on strong breakouts (stock never dips to bid), but entries are better on
-    the days where stocks fade at entry — which is the common pattern observed.
-    Validate: compare fill_price vs ask_at_entry logged at order submission.
+      spread ≤ 0.20% → ask: fills on submission; correct for momentum stocks
+                        that move away from bid-based limits (37% unfill root cause)
+      spread > 0.20% → None (skip): spread destroys R:R before entry
     """
     if ask <= 0 or bid <= 0 or ask < bid:
         return round(ask, 2) if ask > 0 else None
     spread_pct = (ask - bid) / ask
     if spread_pct > 0.002:
         return None
-    if spread_pct < 0.001:
-        return round(bid, 2)                    # was mid — now bid
-    return round((ask + bid) / 2, 2)            # was ask — now mid
+    return round(ask, 2)
 
 
 def get_intraday_signals(tickers: list[str]) -> dict[str, dict]:

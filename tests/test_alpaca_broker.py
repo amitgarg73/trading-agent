@@ -355,17 +355,17 @@ def test_top_of_range_filter_skips_when_no_day_range():
 
 from agents.alpaca_broker import hybrid_limit_price
 
-def test_hybrid_tight_spread_returns_bid():
-    """Spread < 0.10% → bid (passive fill, stock dips to us)."""
-    ask, bid = 100.10, 100.00  # spread = 0.10/100.10 ≈ 0.0999% → just under 0.1%
+def test_hybrid_tight_spread_returns_ask():
+    """Spread < 0.10% → ask (fill-first: don't miss momentum entries waiting for dip)."""
+    ask, bid = 100.10, 100.00  # spread = 0.10/100.10 ≈ 0.0999%
     result = hybrid_limit_price(ask, bid)
-    assert result == round(bid, 2)
+    assert result == round(ask, 2)
 
-def test_hybrid_moderate_spread_returns_mid():
-    """Spread 0.10–0.20% → mid (was ask — shifted one tier lower)."""
+def test_hybrid_moderate_spread_returns_ask():
+    """Spread 0.10–0.20% → ask (still fills immediately, spread is acceptable)."""
     ask, bid = 100.15, 100.00  # spread = 0.15/100.15 ≈ 0.15%
     result = hybrid_limit_price(ask, bid)
-    assert result == round((ask + bid) / 2, 2)
+    assert result == round(ask, 2)
 
 def test_hybrid_wide_spread_returns_none():
     """Spread > 0.20% → None (skip trade)."""

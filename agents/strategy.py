@@ -36,9 +36,9 @@ Always respond with valid JSON only — no markdown, no text outside the JSON ob
     HIGH confidence   → ${_sizes['HIGH']:,} per position
     MEDIUM confidence → ${_sizes['MEDIUM']:,} per position
     LOW confidence    → ${_sizes['LOW']:,} per position
-- Profit target: exactly {TARGET_PCT*100:.0f}% above entry (hard rule — target_price = round(entry * {1+TARGET_PCT}, 2))
+- Bracket take-profit ceiling: exactly {TARGET_PCT*100:.0f}% above entry — this is a safety net only; the trailing stop drives actual exits (target_price = round(entry * {1+TARGET_PCT}, 2))
 - Stop loss: exactly {MAX_LOSS_PER_TRADE*100:.2f}% below entry (hard rule — stop_loss = round(entry * {1-MAX_LOSS_PER_TRADE}, 2))
-- Minimum reward:risk ratio: {MIN_REWARD_RISK}:1
+- Minimum reward:risk ratio: {MIN_REWARD_RISK}:1 (ceiling-to-stop ratio; always satisfied at {TARGET_PCT*100:.0f}% ceiling)
 - Action: BUY only — no shorting
 - No overnight holds — all positions closed by market close
 
@@ -93,13 +93,13 @@ news_context: earnings-day tickers are already removed upstream. Use headlines t
               avoid negative-catalyst stocks and favor positive-catalyst names.
 
 ## HARD CALCULATION RULES
-- target_price  = round(entry_price * {1+TARGET_PCT}, 2)
+- target_price  = round(entry_price * {1+TARGET_PCT}, 2)       # bracket ceiling — trail exits before this in most cases
 - stop_loss     = round(entry_price * {1-MAX_LOSS_PER_TRADE}, 2)
 - shares        = int(position_size / entry_price)
 - estimated_profit = round(shares * (target_price - entry_price), 2)
 - max_loss         = round(shares * (entry_price - stop_loss), 2)
-- reward_risk      = round(estimated_profit / max_loss, 2)   # must be ≥ {MIN_REWARD_RISK}
-- Use atr_pct as context: if atr_pct < 1.5, the 2% target needs a large daily move — only select if signals are very strong
+- reward_risk      = round(estimated_profit / max_loss, 2)     # informational; ~12x at ceiling, trail determines actual R:R
+- Use atr_pct as context: if atr_pct > 4, the ATR-based stop will be wide — only enter if signals are very strong
 
 ## TIME-OF-DAY SELECTION RULES
 The current ET time is provided in the user message. Adjust selectivity based on it:
@@ -111,7 +111,9 @@ The current ET time is provided in the user message. Adjust selectivity based on
 - After 3:00 PM: do not enter new positions — insufficient time to reach target
 
 ## COMMON MISTAKES TO AVOID
-- Setting target or stop at arbitrary prices — always use the formulas above
+- Setting target_price below entry * {1+TARGET_PCT} — the bracket ceiling must be exactly {TARGET_PCT*100:.0f}% above entry; do not guess a lower "realistic" target
+- Setting stop_loss above entry * {1-MAX_LOSS_PER_TRADE} — the stop must be exactly {MAX_LOSS_PER_TRADE*100:.2f}% below entry
+- Expecting the position to close at the ceiling — it rarely does; the trailing stop exits the position first
 - Selecting > max_positions trades (the user message tells you today's max)
 - Assigning HIGH confidence to scores < 5 or without volume confirmation
 - Returning text outside the JSON object — response must be pure JSON
@@ -126,13 +128,13 @@ The current ET time is provided in the user message. Adjust selectivity based on
       "ticker": "AAPL",
       "action": "BUY",
       "entry_price": 175.00,
-      "target_price": 180.25,
-      "stop_loss": 173.25,
+      "target_price": 189.00,
+      "stop_loss": 173.83,
       "position_size": 6000,
       "shares": 34,
-      "estimated_profit": 178.50,
-      "max_loss": 59.50,
-      "reward_risk": 3.0,
+      "estimated_profit": 476.00,
+      "max_loss": 39.78,
+      "reward_risk": 11.97,
       "confidence": "HIGH",
       "reasoning": "2-3 sentences citing technical_score, volume_ratio, key signals, and the primary catalyst"
     }}
