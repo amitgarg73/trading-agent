@@ -1,66 +1,99 @@
 """
 Tests for agents/market_context.py
-Covers: sector rotation fetch, sector rotation in run() output, summary inclusion.
-All external calls (yfinance, CNN Fear & Greed, urllib) are mocked.
+Covers: sector rotation fetch (Alpaca), sector rotation in run() output, summary inclusion.
+All external calls (Alpaca, CNN Fear & Greed, urllib) are mocked.
 """
 from __future__ import annotations
-import pandas as pd
 import pytest
 from unittest.mock import patch, MagicMock
+from datetime import datetime
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _make_fake_bar(close: float) -> MagicMock:
+    bar = MagicMock()
+    bar.close = close
+    return bar
+
+
+def _make_dclient_mock(etf_bars: dict[str, list]) -> MagicMock:
+    """Return a callable mock for _dclient — calling it returns a client whose
+    get_stock_bars().data returns etf_bars."""
+    resp = MagicMock()
+    resp.data = etf_bars
+    client = MagicMock()
+    client.get_stock_bars.return_value = resp
+    # _dclient() is called as _dclient().get_stock_bars(...) in the code
+    dclient_fn = MagicMock(return_value=client)
+    return dclient_fn
 
 
 # ── _fetch_sector_rotation ────────────────────────────────────────────────────
 
 class TestFetchSectorRotation:
 
-    def _make_multi_df(self, etfs: list[str], chg: float = 0.01) -> pd.DataFrame:
-        """Build a fake yf.download multi-ticker DataFrame with predictable returns."""
-        cols = pd.MultiIndex.from_tuples(
-            [(etf, col) for etf in etfs for col in ["Close", "Volume"]],
-        )
-        data = {}
-        for etf in etfs:
-            data[(etf, "Close")] = [100.0, 100.0 * (1 + chg)]
-            data[(etf, "Volume")] = [1_000_000, 1_000_000]
-        return pd.DataFrame(data, index=pd.date_range("2026-01-01", periods=2))
+    def _build_bars(self, etfs: list[str], prev: float = 100.0, chg: float = 0.01) -> dict:
+        curr = round(prev * (1 + chg), 4)
+        return {etf: [_make_fake_bar(prev), _make_fake_bar(curr)] for etf in etfs}
 
     def test_returns_sorted_dict(self):
-        from agents.market_context import _fetch_sector_rotation
-        etfs = ["XLK", "XLF", "XLE"]
-        fake_df = self._make_multi_df(etfs, chg=0.01)
-        with patch("agents.market_context.yf.download", return_value=fake_df):
+        from agents.market_context import _fetch_sector_rotation, _SECTOR_ETFS
+        bars = self._build_bars(_SECTOR_ETFS, chg=0.01)
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
             result = _fetch_sector_rotation()
         assert isinstance(result, dict)
         values = list(result.values())
-        assert values == sorted(values, reverse=True), "Sector rotation must be sorted best→worst"
+        assert values == sorted(values, reverse=True), "Sector rotation must be sorted best->worst"
 
     def test_returns_all_etfs_present(self):
         from agents.market_context import _fetch_sector_rotation, _SECTOR_ETFS
-        etfs = _SECTOR_ETFS
-        fake_df = self._make_multi_df(etfs, chg=0.005)
-        with patch("agents.market_context.yf.download", return_value=fake_df):
+        bars = self._build_bars(_SECTOR_ETFS, chg=0.005)
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
             result = _fetch_sector_rotation()
         assert len(result) == len(_SECTOR_ETFS)
 
     def test_returns_empty_on_exception(self):
         from agents.market_context import _fetch_sector_rotation
-        with patch("agents.market_context.yf.download", side_effect=Exception("network error")):
+        with patch("agents.alpaca_broker._dclient", side_effect=Exception("network error")):
             result = _fetch_sector_rotation()
         assert result == {}
 
     def test_change_pct_is_correct(self):
         from agents.market_context import _fetch_sector_rotation
-        fake_df = self._make_multi_df(["XLK"], chg=0.02)
-        with patch("agents.market_context.yf.download", return_value=fake_df):
+        bars = {"XLK": [_make_fake_bar(100.0), _make_fake_bar(102.0)]}
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
             result = _fetch_sector_rotation()
         assert "XLK" in result
         assert abs(result["XLK"] - 2.0) < 0.01
+
+    def test_etf_with_fewer_than_2_bars_skipped(self):
+        from agents.market_context import _fetch_sector_rotation
+        bars = {
+            "XLK": [_make_fake_bar(100.0), _make_fake_bar(102.0)],
+            "XLF": [_make_fake_bar(50.0)],  # only 1 bar — should be skipped
+        }
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
+            result = _fetch_sector_rotation()
+        assert "XLK" in result
+        assert "XLF" not in result
+
+    def test_returns_empty_dict_when_no_bars(self):
+        from agents.market_context import _fetch_sector_rotation, _SECTOR_ETFS
+        bars = {etf: [] for etf in _SECTOR_ETFS}
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
+            result = _fetch_sector_rotation()
+        assert result == {}
 
 
 # ── run() output ─────────────────────────────────────────────────────────────
 
 def _mock_run_patches(sector_rotation=None, vix=18.0, fg=60, futures_chg=0.3):
-    """Return a context-manager-friendly set of patches for market_context.run()."""
     if sector_rotation is None:
         sector_rotation = {"XLK": 1.2, "XLF": 0.5, "XLE": -0.3}
     return {

@@ -1,11 +1,33 @@
 """Tests for agents/atr_sizer.py — ATR-based stop sizing and ORB choppiness gate."""
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import pytest
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from agents.atr_sizer import apply, _fetch_orb_pct
+from agents.atr_sizer import apply, _fetch_orb_pct, _orb_cache
 from config.settings import ATR_STOP_MULTIPLIER, ATR_STOP_FLOOR, MAX_LOSS_DOLLARS, POSITION_SIZE_BY_CONFIDENCE
+
+
+# ── helpers for Alpaca bar mocks ─────────────────────────────────────────────
+
+def _make_bar(high: float, low: float, close: float = 0.0) -> MagicMock:
+    b = MagicMock()
+    b.high  = high
+    b.low   = low
+    b.close = close
+    return b
+
+
+def _make_dclient_mock(bars: list) -> MagicMock:
+    """Return a callable mock for _dclient — calling it returns a data client."""
+    resp = MagicMock()
+    resp.data = MagicMock()
+    resp.data.get = MagicMock(return_value=bars)
+    client = MagicMock()
+    client.get_stock_bars.return_value = resp
+    # _dclient() is called as a function, so wrap in a callable mock
+    dclient_fn = MagicMock(return_value=client)
+    return dclient_fn
 
 
 def _trade(**overrides) -> dict:
@@ -179,3 +201,61 @@ class TestOrbGate:
         adjusted, dropped = apply([], {})
         assert adjusted == []
         assert dropped == []
+
+
+# ── _fetch_orb_pct (Alpaca implementation) ────────────────────────────────────
+
+class TestFetchOrbPctAlpaca:
+
+    def setup_method(self):
+        # Clear the module-level cache before each test
+        _orb_cache.clear()
+
+    def test_orb_computed_from_alpaca_bars(self):
+        """ORB = (high - low) / entry from Alpaca 1-min bars."""
+        bars = [_make_bar(high=101.0, low=99.0), _make_bar(high=102.0, low=100.0)]
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
+            result = _fetch_orb_pct("AAPL", entry=100.0)
+        # high = max(101, 102) = 102, low = min(99, 100) = 99 -> range = 3 -> 3/100 = 0.03
+        assert result == pytest.approx(0.03, abs=0.001)
+
+    def test_orb_returns_none_on_insufficient_bars(self):
+        """Fewer than 2 bars returns None."""
+        bars = [_make_bar(high=101.0, low=99.0)]  # only 1 bar
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
+            result = _fetch_orb_pct("MSFT", entry=100.0)
+        assert result is None
+
+    def test_orb_returns_none_on_empty_bars(self):
+        """Empty bar list returns None."""
+        dclient_fn = _make_dclient_mock([])
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
+            result = _fetch_orb_pct("TSLA", entry=250.0)
+        assert result is None
+
+    def test_orb_cached_after_first_call(self):
+        """Second call for same ticker reads from cache, not Alpaca."""
+        bars = [_make_bar(high=105.0, low=95.0), _make_bar(high=106.0, low=96.0)]
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
+            r1 = _fetch_orb_pct("NVDA", entry=100.0)
+            r2 = _fetch_orb_pct("NVDA", entry=100.0)
+        assert r1 == r2
+        # _dclient() should only be called once (second call hits cache)
+        assert dclient_fn.call_count == 1
+
+    def test_orb_returns_none_on_exception(self):
+        """Exception during Alpaca call returns None gracefully."""
+        with patch("agents.alpaca_broker._dclient", side_effect=Exception("api down")):
+            result = _fetch_orb_pct("FAIL", entry=100.0)
+        assert result is None
+
+    def test_orb_zero_entry_returns_zero(self):
+        """Zero entry price returns 0.0, not a ZeroDivisionError."""
+        bars = [_make_bar(high=101.0, low=99.0), _make_bar(high=102.0, low=100.0)]
+        dclient_fn = _make_dclient_mock(bars)
+        with patch("agents.alpaca_broker._dclient", dclient_fn):
+            result = _fetch_orb_pct("ZERO", entry=0.0)
+        assert result == 0.0

@@ -2,6 +2,7 @@
 Tests for agents/sector_guard.py
 Covers: sector cap enforcement, ETF classification, confidence-based tiebreaking,
 Unknown sector pass-through, under-cap sectors untouched.
+_get_sector no longer makes network calls — unknown tickers always return "Unknown".
 """
 import pytest
 from unittest.mock import patch
@@ -42,14 +43,21 @@ class TestGetSector:
         etf = ETF_UNIVERSE[0]
         assert _get_sector(etf) == "ETF"
 
-    def test_yfinance_failure_returns_unknown(self):
-        with patch("agents.sector_guard.yf.Ticker") as mock:
-            mock.return_value.info = {}
-            assert _get_sector("AAPL") == "Unknown"
+    def test_unknown_ticker_returns_unknown_without_network_call(self):
+        """_get_sector must return Unknown for any non-ETF ticker — no network call."""
+        # No patching needed — the function has no network call anymore
+        result = _get_sector("AAPL")
+        assert result == "Unknown"
 
-    def test_yfinance_exception_returns_unknown(self):
-        with patch("agents.sector_guard.yf.Ticker", side_effect=Exception("rate limited")):
-            assert _get_sector("AAPL") == "Unknown"
+    def test_unknown_ticker_no_import_of_yfinance(self):
+        """sector_guard must not import yfinance."""
+        import agents.sector_guard as sg
+        src = open(sg.__file__).read()
+        assert "import yfinance" not in src, "sector_guard.py must not import yfinance"
+
+    def test_multiple_unknown_tickers_all_return_unknown(self):
+        for ticker in ["NVDA", "MSFT", "TSLA", "IONQ"]:
+            assert _get_sector(ticker) == "Unknown"
 
 
 # ── run ──────────────────────────────────────────────────────────────────────

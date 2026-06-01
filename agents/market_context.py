@@ -153,22 +153,24 @@ def _fetch_market_data() -> dict:
 
 
 def _fetch_sector_rotation() -> dict:
-    """Fetch today's return for each sector ETF. Returns {ETF: change_pct} sorted best→worst."""
+    """Fetch today's return for each sector ETF via Alpaca. Returns {ETF: change_pct} sorted best→worst."""
     try:
-        raw = yf.download(_SECTOR_ETFS, period="2d", interval="1d",
-                          progress=False, group_by="ticker")
+        from datetime import datetime, timedelta
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        from agents.alpaca_broker import _dclient
+        end   = datetime.utcnow()
+        start = end - timedelta(days=5)
+        req   = StockBarsRequest(symbol_or_symbols=_SECTOR_ETFS, timeframe=TimeFrame.Day,
+                                 start=start, end=end)
+        bars  = _dclient().get_stock_bars(req).data
         rotation = {}
         for etf in _SECTOR_ETFS:
-            try:
-                if isinstance(raw.columns, pd.MultiIndex):
-                    s = raw[etf]["Close"].dropna()
-                else:
-                    s = raw["Close"].dropna()
-                if len(s) >= 2:
-                    chg = (float(s.iloc[-1]) - float(s.iloc[-2])) / float(s.iloc[-2]) * 100
-                    rotation[etf] = round(chg, 2)
-            except Exception:
-                pass
+            etf_bars = bars.get(etf) or []
+            if len(etf_bars) >= 2:
+                prev = etf_bars[-2].close
+                curr = etf_bars[-1].close
+                rotation[etf] = round((curr - prev) / prev * 100, 2)
         return dict(sorted(rotation.items(), key=lambda x: x[1], reverse=True))
     except Exception:
         return {}

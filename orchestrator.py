@@ -22,6 +22,21 @@ from config.settings import (UNIVERSE, STRATEGY_MIN_SCORE, PREMARKET_MIN_SCORE, 
 from agents import alpaca_broker
 
 
+def _get_gap_up_tickers(min_gap_pct: float = 2.0, top_n: int = 20) -> list[str]:
+    """Return top gap-up tickers from Alpaca ScreenerClient (market movers)."""
+    try:
+        from alpaca.data.historical.screener import ScreenerClient
+        from alpaca.data.requests import MarketMoversRequest
+        from alpaca.data.enums import MarketType
+        client = ScreenerClient(os.environ.get("ALPACA_API_KEY", ""), os.environ.get("ALPACA_SECRET_KEY", ""))
+        req    = MarketMoversRequest(market_type=MarketType.STOCKS, top=top_n)
+        movers = client.get_market_movers(req)
+        return [m.symbol for m in movers.gainers if m.percent_change >= min_gap_pct]
+    except Exception as e:
+        print(f"  [gap_up] {e}")
+        return []
+
+
 def _sweep_and_verify() -> bool:
     """
     Close overnight Alpaca positions with one retry and a verification step.
@@ -222,6 +237,50 @@ def premarket(broker: str = "simulation"):
     if not candidates:
         print("        No candidates — markets may be closed. Exiting.")
         return
+
+    # 1.1 Gap-up injection — add Alpaca market-movers not already in candidate list
+    if broker == "alpaca":
+        existing_tickers = {c["ticker"] for c in candidates}
+        gap_up_tickers   = _get_gap_up_tickers(min_gap_pct=2.0, top_n=20)
+        new_gap_tickers  = [t for t in gap_up_tickers if t not in existing_tickers]
+        if new_gap_tickers:
+            _now = datetime.utcnow().isoformat()
+            for ticker in new_gap_tickers:
+                candidates.append({
+                    "ticker":             ticker,
+                    "name":               ticker,
+                    "sector":             "Unknown",
+                    "price":              0.0,
+                    "market_cap_b":       0.0,
+                    "avg_volume":         0,
+                    "beta":               None,
+                    "pe_forward":         None,
+                    "technical_score":    6,
+                    "signals":            ["Gap-up momentum"],
+                    "rsi":                None,
+                    "macd_hist":          None,
+                    "bb_pct":             None,
+                    "volume_ratio":       1.0,
+                    "atr":                None,
+                    "atr_pct":            0.0,
+                    "intraday_range_pct": 0.0,
+                    "range_52w_pct":      0.5,
+                    "dist_sma20":         None,
+                    "dist_sma50":         None,
+                    "mom1":               None,
+                    "mom5":               None,
+                    "breakout_freshness": "FRESH",
+                    "premarket_gap_pct":  None,
+                    "above_orb":          None,
+                    "above_vwap":         None,
+                    "vwap_reclaim":       None,
+                    "vwap":               None,
+                    "ml_score":           None,
+                    "gap_up":             True,
+                    "scanned_at":         _now,
+                })
+            print(f"[ 1.1/4 ] Gap-up injection: {len(new_gap_tickers)} new tickers added "
+                  f"({', '.join(new_gap_tickers)})")
 
     # 1.5 News intelligence — earnings blackout + news sentiment
     intel = news_intel.run(candidates)

@@ -2,11 +2,11 @@
 Sector Guard (V2d): Prevents over-concentration in one sector.
 Runs after risk agent, before portfolio agent — no Claude API call needed.
 
-Fetches sector from yfinance for each approved trade (10-15 calls max).
+Sector is sourced from the scanner's candidate dict (populated from Alpaca/yfinance in scanner.py).
+Unknown tickers return "Unknown" — the guard skips the cap for Unknown, so this is safe.
 Caps positions per sector at MAX_PER_SECTOR, dropping lowest-confidence excess.
 """
 from __future__ import annotations
-import yfinance as yf
 from config.settings import MAX_PER_SECTOR, ETF_UNIVERSE
 
 _CONFIDENCE_RANK = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
@@ -16,11 +16,7 @@ _ETF_SET = set(ETF_UNIVERSE)
 def _get_sector(ticker: str) -> str:
     if ticker in _ETF_SET:
         return "ETF"
-    try:
-        info = yf.Ticker(ticker).info
-        return info.get("sector") or "Unknown"
-    except Exception:
-        return "Unknown"
+    return "Unknown"
 
 
 def run(risk_output: dict) -> dict:
@@ -40,7 +36,7 @@ def run(risk_output: dict) -> dict:
 
     kept, blocked = [], []
     for sector, trades in by_sector.items():
-        # Don't cap Unknown — yfinance can't classify these, no reason to penalise them
+        # Don't cap Unknown — no sector data available, no reason to penalise them
         if sector == "Unknown" or len(trades) <= MAX_PER_SECTOR:
             kept.extend(trades)
         else:

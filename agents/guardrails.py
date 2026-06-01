@@ -11,7 +11,6 @@ Checks applied in order:
   6. Capital check     — Alpaca buying_power must cover position_size (alpaca broker only)
 """
 from __future__ import annotations
-import yfinance as yf
 from datetime import date
 from core import db
 from config.settings import DAILY_LOSS_LIMIT, PRICE_SANITY_PCT, TOTAL_CAPITAL
@@ -24,13 +23,6 @@ def _current_price(ticker: str) -> float | None:
         prices = alpaca_broker.get_live_prices([ticker])
         if prices.get(ticker):
             return prices[ticker]
-    except Exception:
-        pass
-    # Fallback: yfinance 1-min intraday
-    try:
-        data = yf.Ticker(ticker).history(period="1d", interval="1m")
-        if not data.empty:
-            return round(float(data["Close"].iloc[-1]), 2)
     except Exception:
         pass
     return None
@@ -129,15 +121,20 @@ def filter_trades(approved_trades: list, broker: str = "simulation",
                     # Secondary: cross-check against 30-day historical avg to catch corrupted
                     # scanner data where both live price and entry are from the same bad source
                     try:
-                        hist = yf.Ticker(ticker).history(period="1mo")
-                        if not hist.empty:
-                            avg_30d = float(hist["Close"].mean())
-                            hist_dev = abs(entry - avg_30d) / avg_30d
+                        from alpaca.data.requests import StockBarsRequest
+                        from alpaca.data.timeframe import TimeFrame
+                        from agents.alpaca_broker import _dclient
+                        from datetime import datetime, timedelta
+                        req  = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Day,
+                                                start=datetime.utcnow()-timedelta(days=35),
+                                                end=datetime.utcnow())
+                        hist_bars = (_dclient().get_stock_bars(req).data.get(ticker) or [])
+                        if len(hist_bars) >= 5:
+                            avg_30d   = sum(b.close for b in hist_bars) / len(hist_bars)
+                            hist_dev  = abs(entry - avg_30d) / avg_30d
                             if avg_30d > 0 and hist_dev > 0.25:
-                                reason = (
-                                    f"Price sanity: entry ${entry:.2f} is {hist_dev*100:.0f}% "
-                                    f"from 30d avg ${avg_30d:.2f} — likely data corruption"
-                                )
+                                reason = (f"Price sanity: entry ${entry:.2f} is {hist_dev*100:.0f}% "
+                                          f"from 30d avg ${avg_30d:.2f} — likely data corruption")
                     except Exception:
                         pass  # secondary check fails open — primary check already passed
 

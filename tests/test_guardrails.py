@@ -1,28 +1,59 @@
 """
 Tests for agents/guardrails.py
 Covers: daily loss limit, action whitelist, ticker whitelist, duplicate guard,
-price sanity (Alpaca primary / yfinance fallback / fail-closed), capital check.
+price sanity (Alpaca primary / fail-closed, no yfinance fallback), capital check.
 """
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import date
 from tests.conftest import make_trade, make_position, FakeDB
-from agents.guardrails import filter_trades
+from agents.guardrails import filter_trades, _current_price
 from config.settings import DAILY_LOSS_LIMIT, PRICE_SANITY_PCT, TOTAL_CAPITAL
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
+def _make_alpaca_bars(closes: list[float]) -> list:
+    """Return a list of mock Alpaca bar objects with .close attributes."""
+    bars = []
+    for c in closes:
+        b = MagicMock()
+        b.close = c
+        bars.append(b)
+    return bars
+
+
+def _make_alpaca_dclient(bars: list) -> MagicMock:
+    """Return a mock that, when called as _dclient(), returns a client whose
+    get_stock_bars().data.get(ticker) returns `bars`."""
+    resp = MagicMock()
+    resp.data = MagicMock()
+    resp.data.get = MagicMock(return_value=bars)
+    client = MagicMock()
+    client.get_stock_bars.return_value = resp
+    # _dclient is called as a function: _dclient() → client
+    dclient_fn = MagicMock(return_value=client)
+    return dclient_fn
+
+
 def _run(trades, *, today_pnl=0.0, open_pos=None, closed_today=None,
-         market_price=100.0, buying_power=None, universe=None):
+         market_price=100.0, buying_power=None, universe=None,
+         hist_bars=None):
     """Patch all external calls and run filter_trades."""
     open_pos     = open_pos or []
     closed_today = closed_today or []
 
     all_pos = open_pos + closed_today
+    # Default: 30d Alpaca bars with stable prices (won't trigger >25% deviation)
+    if hist_bars is None:
+        hist_bars = _make_alpaca_bars([market_price or 100.0] * 10)
+    mock_dclient = _make_alpaca_dclient(hist_bars)
+
+    # _dclient is imported locally inside guardrails via `from agents.alpaca_broker import _dclient`
+    # Patch the source so the local import gets the mock
     with patch("agents.guardrails._today_realized_pnl", return_value=today_pnl), \
          patch("agents.guardrails._current_price", return_value=market_price), \
-         patch("yfinance.Ticker", side_effect=Exception("yf mocked out")), \
+         patch("agents.alpaca_broker._dclient", mock_dclient), \
          patch("core.db.select", side_effect=lambda table, **kw: (
              open_pos  if table == "positions" and kw.get("filters", {}).get("status") == "OPEN"
              else all_pos if table == "positions" and not kw.get("filters")
@@ -180,17 +211,15 @@ class TestPriceSanity:
             mock_price.assert_called_once_with("AAPL")
 
     def test_historical_avg_sanity_blocks_corrupt_price(self):
-        """Entry 6× above 30d avg (e.g. MU $907 vs $115) must be blocked."""
+        """Entry 6x above 30d avg (e.g. MU $907 vs $115) must be blocked."""
         trade = make_trade(entry=900.0)  # corrupt scanner price
-        # Guardrails accesses hist["Close"].mean() — need subscript-style mock
-        mock_hist = MagicMock()
-        mock_hist.empty = False
-        mock_hist.__getitem__.return_value.mean.return_value = 115.0
+        # 30d Alpaca bars all at ~115 avg → entry at 900 is 682% above → blocked
+        hist_bars = _make_alpaca_bars([115.0] * 10)
+        mock_dclient = _make_alpaca_dclient(hist_bars)
         with patch("agents.guardrails._today_realized_pnl", return_value=0.0), \
              patch("agents.guardrails._current_price", return_value=905.0), \
-             patch("yfinance.Ticker") as mock_yf, \
+             patch("agents.alpaca_broker._dclient", mock_dclient), \
              patch("core.db.select", return_value=[]):
-            mock_yf.return_value.history.return_value = mock_hist
             result = filter_trades([trade], broker="simulation", universe=[trade["ticker"]])
         assert len(result["approved_trades"]) == 0
         assert "30d avg" in result["guardrail_blocked"][0]["reason"]
@@ -198,16 +227,26 @@ class TestPriceSanity:
     def test_historical_avg_sanity_passes_normal_price(self):
         """Normal entry within 25% of 30d avg passes secondary check."""
         trade = make_trade(entry=102.0)
-        mock_hist = MagicMock()
-        mock_hist.empty = False
-        mock_hist.__getitem__.return_value.mean.return_value = 100.0
+        hist_bars = _make_alpaca_bars([100.0] * 10)
+        mock_dclient = _make_alpaca_dclient(hist_bars)
         with patch("agents.guardrails._today_realized_pnl", return_value=0.0), \
              patch("agents.guardrails._current_price", return_value=102.0), \
-             patch("yfinance.Ticker") as mock_yf, \
+             patch("agents.alpaca_broker._dclient", mock_dclient), \
              patch("core.db.select", return_value=[]):
-            mock_yf.return_value.history.return_value = mock_hist
             result = filter_trades([trade], broker="simulation", universe=[trade["ticker"]])
         assert len(result["approved_trades"]) == 1
+
+    def test_current_price_returns_none_when_alpaca_fails(self):
+        """_current_price returns None when Alpaca fails — no yfinance fallback."""
+        with patch("agents.alpaca_broker.get_live_prices", side_effect=Exception("alpaca down")):
+            result = _current_price("AAPL")
+        assert result is None
+
+    def test_current_price_returns_none_when_alpaca_returns_empty(self):
+        """_current_price returns None when Alpaca returns no price for ticker."""
+        with patch("agents.alpaca_broker.get_live_prices", return_value={}):
+            result = _current_price("AAPL")
+        assert result is None
 
 
 # ── Capital check ────────────────────────────────────────────────────────────
