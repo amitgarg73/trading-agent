@@ -241,8 +241,9 @@ def premarket(broker: str = "simulation"):
     # 1.1 Gap-up injection — add Alpaca market-movers not already in candidate list
     if broker == "alpaca":
         existing_tickers = {c["ticker"] for c in candidates}
+        universe_set     = set(universe)
         gap_up_tickers   = _get_gap_up_tickers(min_gap_pct=2.0, top_n=20)
-        new_gap_tickers  = [t for t in gap_up_tickers if t not in existing_tickers]
+        new_gap_tickers  = [t for t in gap_up_tickers if t not in existing_tickers and t in universe_set]
         if new_gap_tickers:
             _now = datetime.utcnow().isoformat()
             for ticker in new_gap_tickers:
