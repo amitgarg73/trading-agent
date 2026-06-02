@@ -256,6 +256,22 @@ def refresh_positions(broker: str = "simulation") -> list:
         all_alpaca_data = alpaca_broker.get_all_positions_data()
         alpaca_open = set(all_alpaca_data.keys())
 
+        # Backfill fill_price for entries that filled after the 5s placement poll.
+        # Does not block trail submission (trail backfill at line ~281 has no fill_price gate),
+        # but ensures P&L uses actual fill rather than the requested limit price.
+        for pos in open_pos:
+            if pos.get("fill_price") is None and pos.get("alpaca_order_id") and pos["ticker"] in alpaca_open:
+                try:
+                    order = alpaca_broker._client().get_order_by_id(pos["alpaca_order_id"])
+                    status = str(getattr(order, "status", "")).lower()
+                    if status in ("filled", "partially_filled") and order.filled_avg_price:
+                        fp = float(order.filled_avg_price)
+                        db.update("positions", {"id": pos["id"]}, {"fill_price": fp})
+                        pos["fill_price"] = fp
+                        print(f"        [fill_backfill] {pos['ticker']} confirmed fill ${fp:.2f}")
+                except Exception:
+                    pass
+
         for pos in open_pos:
             ticker = pos["ticker"]
 

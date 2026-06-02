@@ -873,3 +873,30 @@ class TestNativeTrailBackfillIntraday:
              patch("agents.portfolio.TRAIL_PCT", 0.008):
             from agents.portfolio import refresh_positions
             refresh_positions(broker="alpaca")  # must not raise
+
+    def test_fill_price_backfilled_for_pending_entry(self):
+        """fill_price=None position gets fill_price written when Alpaca confirms the order filled."""
+        pos = {**self._make_pos(), "fill_price": None}
+
+        updates = {}
+        def capture_update(table, filt, data):
+            updates.update(data)
+
+        filled_order = MagicMock()
+        filled_order.status = "filled"
+        filled_order.filled_avg_price = 501.50
+
+        with patch("core.db.select", return_value=[pos]), \
+             patch("core.db.update", side_effect=capture_update), \
+             patch("agents.alpaca_broker.get_all_positions_data",
+                   return_value={"NVDA": {"current_price": 505.0, "unrealized_pnl": 21.0}}), \
+             patch("agents.alpaca_broker._client") as mock_client, \
+             patch("agents.alpaca_broker._cancel_bracket_stop_leg"), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="trail-fill-001"), \
+             patch("agents.portfolio.USE_NATIVE_TRAILING_STOP", True), \
+             patch("agents.portfolio.TRAIL_PCT", 0.008):
+            mock_client.return_value.get_order_by_id.return_value = filled_order
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="alpaca")
+
+        assert updates.get("fill_price") == 501.50, "fill_price should be backfilled from Alpaca order"
