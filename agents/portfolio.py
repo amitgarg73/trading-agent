@@ -263,7 +263,7 @@ def refresh_positions(broker: str = "simulation") -> list:
             if pos.get("fill_price") is None and pos.get("alpaca_order_id") and pos["ticker"] in alpaca_open:
                 try:
                     order = alpaca_broker._client().get_order_by_id(pos["alpaca_order_id"])
-                    status = str(getattr(order, "status", "")).lower()
+                    status = str(getattr(order.status, "value", str(order.status))).lower()
                     if status in ("filled", "partially_filled") and order.filled_avg_price:
                         fp = float(order.filled_avg_price)
                         db.update("positions", {"id": pos["id"]}, {"fill_price": fp})
