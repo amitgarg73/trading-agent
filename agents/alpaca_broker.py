@@ -300,17 +300,22 @@ def cancel_order(order_id: str) -> None:
 
 
 def _cancel_bracket_stop_leg(order_id: str) -> None:
-    """Cancel the bracket's fixed stop-loss leg so a trailing stop can be submitted without conflict."""
+    """
+    Cancel all open bracket legs so a trailing stop can be submitted without conflict.
+    Alpaca counts both the stop-loss and take-profit legs against available qty, so
+    both must be cancelled before a standalone trailing stop can be accepted.
+    """
     try:
         o = _client().get_order_by_id(order_id)
         for leg in (o.legs or []):
-            leg_type   = str(leg.order_type).lower()
-            leg_status = str(leg.status).lower()
-            if "stop" in leg_type and "trailing" not in leg_type:
-                if "cancel" not in leg_status and "fill" not in leg_status:
+            leg_type   = str(getattr(leg.order_type, "value", str(leg.order_type))).lower()
+            leg_status = str(getattr(leg.status,     "value", str(leg.status))).lower()
+            if "trailing" not in leg_type and "cancel" not in leg_status and "fill" not in leg_status:
+                try:
                     _client().cancel_order_by_id(str(leg.id))
-                    print(f"        [alpaca] {o.symbol} stop leg cancelled — trail will replace it")
-                break
+                except Exception:
+                    pass
+        print(f"        [alpaca] {o.symbol} bracket legs cleared — trail will replace them")
     except Exception as e:
         print(f"        [alpaca] _cancel_bracket_stop_leg: {e}")
 
