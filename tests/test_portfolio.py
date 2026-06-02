@@ -451,6 +451,7 @@ class TestLivePriceRecalculation:
         with patch("agents.portfolio._current_price", return_value=live_price), \
              patch("agents.alpaca_broker.get_live_quotes", return_value={"AAPL": {"ask": live_price, "bid": live_price}}), \
              patch("agents.alpaca_broker.submit_bracket_order", return_value=("order-123", live_price)), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="fake-trail-id"), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"):
             from agents.portfolio import _open_single_position
@@ -502,6 +503,7 @@ class TestLivePriceRecalculation:
         with patch("agents.portfolio._current_price", return_value=live_price), \
              patch("agents.alpaca_broker.get_live_quotes", return_value={"AAPL": {"ask": live_price, "bid": live_price}}), \
              patch("agents.alpaca_broker.submit_bracket_order", side_effect=capture_submit), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="fake-trail-id"), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"):
             from agents.portfolio import _open_single_position
@@ -551,6 +553,7 @@ class TestLivePriceRecalculation:
              patch("agents.alpaca_broker.get_live_quotes",
                    return_value={"AAPL": {"ask": 150.50, "bid": 149.50}}), \
              patch("agents.alpaca_broker.submit_bracket_order", side_effect=capture_submit), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="fake-trail-id"), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"):
             from agents.portfolio import _open_single_position
@@ -706,6 +709,7 @@ class TestPhantomPositionGuard:
             return {**data, "id": f"fake-{table}"}
 
         with patch("agents.alpaca_broker.submit_bracket_order", return_value=("order-xyz", 100.0)), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="fake-trail-id"), \
              patch("agents.alpaca_broker.get_live_quotes", return_value={"AAPL": {"ask": 100.0, "bid": 100.0}}), \
              patch("core.db.insert", side_effect=capture_insert), \
              patch("core.db.update"), \
