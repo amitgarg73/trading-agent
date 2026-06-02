@@ -900,3 +900,86 @@ class TestNativeTrailBackfillIntraday:
             refresh_positions(broker="alpaca")
 
         assert updates.get("fill_price") == 501.50, "fill_price should be backfilled from Alpaca order"
+
+
+class TestTrailCancelOnClose:
+    """Trail order must be cancelled before close_position() to avoid orphaned trailing stops."""
+
+    def _make_pos_with_trail(self, price=95.0):
+        return {
+            "id": "pos-tc-001",
+            "ticker": "AAPL",
+            "planned_trade_id": "pt-tc-001",
+            "alpaca_order_id": "ord-tc-001",
+            "trail_order_id": "trail-tc-001",
+            "native_trail_active": False,
+            "fill_price": 100.0,
+            "entry_price": 100.0,
+            "target_price": 110.0,
+            "stop_loss": 94.0,
+            "shares": 10,
+            "action": "BUY",
+            "high_watermark": 105.0,
+            "current_price": price,
+            "unrealized_pnl": (price - 100.0) * 10,
+            "opened_at": "2026-06-01T14:00:00",
+            "status": "OPEN",
+        }
+
+    def _alpaca_mocks(self, price, unrealized):
+        """Common Alpaca mocks — blocks all real API calls."""
+        return [
+            patch("core.db.select", return_value=[self._make_pos_with_trail(price=price)]),
+            patch("core.db.update"),
+            patch("agents.alpaca_broker.get_all_positions_data",
+                  return_value={"AAPL": {"current_price": price, "unrealized_pnl": unrealized}}),
+            patch("agents.alpaca_broker._client"),               # block any direct API access
+            patch("agents.alpaca_broker.submit_trailing_stop", return_value=None),
+            patch("agents.portfolio.USE_NATIVE_TRAILING_STOP", False),
+            patch("agents.portfolio.TRAIL_PCT", 0.01),
+        ]
+
+    def test_trail_cancelled_before_manual_trail_close(self):
+        """When manual trail fires, trail_order_id must be cancelled before close_position."""
+        # price=103.9: above stop_loss(94) but below eff_stop=max(94, 105*0.99)=103.95 → trail_hit=True
+        cancel_calls = []
+        close_calls = []
+
+        with patch("core.db.select", return_value=[self._make_pos_with_trail(price=103.9)]), \
+             patch("core.db.update"), \
+             patch("agents.alpaca_broker.get_all_positions_data",
+                   return_value={"AAPL": {"current_price": 103.9, "unrealized_pnl": -6.0}}), \
+             patch("agents.alpaca_broker._client"), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value=None), \
+             patch("agents.alpaca_broker.cancel_order", side_effect=lambda oid: cancel_calls.append(oid)), \
+             patch("agents.alpaca_broker.close_position",
+                   side_effect=lambda t: close_calls.append(t) or (True, 103.9)), \
+             patch("agents.portfolio.USE_NATIVE_TRAILING_STOP", False), \
+             patch("agents.portfolio.TRAIL_PCT", 0.01):
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="alpaca")
+
+        assert "trail-tc-001" in cancel_calls, "trail_order_id must be cancelled before close"
+        assert "AAPL" in close_calls, "close_position must be called"
+
+    def test_trail_cancelled_before_hard_stop_close(self):
+        """When price breaches hard stop and force-close fires, trail_order_id must be cancelled first."""
+        pos = self._make_pos_with_trail(price=93.0)  # below stop_loss=94.0
+        pos["opened_at"] = "2026-06-01T00:00:00"    # old enough to trigger 300s age guard
+
+        cancel_calls = []
+
+        with patch("core.db.select", return_value=[pos]), \
+             patch("core.db.update"), \
+             patch("agents.alpaca_broker.get_all_positions_data",
+                   return_value={"AAPL": {"current_price": 93.0, "unrealized_pnl": -70.0}}), \
+             patch("agents.alpaca_broker._client"), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value=None), \
+             patch("agents.alpaca_broker.cancel_order", side_effect=lambda oid: cancel_calls.append(oid)), \
+             patch("agents.alpaca_broker.close_position", return_value=(True, 93.0)), \
+             patch("agents.portfolio.USE_NATIVE_TRAILING_STOP", False), \
+             patch("agents.portfolio.TRAIL_PCT", 0.01):
+            from agents.portfolio import refresh_positions
+            refresh_positions(broker="alpaca")
+
+        assert "trail-tc-001" in cancel_calls, "trail_order_id must be cancelled on hard stop close"

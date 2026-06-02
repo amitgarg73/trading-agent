@@ -317,6 +317,8 @@ def refresh_positions(broker: str = "simulation") -> list:
 
                         if trail_hit:
                             print(f"  🔔 TRAIL STOP: {ticker} peak ${new_high_wm:.2f} → ${current:.2f} (stop ${eff_stop:.2f})")
+                            if pos.get("trail_order_id"):
+                                alpaca_broker.cancel_order(pos["trail_order_id"])
                             success, fill = alpaca_broker.close_position(ticker)
                             fill = fill or current
                             pnl  = round(pos["shares"] * (fill - entry), 2)
@@ -346,6 +348,8 @@ def refresh_positions(broker: str = "simulation") -> list:
                                          ).total_seconds()
                                 if age_s > 300:
                                     print(f"  🔴 HARD STOP: {ticker} ${current:.2f} < stop ${pos['stop_loss']:.2f} — forcing market close")
+                                    if pos.get("trail_order_id"):
+                                        alpaca_broker.cancel_order(pos["trail_order_id"])
                                     success, fill = alpaca_broker.close_position(ticker)
                                     fill = fill or current
                                     pnl  = round(pos["shares"] * (fill - entry), 2)
