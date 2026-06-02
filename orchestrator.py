@@ -416,15 +416,15 @@ def premarket(broker: str = "simulation"):
         if dropped_top:
             print(f"[ 1.88/4 ] Top-of-range filter: dropped {dropped_top} near-day-high candidate(s)")
 
-        # SPY premarket gate — if SPY is already negative at 10am, all intraday momentum fails.
-        # market_context handles VIX/futures; this is a live-price check on the open itself.
+        # SPY premarket gate — TEMPORARILY DISABLED
         _spy_pct = intraday_sigs.get("SPY", {}).get("today_pct_change", None)
-        if _spy_pct is not None and _spy_pct < 0:
-            print(f"[ 1.89/4 ] ⚠️  SPY premarket: {_spy_pct:+.2f}% — market opened negative. "
-                  f"Reducing max positions to avoid momentum entries on down-market day.")
-            today_max_positions = max(0, today_max_positions - 3)
-        elif _spy_pct is not None:
-            print(f"[ 1.89/4 ] SPY premarket: {_spy_pct:+.2f}% ✅")
+        # if _spy_pct is not None and _spy_pct < 0:
+        #     print(f"[ 1.89/4 ] ⚠️  SPY premarket: {_spy_pct:+.2f}% — market opened negative. "
+        #           f"Reducing max positions to avoid momentum entries on down-market day.")
+        #     today_max_positions = max(0, today_max_positions - 3)
+        # elif _spy_pct is not None:
+        if _spy_pct is not None:
+            print(f"[ 1.89/4 ] SPY premarket: {_spy_pct:+.2f}% (gate disabled)")
 
     elif broker == "simulation":
         # Compute RS vs SPY via yfinance — gives Claude a relative-strength signal

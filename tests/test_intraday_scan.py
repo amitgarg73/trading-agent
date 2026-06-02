@@ -762,24 +762,24 @@ def _run_scan_alpaca(spy_pct: float, closed_rows=None):
 
 
 class TestSPYGate:
-    """SPY ≥0.3% gate must block intraday scans on flat/down market days."""
+    """SPY gate — TEMPORARILY DISABLED. All cases pass through to momentum scan."""
 
     def test_spy_gate_blocks_negative_spy(self):
-        """SPY -0.5% → gate blocks before momentum scan runs."""
+        """Gate disabled: SPY -0.5% no longer blocks."""
         _, mock_momentum = _run_scan_alpaca(spy_pct=-0.5)
-        mock_momentum.assert_not_called()
+        mock_momentum.assert_called_once()
 
     def test_spy_gate_blocks_flat_spy(self):
-        """SPY +0.1% (below 0.3% threshold) → gate blocks."""
+        """Gate disabled: SPY +0.1% no longer blocks."""
         _, mock_momentum = _run_scan_alpaca(spy_pct=0.1)
-        mock_momentum.assert_not_called()
+        mock_momentum.assert_called_once()
 
     def test_spy_gate_passes_at_threshold(self):
-        """SPY exactly +0.3% → gate passes, momentum scan runs."""
+        """Gate disabled: SPY +0.3% passes through as before."""
         _, mock_momentum = _run_scan_alpaca(spy_pct=0.3)
         mock_momentum.assert_called_once()
 
     def test_spy_gate_passes_strong_up_day(self):
-        """SPY +0.8% → gate passes, momentum scan runs."""
+        """Gate disabled: SPY +0.8% passes through as before."""
         _, mock_momentum = _run_scan_alpaca(spy_pct=0.8)
         mock_momentum.assert_called_once()
