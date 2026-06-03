@@ -810,16 +810,27 @@ def main():
                         help="Execution broker (default: simulation)")
     args = parser.parse_args()
 
-    if args.mode == "premarket":
-        premarket(broker=args.broker)
-    elif args.mode == "intraday":
-        intraday(broker=args.broker)
-    elif args.mode == "entry_scan":
-        entry_scan(broker=args.broker)
-    elif args.mode == "eod":
-        eod(broker=args.broker)
-    elif args.mode == "universe_refresh":
-        universe_refresh.run()
+    try:
+        if args.mode == "premarket":
+            premarket(broker=args.broker)
+        elif args.mode == "intraday":
+            intraday(broker=args.broker)
+        elif args.mode == "entry_scan":
+            entry_scan(broker=args.broker)
+        elif args.mode == "eod":
+            eod(broker=args.broker)
+        elif args.mode == "universe_refresh":
+            universe_refresh.run()
+    except Exception as e:
+        import traceback as _tb
+        try:
+            _log_run(args.mode, "failed", {
+                "error":     str(e),
+                "traceback": _tb.format_exc()[-3000:],
+            })
+        except Exception:
+            pass
+        raise
 
 
 if __name__ == "__main__":
