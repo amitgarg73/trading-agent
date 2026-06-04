@@ -570,6 +570,73 @@ class TestLivePriceRecalculation:
         # Critically: stop must be below the actual fill price (149.0)
         assert stop < 149.0, "Stop must be below fill price — bracket must not fire immediately"
 
+    def test_no_bid_ask_falls_back_to_live_price(self):
+        """Premarket: get_live_quotes returns {} (ask=0 on IEX). Fallback to get_live_prices()
+        re-anchors entry/stop/target to live price when it differs >0.5% from scan price."""
+        # Scan saw $320.84 (yesterday's close). Market opened at $310.49 (-3.2%).
+        trade = self._make_trade(entry=320.84, target=327.69, stop=301.38)
+
+        submitted = {}
+        def capture_submit(**kwargs):
+            submitted.update(kwargs)
+            return ("order-jpm", 310.49)
+
+        inserted = {}
+        def capture_insert(table, data):
+            inserted.update(data)
+            return {**data, "id": "pos-jpm"}
+
+        plan_stop_pct   = (320.84 - 301.38) / 320.84
+        plan_target_pct = (327.69 - 320.84) / 320.84
+        expected_stop   = round(310.49 * (1 - plan_stop_pct), 2)
+        expected_target = round(310.49 * (1 + plan_target_pct), 2)
+
+        with patch("agents.portfolio._current_price", return_value=310.49), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={}), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": 310.49}), \
+             patch("agents.alpaca_broker.submit_bracket_order", side_effect=capture_submit), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="trail-jpm"), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update"):
+            from agents.portfolio import _open_single_position
+            _open_single_position("plan-1", trade, 310.49, broker="alpaca")
+
+        assert submitted.get("entry_price") == pytest.approx(310.49, abs=0.01), \
+            f"Entry should be live price 310.49, got {submitted.get('entry_price')}"
+        assert submitted.get("stop_price") == pytest.approx(expected_stop, abs=0.02), \
+            f"Stop should be live-anchored {expected_stop}, got {submitted.get('stop_price')}"
+        assert submitted.get("stop_price") < 310.49, \
+            "Stop must be below live price — bracket must not fire immediately"
+
+    def test_no_bid_ask_uses_scan_price_when_live_matches(self):
+        """When live price is within 0.5% of scan price, use plan values directly."""
+        trade = self._make_trade(entry=150.0, target=153.0, stop=148.5)
+
+        submitted = {}
+        def capture_submit(**kwargs):
+            submitted.update(kwargs)
+            return ("order-aapl", 150.0)
+
+        inserted = {}
+        def capture_insert(table, data):
+            inserted.update(data)
+            return {**data, "id": "pos-aapl"}
+
+        with patch("agents.portfolio._current_price", return_value=150.2), \
+             patch("agents.alpaca_broker.get_live_quotes", return_value={}), \
+             patch("agents.alpaca_broker.get_live_prices", return_value={"AAPL": 150.2}), \
+             patch("agents.alpaca_broker.submit_bracket_order", side_effect=capture_submit), \
+             patch("agents.alpaca_broker.submit_trailing_stop", return_value="trail-aapl"), \
+             patch("core.db.insert", side_effect=capture_insert), \
+             patch("core.db.update"):
+            from agents.portfolio import _open_single_position
+            _open_single_position("plan-1", trade, 150.2, broker="alpaca")
+
+        assert submitted.get("entry_price") == pytest.approx(150.0, abs=0.01), \
+            "Within 0.5% — should use plan entry, not live price"
+        assert submitted.get("stop_price") == pytest.approx(148.5, abs=0.01), \
+            "Within 0.5% — should use plan stop, not re-anchored stop"
+
     def test_extreme_spread_cancels_trade(self):
         """Extreme spread (>5%) must cancel — quote data is unreliable."""
         trade = self._make_trade(entry=150.0, target=153.0, stop=148.5)

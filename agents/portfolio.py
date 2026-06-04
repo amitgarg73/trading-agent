@@ -120,6 +120,19 @@ def _open_single_position(plan_id, trade, price, broker, leg_label="", run_id=No
                     effective_target = round(limit_px * (1 + plan_target_pct), 2)
                     if qt:
                         print(f"        Ask limit: {ticker} ask={qt['ask']:.2f} bid={qt['bid']:.2f} limit={limit_px:.2f}")
+            else:
+                # No bid/ask pair (premarket ask=0 on IEX feed).
+                # Fall back to get_live_prices() which accepts ask-only or bid-only.
+                # Re-anchor stop/target to live price so they stay valid relative to fill.
+                live_fallback = alpaca_broker.get_live_prices([ticker]).get(ticker)
+                if live_fallback and trade["entry_price"] > 0 and \
+                        abs(live_fallback - trade["entry_price"]) / trade["entry_price"] > 0.005:
+                    plan_stop_pct    = (trade["entry_price"] - trade["stop_loss"])   / trade["entry_price"]
+                    plan_target_pct  = (trade["target_price"] - trade["entry_price"]) / trade["entry_price"]
+                    effective_entry  = round(live_fallback, 2)
+                    effective_stop   = round(live_fallback * (1 - plan_stop_pct), 2)
+                    effective_target = round(live_fallback * (1 + plan_target_pct), 2)
+                    print(f"        [price] {ticker} no bid/ask pair — live ${live_fallback:.2f} used (scan ${trade['entry_price']:.2f})")
 
             alpaca_order_id, fill_price_actual = alpaca_broker.submit_bracket_order(
                 ticker=ticker,
