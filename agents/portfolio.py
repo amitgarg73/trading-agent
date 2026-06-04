@@ -4,6 +4,7 @@ broker="simulation" uses yfinance price simulation (default, no external account
 broker="alpaca"     submits real bracket orders to Alpaca paper trading.
 """
 from __future__ import annotations
+import time
 import yfinance as yf
 from datetime import date, datetime
 from core import db, ledger
@@ -298,6 +299,7 @@ def refresh_positions(broker: str = "simulation") -> list:
                             order_id = pos.get("alpaca_order_id")
                             if order_id:
                                 alpaca_broker._cancel_bracket_stop_leg(order_id)
+                                time.sleep(2)  # wait for Alpaca to release bracket leg qty
                             trail_id = alpaca_broker.submit_trailing_stop(ticker, pos["shares"], TRAIL_PCT)
                             if trail_id:
                                 print(f"        Trail stop active (backfill): {ticker} → {trail_id}")

@@ -114,6 +114,9 @@ def _reconcile_with_alpaca():
                     pass
                 # Submit trailing stop now that entry is confirmed filled.
                 if USE_NATIVE_TRAILING_STOP and not pos.get("trail_order_id"):
+                    if order_id:
+                        alpaca_broker._cancel_bracket_stop_leg(order_id)
+                        import time; time.sleep(2)  # wait for Alpaca to release bracket leg qty
                     trail_id = alpaca_broker.submit_trailing_stop(
                         ticker=pos["ticker"],
                         shares=int(pos["shares"]),
@@ -128,6 +131,8 @@ def _reconcile_with_alpaca():
                             print(f"  Trail stop submitted (post-fill): {pos['ticker']} {TRAIL_PCT*100:.1f}% → {trail_id}")
                         except Exception:
                             pass
+                    else:
+                        print(f"  ⚠️  Trail still pending for {pos['ticker']} — will retry next cycle")
 
     for pos in open_positions:
         if pos["ticker"] not in alpaca_tickers:
