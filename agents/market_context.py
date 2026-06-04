@@ -42,7 +42,7 @@ VIX_CAUTION_H   = 25.0   # reduce to 5 positions
 VIX_CAUTION_L   = 20.0   # reduce to 10 positions
 FUTURES_SKIP    = -1.5
 FUTURES_CAUTION = -0.5
-FG_EXTREME_FEAR = 25
+FG_EXTREME_FEAR = 15
 FG_FEAR         = 45
 FG_EXTREME_GREED = 80
 from config.settings import QUIET_DAY_FG_THRESHOLD

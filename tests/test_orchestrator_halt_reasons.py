@@ -22,7 +22,7 @@ def _premarket_mocks(guardrail_blocked_dicts):
     """
     candidate = {
         "ticker": "AAPL", "technical_score": 6, "action": "BUY",
-        "price": 180.0, "current_price": 180.0,
+        "price": 180.0, "current_price": 180.0, "rsi": 55.0,
     }
     trade = {
         "ticker": "AAPL", "action": "BUY",

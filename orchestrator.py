@@ -325,6 +325,23 @@ def premarket(broker: str = "simulation"):
         print("        No candidates above strategy threshold. No trades today.")
         return
 
+    # 1.755 Garbage data filter — remove tickers where yfinance returned no data.
+    # These appear as score=6 (from defaults) but have price=0, rsi=None.
+    # They contaminate the pipeline and Claude correctly rejects them every time.
+    pre_garbage = len(candidates)
+    candidates = [
+        c for c in candidates
+        if (c.get("price") or c.get("current_price") or 0) > 0
+        and c.get("rsi") is not None
+    ]
+    dropped_garbage = pre_garbage - len(candidates)
+    if dropped_garbage:
+        print(f"[ 1.755/4 ] Garbage filter: removed {dropped_garbage} ticker(s) with missing price/RSI data")
+
+    if not candidates:
+        print("        No candidates after garbage filter. No trades today.")
+        return
+
     # 1.76 ML scoring — add ml_score probability to each candidate and re-rank.
     # Model predicts P(stock hits +2% intraday tomorrow). If model not found, skips gracefully.
     if ml_available():
@@ -393,13 +410,13 @@ def premarket(broker: str = "simulation"):
         if dropped:
             print(f"[ 1.86/4 ] Extension filter: dropped {dropped} extended-low-vol candidate(s)")
 
-        # Drop stocks still inside the opening range — no breakout confirmed.
-        # above_orb=False means price is below the ORB high; entering is buying consolidation, not momentum.
-        pre_orb = len(candidates)
-        candidates = [c for c in candidates if c.get("above_orb") is not False]
-        dropped_orb = pre_orb - len(candidates)
-        if dropped_orb:
-            print(f"[ 1.87/4 ] ORB filter: dropped {dropped_orb} inside-range candidate(s)")
+        # ORB is passed to Claude as a signal — not a hard gate.
+        # In low-volatility / consolidating markets almost nothing clears the opening range
+        # by 10 AM, so a hard filter silences the entire pipeline on quiet up-days.
+        # Claude weighs above_orb alongside VWAP, RSI, and momentum.
+        orb_below = sum(1 for c in candidates if c.get("above_orb") is False)
+        if orb_below:
+            print(f"[ 1.87/4 ] ORB signal: {orb_below} candidate(s) below opening range (passed to Claude)")
 
         # Drop stocks priced in the top 15% of today's day range — entering near the high means
         # little upside left and outsized retracement risk.
