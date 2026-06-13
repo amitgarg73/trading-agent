@@ -463,8 +463,17 @@ def _maybe_run_intraday_scan(broker: str):
             "above_vwap=True AND rs_vs_spy ≥ 1.5 qualifies as MEDIUM even at technical_score 3–4."
             if quiet_day else ""
         )
+        if open_pos:
+            pos_lines = []
+            for p in open_pos:
+                fill = float(p.get("fill_price") or p.get("entry_price") or 0)
+                upnl = float(p.get("unrealized_pnl") or 0)
+                pos_lines.append(f"{p['ticker']} (entry ${fill:.2f}, ${upnl:+.0f} unrealized)")
+            open_pos_note = f"\nOPEN POSITIONS — do NOT select these tickers: {', '.join(pos_lines)}"
+        else:
+            open_pos_note = ""
         market_note = (
-            f"{mkt.get('summary', '')}{sector_note}{quiet_note}\n\n"
+            f"{mkt.get('summary', '')}{sector_note}{quiet_note}{open_pos_note}\n\n"
             f"INTRADAY SCAN #{run_num}: Focus on momentum plays already moving today. "
             f"Prefer stocks with today_pct_change > {int(MIN_INTRADAY_MOVE_PCT)}% and rs_vs_spy > 1.5. "
             f"Use {int(TARGET_PCT * 100)}% targets — the trailing stop ({TRAIL_PCT*100:.0f}%) is the real exit, target is a safety ceiling."

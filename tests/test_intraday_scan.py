@@ -365,6 +365,95 @@ class TestIntradayScanPipeline:
         assert result is None
 
 
+# ── Open position context tests ───────────────────────────────────────────────
+
+class TestOpenPositionContextInPrompt:
+    """Open positions must appear in the market_note passed to strategy.run()."""
+
+    def _run_with_open_pos(self, open_rows):
+        """Run scan with given open positions and capture the market_summary arg."""
+        captured_summary = []
+
+        def capture_strategy(candidates, market_summary="", **kw):
+            captured_summary.append(market_summary)
+            return {"trades": [], "market_context": ""}
+
+        def db_select(table, **kw):
+            f = kw.get("filters", {})
+            if f.get("scan_type") == "intraday_scan": return []
+            if f.get("status") == "OPEN":   return open_rows
+            if f.get("status") == "CLOSED": return [_make_closed_row(100.0)]
+            return []
+
+        with patch("agents.intraday.datetime") as mock_dt, \
+             patch("core.db.select", side_effect=db_select), \
+             patch("core.db.insert", return_value={"id": "x"}), \
+             patch("core.db.update"), \
+             patch("agents.market_context.run", return_value={"quiet_day": False, "summary": "flat"}), \
+             patch("scanner.intraday_momentum.scan", return_value=[{"ticker": "AAPL", "technical_score": 6}]), \
+             patch("scanner.scanner.run_scan", return_value=[]), \
+             patch("agents.strategy.run", side_effect=capture_strategy):
+            mock_dt.utcnow.return_value = _utc_now(WINDOW_HOUR)
+            mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
+            from agents.intraday import _maybe_run_intraday_scan
+            _maybe_run_intraday_scan(broker="simulation")
+
+        return captured_summary[0] if captured_summary else ""
+
+    def test_open_positions_appear_in_market_note(self):
+        open_rows = [{"ticker": "NVDA", "fill_price": 890.0, "entry_price": 890.0,
+                      "unrealized_pnl": 142.0, "status": "OPEN"}]
+        summary = self._run_with_open_pos(open_rows)
+        assert "OPEN POSITIONS" in summary
+        assert "NVDA" in summary
+        assert "$890.00" in summary
+        assert "142" in summary   # format is $+142 unrealized
+
+    def test_no_open_positions_note_absent(self):
+        summary = self._run_with_open_pos([])
+        assert "OPEN POSITIONS" not in summary
+
+    def test_multiple_open_positions_all_listed(self):
+        # Use NVDA/GOOGL as open positions, AMD as the fresh momentum candidate
+        # so AMD isn't excluded from candidates by the traded_today dedup filter.
+        open_rows = [
+            {"ticker": "NVDA",  "fill_price": 890.0, "entry_price": 890.0, "unrealized_pnl": 50.0},
+            {"ticker": "GOOGL", "fill_price": 170.0, "entry_price": 170.0, "unrealized_pnl": -30.0},
+        ]
+        captured_summary = []
+
+        def capture_strategy(candidates, market_summary="", **kw):
+            captured_summary.append(market_summary)
+            return {"trades": [], "market_context": ""}
+
+        def db_select(table, **kw):
+            f = kw.get("filters", {})
+            if f.get("scan_type") == "intraday_scan": return []
+            if f.get("status") == "OPEN":   return open_rows
+            if f.get("status") == "CLOSED": return [_make_closed_row(100.0)]
+            return []
+
+        with patch("agents.intraday.datetime") as mock_dt, \
+             patch("core.db.select", side_effect=db_select), \
+             patch("core.db.insert", return_value={"id": "x"}), \
+             patch("core.db.update"), \
+             patch("agents.market_context.run", return_value={"quiet_day": False, "summary": "flat"}), \
+             patch("scanner.intraday_momentum.scan",
+                   return_value=[{"ticker": "AMD", "technical_score": 6}]), \
+             patch("scanner.scanner.run_scan", return_value=[]), \
+             patch("agents.strategy.run", side_effect=capture_strategy):
+            mock_dt.utcnow.return_value = _utc_now(WINDOW_HOUR)
+            mock_dt.fromisoformat.side_effect = real_datetime.fromisoformat
+            from agents.intraday import _maybe_run_intraday_scan
+            _maybe_run_intraday_scan(broker="simulation")
+
+        summary = captured_summary[0] if captured_summary else ""
+        assert "NVDA"  in summary
+        assert "GOOGL" in summary
+        assert "50"    in summary
+        assert "-30"   in summary
+
+
 # ── _reconcile_with_alpaca tests ─────────────────────────────────────────────
 
 def _make_open_position(ticker="AAPL", order_id="order-1"):
