@@ -397,18 +397,24 @@ def premarket(broker: str = "simulation"):
               f"{above_vwap_count} above VWAP")
 
         # Drop stocks that are already extended from open on weak volume.
-        # >3% above open + volume < 0.7x = chasing exhausted momentum; skip.
+        # On strong up days (avg futures ≥ 2%), a 3% move is just market participation —
+        # raise the threshold to 5% so we don't filter out the leading names.
+        _fut_vals = mkt.get("futures") or {}
+        _avg_fut  = (sum(v["change_pct"] for v in _fut_vals.values()) / len(_fut_vals)
+                     if _fut_vals else 0.0)
+        _ext_threshold = 5.0 if _avg_fut >= 2.0 else 3.0
         pre_ext = len(candidates)
         candidates = [
             c for c in candidates
             if not (
-                (c.get("today_pct_change") or 0) > 3.0
+                (c.get("today_pct_change") or 0) > _ext_threshold
                 and (c.get("volume_ratio") or 0) < 0.7
             )
         ]
         dropped = pre_ext - len(candidates)
         if dropped:
-            print(f"[ 1.86/4 ] Extension filter: dropped {dropped} extended-low-vol candidate(s)")
+            print(f"[ 1.86/4 ] Extension filter: dropped {dropped} extended-low-vol candidate(s) "
+                  f"(threshold: {_ext_threshold:.0f}%, avg futures: {_avg_fut:+.1f}%)")
 
         # ORB is passed to Claude as a signal — not a hard gate.
         # In low-volatility / consolidating markets almost nothing clears the opening range
