@@ -53,18 +53,18 @@ def check_anthropic() -> tuple:
 
 def check_universe() -> tuple:
     try:
-        from core import db
+        import json
+        from pathlib import Path
+        cache = Path(__file__).parent / "config" / "universe_cache.json"
+        if not cache.exists():
+            return False, "No universe cache found — scanner will use static fallback list"
+        data = json.loads(cache.read_text())
+        last_refresh = data.get("date", "unknown")
         cutoff = (date.today() - timedelta(days=25)).isoformat()
-        rows = db.select("scan_results", filters={"scan_type": "universe_refresh"},
-                         order="created_at", limit=1)
-        if not rows:
-            return False, "No universe refresh found — scanner will use static fallback list"
-        last_refresh = rows[0]["date"]
         if last_refresh < cutoff:
             return False, f"Universe refresh stale: last run {last_refresh} (>25 days ago)"
-        results = rows[0].get("results") or {}
-        count = results.get("count") or len(results.get("tickers", []))
-        return True, f"Universe OK — last refresh {last_refresh}, {count or '?'} tickers"
+        tickers = data.get("tickers", [])
+        return True, f"Universe OK — last refresh {last_refresh}, {len(tickers)} tickers"
     except Exception as e:
         return False, f"Universe check failed: {e}"
 
