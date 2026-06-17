@@ -5,6 +5,8 @@ on:
     - cron: '30 12 1 * *'   # Primary:  8:30 AM ET on 1st of month
     - cron: '30 12 2 * *'   # Fallback: 2nd of month (if 1st failed)
     - cron: '30 12 3 * *'   # Fallback: 3rd of month (if 1st+2nd failed)
+    - cron: '30 12 15 * *'  # Mid-month: 15th — prevents >25-day staleness window
+    - cron: '30 12 16 * *'  # Mid-month fallback: 16th
   workflow_dispatch:         # manual trigger any time
 
 jobs:
