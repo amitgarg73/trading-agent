@@ -60,9 +60,14 @@ def check_universe() -> tuple:
             return False, "No universe cache found — scanner will use static fallback list"
         data = json.loads(cache.read_text())
         last_refresh = data.get("date", "unknown")
-        cutoff = (date.today() - timedelta(days=25)).isoformat()
+        # 30-day advisory threshold. The scanner's trading path tolerates a 35-day-old
+        # universe (then falls back to the static list), and the refresh runs mid-month
+        # (1st-3rd + 15th-16th), so a cache that is 25-30 days old is a normal cadence gap,
+        # not a problem. Alerting at 30 stays quiet in that gap but still warns before the
+        # 35-day line where trading actually starts using the stale/fallback universe.
+        cutoff = (date.today() - timedelta(days=30)).isoformat()
         if last_refresh < cutoff:
-            return False, f"Universe refresh stale: last run {last_refresh} (>25 days ago)"
+            return False, f"Universe refresh stale: last run {last_refresh} (>30 days ago)"
         tickers = data.get("tickers", [])
         return True, f"Universe OK — last refresh {last_refresh}, {len(tickers)} tickers"
     except Exception as e:

@@ -26,30 +26,31 @@ class TestCheckUniverse:
         assert "518 tickers" in msg
 
     def test_stale_cache_fails(self):
-        stale = _make_cache(days_ago=30)
+        stale = _make_cache(days_ago=35)
         with patch("pathlib.Path.exists", return_value=True), \
              patch("pathlib.Path.read_text", return_value=stale):
             ok, msg = self._run()
         assert not ok
-        assert ">25 days ago" in msg
+        assert ">30 days ago" in msg
 
-    def test_exactly_25_days_old_passes(self):
-        # cutoff = today - 25d; cache date == cutoff → not strictly less than → passes
-        on_boundary = _make_cache(days_ago=25)
+    def test_exactly_30_days_old_passes(self):
+        # cutoff = today - 30d; cache date == cutoff → not strictly less than → passes
+        on_boundary = _make_cache(days_ago=30)
         with patch("pathlib.Path.exists", return_value=True), \
              patch("pathlib.Path.read_text", return_value=on_boundary):
             ok, msg = self._run()
         assert ok
 
-    def test_26_days_old_fails(self):
-        stale = _make_cache(days_ago=26)
+    def test_31_days_old_fails(self):
+        stale = _make_cache(days_ago=31)
         with patch("pathlib.Path.exists", return_value=True), \
              patch("pathlib.Path.read_text", return_value=stale):
             ok, msg = self._run()
         assert not ok
 
-    def test_24_days_old_passes(self):
-        fresh = _make_cache(days_ago=24)
+    def test_29_days_old_passes(self):
+        # inside the normal cadence gap between mid-month refreshes — must not alert
+        fresh = _make_cache(days_ago=29)
         with patch("pathlib.Path.exists", return_value=True), \
              patch("pathlib.Path.read_text", return_value=fresh):
             ok, msg = self._run()
